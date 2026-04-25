@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #030712;
+  --color-foreground: #f9fafb;
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}

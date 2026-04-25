@@ -1,0 +1,43 @@
+# Environment
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kline cache
+data/
+!data/.gitkeep
+
+# Bot runtime
+STOP
+
+# Dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/.env*.local

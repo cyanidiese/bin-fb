@@ -10,13 +10,13 @@ import BacktestTradeList from '@/components/BacktestTradeList'
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function toDateStr(unixSec: number): string {
-  return new Date(unixSec * 1000).toISOString().slice(0, 10)
+  return new Date(unixSec * 1000).toISOString().slice(0, 16)
 }
 
 function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + 'T00:00:00Z')
+  const d = new Date(dateStr + ':00Z')
   d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
+  return d.toISOString().slice(0, 16)
 }
 
 // Abbreviations used in auto-generated preset names
@@ -436,14 +436,14 @@ export default function CreatePresetPage() {
                   </button>
                   <span className="text-[11px] text-gray-500 font-mono">From</span>
                   <input
-                    type="date"
+                    type="datetime-local"
                     value={fromDate}
                     onChange={e => setFromDate(e.target.value)}
                     className={DATE_INPUT_CLS}
                   />
                   <span className="text-[11px] text-gray-500 font-mono">To</span>
                   <input
-                    type="date"
+                    type="datetime-local"
                     value={toDate}
                     onChange={e => setToDate(e.target.value)}
                     className={DATE_INPUT_CLS}

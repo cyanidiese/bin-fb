@@ -8,6 +8,8 @@ import TrendLevelsTable from '@/components/TrendLevelsTable'
 import AllPointsTable from '@/components/AllPointsTable'
 import SignalsPanel from '@/components/SignalsPanel'
 import LevelFilter from '@/components/LevelFilter'
+import CollapsibleSection from '@/components/CollapsibleSection'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 export default function Page() {
   // Raw snapshot loaded from /results.json (written by bot/exporter.py after each candle close)
@@ -17,10 +19,10 @@ export default function Page() {
   // Which trend level the user has selected in the filter control.
   // Selecting L2 means: show L1 and L2 data only (hide L3 and above).
   // Defaults to the highest available level (show everything) once data loads.
-  const [selectedLevel, setSelectedLevel] = useState<number | null>(null)
+  const [selectedLevel, setSelectedLevel] = useLocalStorage<number | null>('db:strategy:selectedLevel', null)
   // datetime-local inputs use "YYYY-MM-DDTHH:mm" strings; empty string means no limit
-  const [fromDate, setFromDate] = useState<string>('')
-  const [toDate,   setToDate]   = useState<string>('')
+  const [fromDate, setFromDate] = useLocalStorage<string>('db:strategy:fromDate', '')
+  const [toDate,   setToDate]   = useLocalStorage<string>('db:strategy:toDate', '')
 
   // Poll the bot snapshot every POLL_MS. On the first successful load, default
   // the level filter to the highest available level. Subsequent polls update the
@@ -141,33 +143,24 @@ export default function Page() {
         </button>
       </div>
 
-      {/* Price chart with kline close line and colored swing point dots.
-          key={selectedLevel} forces a full Chart.js remount on level change,
-          preventing canvas state from leaking between selections. */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase text-gray-500 mb-3 tracking-wider">Swing Points</h2>
+      <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
         <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} />
-      </section>
+      </CollapsibleSection>
 
-      {/* Summary table: one row per trend level showing direction, BoS price, last high/low */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase text-gray-500 mb-3 tracking-wider">Trend Levels</h2>
+      <CollapsibleSection title="Trend Levels" storageKey="db:strategy:s:trendlevels">
         <TrendLevelsTable levels={filteredLevels} />
-      </section>
+      </CollapsibleSection>
 
-      {/* Full list of swing points for the selected levels, split into two columns */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase text-gray-500 mb-3 tracking-wider">
-          All Points <span className="text-gray-700 font-normal normal-case">(newest first)</span>
-        </h2>
+      <CollapsibleSection
+        title={<>All Points <span className="text-gray-700 font-normal normal-case">(newest first)</span></>}
+        storageKey="db:strategy:s:allpoints"
+      >
         <AllPointsTable points={filteredPoints} />
-      </section>
+      </CollapsibleSection>
 
-      {/* Active trading signals from the bot's strategy — signals are not filtered by level */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase text-gray-500 mb-3 tracking-wider">Signals</h2>
+      <CollapsibleSection title="Signals" storageKey="db:strategy:s:signals">
         <SignalsPanel signals={data.signals} />
-      </section>
+      </CollapsibleSection>
     </main>
   )
 }

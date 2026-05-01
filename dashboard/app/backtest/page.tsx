@@ -7,23 +7,25 @@ import BacktestTradeList from '@/components/BacktestTradeList'
 import PresetSettingsPanel from '@/components/PresetSettingsPanel'
 import PresetFilters from '@/components/PresetFilters'
 import PresetResultsPanel from '@/components/PresetResultsPanel'
+import CollapsibleSection from '@/components/CollapsibleSection'
 import {
   FILTER_SPECS, TABLE_FILTER_SPECS,
   initFilters, initTableFilters,
   applyFilters, applyTableFilters,
   type FilterState,
 } from '@/lib/presetFilters'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 export default function BacktestPage() {
   const [data, setData] = useState<BacktestResults | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+  const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:backtest:selectedPreset', null)
 
-  const [tableFilters, setTableFilters] = useState(initTableFilters)
-  const [tableFiltersOpen, setTableFiltersOpen] = useState(false)
+  const [tableFilters, setTableFilters] = useLocalStorage('db:backtest:tableFilters', initTableFilters())
+  const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:backtest:tableFiltersOpen', false)
 
-  const [settingsFilters, setSettingsFilters] = useState(initFilters)
-  const [settingsFiltersOpen, setSettingsFiltersOpen] = useState(false)
+  const [settingsFilters, setSettingsFilters] = useLocalStorage('db:backtest:settingsFilters', initFilters())
+  const [settingsFiltersOpen, setSettingsFiltersOpen] = useLocalStorage<boolean>('db:backtest:settingsFiltersOpen', false)
 
   function patchTableFilter(key: string, patch: Partial<FilterState>) {
     setTableFilters(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
@@ -62,7 +64,7 @@ export default function BacktestPage() {
           const best = entries.reduce((a, b) =>
             b.total_profit_pct > a.total_profit_pct ? b : a
           )
-          setSelectedPreset(best.preset)
+          setSelectedPreset(prev => prev ?? best.preset)
         }
       })
       .catch(e => setError(String(e)))
@@ -86,9 +88,8 @@ export default function BacktestPage() {
 
   const activePreset = useMemo(() => {
     if (!data || !selectedPreset) return null
-    const found = filteredPresets.find(p => p.preset === selectedPreset)
-    return found ? (data.presets[selectedPreset] ?? null) : null
-  }, [data, selectedPreset, filteredPresets])
+    return data.presets[selectedPreset] ?? null
+  }, [data, selectedPreset])
 
   if (error) {
     return (
@@ -130,12 +131,14 @@ export default function BacktestPage() {
       />
 
       {/* Summary table */}
-      <BacktestSummaryTable
-        presets={filteredPresets}
-        selectedPreset={selectedPreset}
-        onSelect={setSelectedPreset}
-        onDelete={handleDelete}
-      />
+      <CollapsibleSection title="Presets" storageKey="db:backtest:s:table">
+        <BacktestSummaryTable
+          presets={filteredPresets}
+          selectedPreset={selectedPreset}
+          onSelect={setSelectedPreset}
+          onDelete={handleDelete}
+        />
+      </CollapsibleSection>
 
       {/* Visualize panel */}
       <PresetResultsPanel preset={activePreset} />
@@ -153,45 +156,49 @@ export default function BacktestPage() {
               <span className="text-red-400">{activePreset.losses}L</span>
             </span>
           </div>
-          <BacktestTradeList
-            presetName={activePreset.preset}
-            trades={activePreset.trades}
-          />
-          {/* P&L stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              {
-                label: 'Actual P&L',
-                value: `${activePreset.total_profit_pts >= 0 ? '+' : ''}${activePreset.total_profit_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_profit_pct >= 0 ? '+' : ''}${activePreset.total_profit_pct.toFixed(2)}%`,
-                color: activePreset.total_profit_pts >= 0 ? 'text-emerald-400' : 'text-red-400',
-              },
-              {
-                label: 'Potential win (all TP)',
-                value: `+${activePreset.potential_win_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_trades} trades × avg TP`,
-                color: 'text-emerald-500',
-              },
-              {
-                label: 'Potential loss (all SL)',
-                value: `-${activePreset.potential_loss_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_trades} trades × avg SL`,
-                color: 'text-red-500',
-              },
-              {
-                label: 'Avg TP reach (non-wins)',
-                value: `${activePreset.avg_max_tp_reach_pct.toFixed(1)}%`,
-                sub: 'of TP distance — raise if > 80%',
-                color: activePreset.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300',
-              },
-            ].map(s => (
-              <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3">
-                <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{s.label}</p>
-                <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
-                <p className="text-[10px] text-gray-600 mt-0.5">{s.sub}</p>
-              </div>
-            ))}
-          </div>
+          <CollapsibleSection title={`Orders (${activePreset.total_trades})`} storageKey="db:backtest:s:trades">
+            <BacktestTradeList
+              presetName={activePreset.preset}
+              trades={activePreset.trades}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="P&L" storageKey="db:backtest:s:pnl">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                {
+                  label: 'Actual P&L',
+                  value: `${activePreset.total_profit_pts >= 0 ? '+' : ''}${activePreset.total_profit_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_profit_pct >= 0 ? '+' : ''}${activePreset.total_profit_pct.toFixed(2)}%`,
+                  color: activePreset.total_profit_pts >= 0 ? 'text-emerald-400' : 'text-red-400',
+                },
+                {
+                  label: 'Potential win (all TP)',
+                  value: `+${activePreset.potential_win_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_trades} trades × avg TP`,
+                  color: 'text-emerald-500',
+                },
+                {
+                  label: 'Potential loss (all SL)',
+                  value: `-${activePreset.potential_loss_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_trades} trades × avg SL`,
+                  color: 'text-red-500',
+                },
+                {
+                  label: 'Avg TP reach (non-wins)',
+                  value: `${activePreset.avg_max_tp_reach_pct.toFixed(1)}%`,
+                  sub: 'of TP distance — raise if > 80%',
+                  color: activePreset.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300',
+                },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{s.label}</p>
+                  <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5">{s.sub}</p>
+                </div>
+              ))}
+            </div>
+          </CollapsibleSection>
 
           {/* Settings filters — above All settings panel */}
           <PresetFilters
@@ -204,12 +211,14 @@ export default function BacktestPage() {
             onClear={() => setSettingsFilters(initFilters())}
           />
 
-          <PresetSettingsPanel
-            settings={activePreset.settings}
-            presets={filteredPresets.map(p => ({ name: p.preset, total_profit_pct: p.total_profit_pct }))}
-            selectedPreset={selectedPreset ?? undefined}
-            onSelect={setSelectedPreset}
-          />
+          <CollapsibleSection title="Settings" storageKey="db:backtest:s:settings">
+            <PresetSettingsPanel
+              settings={activePreset.settings}
+              presets={filteredPresets.map(p => ({ name: p.preset, total_profit_pct: p.total_profit_pct }))}
+              selectedPreset={selectedPreset ?? undefined}
+              onSelect={setSelectedPreset}
+            />
+          </CollapsibleSection>
         </section>
       )}
     </main>

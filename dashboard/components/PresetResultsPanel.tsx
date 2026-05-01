@@ -3,19 +3,20 @@
 import { useState, useEffect, useRef } from 'react'
 import type { BacktestPreset, BacktestApiResponse } from '@/lib/types'
 import PresetChart from './PresetChart'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 interface Props {
   preset: BacktestPreset | null
 }
 
 function toDateStr(unixSec: number): string {
-  return new Date(unixSec * 1000).toISOString().slice(0, 10)
+  return new Date(unixSec * 1000).toISOString().slice(0, 16)
 }
 
 function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + 'T00:00:00Z')
+  const d = new Date(dateStr + ':00Z')
   d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 10)
+  return d.toISOString().slice(0, 16)
 }
 
 const DATE_INPUT_CLS =
@@ -25,14 +26,14 @@ const NAV_BTN_CLS =
   'px-2 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-[11px] font-mono transition-colors'
 
 export default function PresetResultsPanel({ preset }: Props) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useLocalStorage<boolean>('db:visualize:open', false)
   const [result, setResult] = useState<BacktestApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [fromDate, setFromDate] = useLocalStorage<string>('db:visualize:fromDate', '')
+  const [toDate, setToDate] = useLocalStorage<string>('db:visualize:toDate', '')
 
   useEffect(() => {
     if (!open || !preset) {
@@ -66,11 +67,11 @@ export default function PresetResultsPanel({ preset }: Props) {
     return () => ctrl.abort()
   }, [open, preset?.preset])
 
-  // Reset date range when result loads
+  // Initialise date range from result, but only if the user has no stored value
   useEffect(() => {
     if (!result?.klines.length) return
-    setFromDate(toDateStr(result.klines[0].time))
-    setToDate(toDateStr(result.klines[result.klines.length - 1].time))
+    setFromDate(prev => prev || toDateStr(result.klines[0].time))
+    setToDate(prev => prev || toDateStr(result.klines[result.klines.length - 1].time))
   }, [result])
 
   const filteredKlines = result
@@ -168,14 +169,14 @@ export default function PresetResultsPanel({ preset }: Props) {
                 </button>
                 <span className="text-[11px] text-gray-500 font-mono">From</span>
                 <input
-                  type="date"
+                  type="datetime-local"
                   value={fromDate}
                   onChange={e => setFromDate(e.target.value)}
                   className={DATE_INPUT_CLS}
                 />
                 <span className="text-[11px] text-gray-500 font-mono">To</span>
                 <input
-                  type="date"
+                  type="datetime-local"
                   value={toDate}
                   onChange={e => setToDate(e.target.value)}
                   className={DATE_INPUT_CLS}

@@ -7,12 +7,14 @@ import BacktestTradeList from '@/components/BacktestTradeList'
 import PresetSettingsPanel from '@/components/PresetSettingsPanel'
 import PresetFilters from '@/components/PresetFilters'
 import PresetResultsPanel from '@/components/PresetResultsPanel'
+import CollapsibleSection from '@/components/CollapsibleSection'
 import {
   FILTER_SPECS, TABLE_FILTER_SPECS,
   initFilters, initTableFilters,
   applyFilters, applyTableFilters,
   type FilterState,
 } from '@/lib/presetFilters'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 const REFRESH_MS = 15_000
 
@@ -84,13 +86,13 @@ function OpenOrderCard({ name, order, currentCandle }: {
 export default function PaperPage() {
   const [data, setData] = useState<PaperResults | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+  const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:paper:selectedPreset', null)
 
-  const [tableFilters, setTableFilters] = useState(initTableFilters)
-  const [tableFiltersOpen, setTableFiltersOpen] = useState(false)
+  const [tableFilters, setTableFilters] = useLocalStorage('db:paper:tableFilters', initTableFilters())
+  const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:paper:tableFiltersOpen', false)
 
-  const [settingsFilters, setSettingsFilters] = useState(initFilters)
-  const [settingsFiltersOpen, setSettingsFiltersOpen] = useState(false)
+  const [settingsFilters, setSettingsFilters] = useLocalStorage('db:paper:settingsFilters', initFilters())
+  const [settingsFiltersOpen, setSettingsFiltersOpen] = useLocalStorage<boolean>('db:paper:settingsFiltersOpen', false)
 
   function patchTableFilter(key: string, patch: Partial<FilterState>) {
     setTableFilters(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
@@ -108,14 +110,12 @@ export default function PaperPage() {
       .then((json: PaperResults) => {
         setData(json)
         setError(null)
-        if (!selectedPreset) {
-          const entries = Object.values(json.presets)
-          if (entries.length > 0) {
-            const best = entries.reduce((a, b) =>
-              b.total_profit_pct > a.total_profit_pct ? b : a
-            )
-            setSelectedPreset(best.preset)
-          }
+        const entries = Object.values(json.presets)
+        if (entries.length > 0) {
+          const best = entries.reduce((a, b) =>
+            b.total_profit_pct > a.total_profit_pct ? b : a
+          )
+          setSelectedPreset(prev => prev ?? best.preset)
         }
       })
       .catch(e => setError(String(e)))
@@ -144,9 +144,8 @@ export default function PaperPage() {
 
   const activePreset = useMemo(() => {
     if (!data || !selectedPreset) return null
-    const found = filteredPresets.find(p => p.preset === selectedPreset)
-    return found ? (data.presets[selectedPreset] ?? null) : null
-  }, [data, selectedPreset, filteredPresets])
+    return data.presets[selectedPreset] ?? null
+  }, [data, selectedPreset])
 
   const openOrders = useMemo(() => {
     if (!data) return []
@@ -196,10 +195,7 @@ export default function PaperPage() {
       </div>
 
       {/* Open orders */}
-      <section className="space-y-2">
-        <h2 className="text-xs uppercase tracking-wide text-gray-500 font-semibold">
-          Active Orders ({openOrders.length})
-        </h2>
+      <CollapsibleSection title={`Active Orders (${openOrders.length})`} storageKey="db:paper:s:openorders">
         {openOrders.length === 0 ? (
           <p className="text-sm text-gray-600 italic">No open orders — waiting for signals.</p>
         ) : (
@@ -214,7 +210,7 @@ export default function PaperPage() {
             ))}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
       {/* Table column filters — above Presets table */}
       <PresetFilters
@@ -228,11 +224,13 @@ export default function PaperPage() {
       />
 
       {/* Summary table */}
-      <BacktestSummaryTable
-        presets={filteredPresets}
-        selectedPreset={selectedPreset}
-        onSelect={setSelectedPreset}
-      />
+      <CollapsibleSection title="Presets" storageKey="db:paper:s:table">
+        <BacktestSummaryTable
+          presets={filteredPresets}
+          selectedPreset={selectedPreset}
+          onSelect={setSelectedPreset}
+        />
+      </CollapsibleSection>
 
       {/* Visualize panel */}
       <PresetResultsPanel preset={activePreset} />
@@ -260,46 +258,49 @@ export default function PaperPage() {
             )}
           </div>
 
-          <BacktestTradeList
-            presetName={activePreset.preset}
-            trades={activePreset.trades}
-          />
+          <CollapsibleSection title={`Orders (${activePreset.total_trades})`} storageKey="db:paper:s:trades">
+            <BacktestTradeList
+              presetName={activePreset.preset}
+              trades={activePreset.trades}
+            />
+          </CollapsibleSection>
 
-          {/* P&L stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              {
-                label: 'Actual P&L',
-                value: `${activePreset.total_profit_pts >= 0 ? '+' : ''}${activePreset.total_profit_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_profit_pct >= 0 ? '+' : ''}${activePreset.total_profit_pct.toFixed(2)}%`,
-                color: activePreset.total_profit_pts >= 0 ? 'text-emerald-400' : 'text-red-400',
-              },
-              {
-                label: 'Potential win (all TP)',
-                value: `+${activePreset.potential_win_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_trades} trades × avg TP`,
-                color: 'text-emerald-500',
-              },
-              {
-                label: 'Potential loss (all SL)',
-                value: `-${activePreset.potential_loss_pts.toFixed(1)} pts`,
-                sub: `${activePreset.total_trades} trades × avg SL`,
-                color: 'text-red-500',
-              },
-              {
-                label: 'Avg TP reach (non-wins)',
-                value: `${activePreset.avg_max_tp_reach_pct.toFixed(1)}%`,
-                sub: 'of TP distance — raise if > 80%',
-                color: activePreset.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300',
-              },
-            ].map(s => (
-              <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3">
-                <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{s.label}</p>
-                <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
-                <p className="text-[10px] text-gray-600 mt-0.5">{s.sub}</p>
-              </div>
-            ))}
-          </div>
+          <CollapsibleSection title="P&L" storageKey="db:paper:s:pnl">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                {
+                  label: 'Actual P&L',
+                  value: `${activePreset.total_profit_pts >= 0 ? '+' : ''}${activePreset.total_profit_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_profit_pct >= 0 ? '+' : ''}${activePreset.total_profit_pct.toFixed(2)}%`,
+                  color: activePreset.total_profit_pts >= 0 ? 'text-emerald-400' : 'text-red-400',
+                },
+                {
+                  label: 'Potential win (all TP)',
+                  value: `+${activePreset.potential_win_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_trades} trades × avg TP`,
+                  color: 'text-emerald-500',
+                },
+                {
+                  label: 'Potential loss (all SL)',
+                  value: `-${activePreset.potential_loss_pts.toFixed(1)} pts`,
+                  sub: `${activePreset.total_trades} trades × avg SL`,
+                  color: 'text-red-500',
+                },
+                {
+                  label: 'Avg TP reach (non-wins)',
+                  value: `${activePreset.avg_max_tp_reach_pct.toFixed(1)}%`,
+                  sub: 'of TP distance — raise if > 80%',
+                  color: activePreset.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300',
+                },
+              ].map(s => (
+                <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{s.label}</p>
+                  <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5">{s.sub}</p>
+                </div>
+              ))}
+            </div>
+          </CollapsibleSection>
 
           {/* Settings filters — above All settings panel */}
           <PresetFilters
@@ -312,12 +313,14 @@ export default function PaperPage() {
             onClear={() => setSettingsFilters(initFilters())}
           />
 
-          <PresetSettingsPanel
-            settings={activePreset.settings}
-            presets={filteredPresets.map(p => ({ name: p.preset, total_profit_pct: p.total_profit_pct }))}
-            selectedPreset={selectedPreset ?? undefined}
-            onSelect={setSelectedPreset}
-          />
+          <CollapsibleSection title="Settings" storageKey="db:paper:s:settings">
+            <PresetSettingsPanel
+              settings={activePreset.settings}
+              presets={filteredPresets.map(p => ({ name: p.preset, total_profit_pct: p.total_profit_pct }))}
+              selectedPreset={selectedPreset ?? undefined}
+              onSelect={setSelectedPreset}
+            />
+          </CollapsibleSection>
         </section>
       )}
     </main>

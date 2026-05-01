@@ -340,25 +340,29 @@ class Trend:
     def getLastPoints(self, points: List[Point], count: int = 4) -> List[Point]:
         return points[-count:]
 
-    def whichIsCloser(self, current: float, high: float, low: float) -> Tuple[int, float]:
+    def whichIsCloser(
+        self, current: float, high: float, low: float, threshold: float = 10.0
+    ) -> Tuple[int, float]:
         """
         Returns (direction, closeness_pct).
         direction: 1 if closer to / above high, -1 if closer to / below low, 0 if in between.
         closeness_pct: how close as a percentage of the high-low range (100 means outside).
+        threshold controls the closeness zone as % of the range.
         """
         if current > high:
             return 1, 100
         if current < low:
             return -1, 100
 
-        closeness_threshold = 10.0
         whole = high - low
+        if whole == 0:
+            return 0, 0.0
         pct_to_high = (high - current) / whole * 100
         pct_to_low = (current - low) / whole * 100
 
-        if pct_to_high < closeness_threshold:
+        if pct_to_high < threshold:
             return 1, pct_to_high
-        if pct_to_low < closeness_threshold:
+        if pct_to_low < threshold:
             return -1, pct_to_low
         return 0, 0.0
 
@@ -400,10 +404,18 @@ class Trend:
     # Recommendations                                                      #
     # ------------------------------------------------------------------ #
 
-    def getRecommendation(self, point: Optional[Point] = None) -> Optional[Recommendation]:
+    def getRecommendation(
+        self,
+        point: Optional[Point] = None,
+        entry_price: Optional[float] = None,
+        proximity_zone_pct: float = 10.0,
+    ) -> Optional[Recommendation]:
         point = self.getCurrentPoint() if point is None else point
         if point is None:
             return None
+
+        if entry_price is None:
+            entry_price = point.getMainValue()
 
         if self.shouldCrossBreakOfStructure(point):
             return None
@@ -419,81 +431,95 @@ class Trend:
         is_last_high = self.isLastPointHigh()
         smaller_break_of_structure = smaller_trend.getBreakOfStructure() if smaller_trend.hasBreakOfStructure() else None
 
+        rec: Optional[Recommendation] = None
+        how_close = proximity_zone_pct  # default: no closeness bonus
+
         if is_last_high is not None:
             last_low = self.getLastLow()
 
             if point.getHighValue() > last_low.getLowValue():
-                return Recommendation(
+                rec = Recommendation(
                     point, supposed_next_low, smaller_break_of_structure,
                     Client.SIDE_SELL, RecommendationTypes.LOWERING_ABOVE_LAST_LOW,
                 ).setLevel(self._level)
+            else:
+                what_is_closer, prox = self.whichIsCloser(
+                    point.getMainValue(), last_low.getLowValue(), supposed_next_low,
+                    proximity_zone_pct,
+                )
+                is_close = prox <= 20
 
-            what_is_closer, how_close = self.whichIsCloser(
-                point.getMainValue(), last_low.getLowValue(), supposed_next_low
-            )
-            is_close = how_close <= 20
-
-            if what_is_closer == 1 and is_close and self.isDescending():
-                return Recommendation(
-                    point, supposed_next_low, last_low.getLowValue(),
-                    Client.SIDE_SELL, RecommendationTypes.LOWERING_NEAR_LAST_LOW,
-                ).setLevel(self._level)
-
-            if what_is_closer == 1:
-                if is_close:
-                    return Recommendation(
-                        point, supposed_next_high, supposed_next_low,
-                        Client.SIDE_BUY, RecommendationTypes.LOWERING_NEAR_SUPPOSED_LOW, True,
+                if what_is_closer == 1 and is_close and self.isDescending():
+                    how_close = prox
+                    rec = Recommendation(
+                        point, supposed_next_low, last_low.getLowValue(),
+                        Client.SIDE_SELL, RecommendationTypes.LOWERING_NEAR_LAST_LOW,
                     ).setLevel(self._level)
-                elif how_close == 100:
-                    return Recommendation(
-                        point, supposed_next_high, supposed_next_low,
-                        Client.SIDE_BUY, RecommendationTypes.LOWERING_BELOW_SUPPOSED_LOW, True,
-                    ).setLevel(self._level)
+                elif what_is_closer == 1:
+                    if is_close:
+                        how_close = prox
+                        rec = Recommendation(
+                            point, supposed_next_high, supposed_next_low,
+                            Client.SIDE_BUY, RecommendationTypes.LOWERING_NEAR_SUPPOSED_LOW, True,
+                        ).setLevel(self._level)
+                    elif prox == 100:
+                        rec = Recommendation(
+                            point, supposed_next_high, supposed_next_low,
+                            Client.SIDE_BUY, RecommendationTypes.LOWERING_BELOW_SUPPOSED_LOW, True,
+                        ).setLevel(self._level)
         else:
             last_high = self.getLastHigh()
 
             if point.getLowValue() < last_high.getHighValue():
-                return Recommendation(
+                rec = Recommendation(
                     point, supposed_next_high, smaller_break_of_structure,
                     Client.SIDE_BUY, RecommendationTypes.RISING_BELOW_LAST_HIGH,
                 ).setLevel(self._level)
+            else:
+                what_is_closer, prox = self.whichIsCloser(
+                    point.getMainValue(), last_high.getHighValue(), supposed_next_high,
+                    proximity_zone_pct,
+                )
+                is_close = prox <= 20
 
-            what_is_closer, how_close = self.whichIsCloser(
-                point.getMainValue(), last_high.getHighValue(), supposed_next_high
-            )
-            is_close = how_close <= 20
-
-            if what_is_closer == 1 and is_close and self.isAscending():
-                return Recommendation(
-                    point, supposed_next_high, last_high.getHighValue(),
-                    Client.SIDE_BUY, RecommendationTypes.RISING_NEAR_LAST_HIGH,
-                ).setLevel(self._level)
-
-            if what_is_closer == 1:
-                if is_close:
-                    return Recommendation(
-                        point, supposed_next_low, supposed_next_high,
-                        Client.SIDE_SELL, RecommendationTypes.RISING_NEAR_SUPPOSED_HIGH,
+                if what_is_closer == 1 and is_close and self.isAscending():
+                    how_close = prox
+                    rec = Recommendation(
+                        point, supposed_next_high, last_high.getHighValue(),
+                        Client.SIDE_BUY, RecommendationTypes.RISING_NEAR_LAST_HIGH,
                     ).setLevel(self._level)
-                elif how_close == 100:
-                    return Recommendation(
-                        point, supposed_next_low, supposed_next_high,
-                        Client.SIDE_SELL, RecommendationTypes.RISING_ABOVE_SUPPOSED_HIGH, True,
-                    ).setLevel(self._level)
+                elif what_is_closer == 1:
+                    if is_close:
+                        how_close = prox
+                        rec = Recommendation(
+                            point, supposed_next_low, supposed_next_high,
+                            Client.SIDE_SELL, RecommendationTypes.RISING_NEAR_SUPPOSED_HIGH,
+                        ).setLevel(self._level)
+                    elif prox == 100:
+                        rec = Recommendation(
+                            point, supposed_next_low, supposed_next_high,
+                            Client.SIDE_SELL, RecommendationTypes.RISING_ABOVE_SUPPOSED_HIGH, True,
+                        ).setLevel(self._level)
 
-        return None
+        if rec is not None:
+            rec.setEntryPrice(entry_price).setHowClose(how_close)
 
-    def getRecommendations(self) -> List[Recommendation]:
+        return rec
+
+    def getRecommendations(
+        self,
+        entry_price: Optional[float] = None,
+        proximity_zone_pct: float = 10.0,
+    ) -> List[Recommendation]:
         result = []
-        rec = self.getRecommendation()
+        rec = self.getRecommendation(entry_price=entry_price, proximity_zone_pct=proximity_zone_pct)
         if rec is not None:
             result.append(rec)
         if self.hasBiggerTrend():
             bigger = self.getBiggerTrend()
             if self.getCurrentPoint() is not None:
                 bigger.setCurrentPoint(self.getCurrentPoint())
-            result.extend(bigger.getRecommendations())
+            result.extend(bigger.getRecommendations(entry_price=entry_price, proximity_zone_pct=proximity_zone_pct))
         return result
 
     # ------------------------------------------------------------------ #

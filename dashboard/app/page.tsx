@@ -22,21 +22,36 @@ export default function Page() {
   const [fromDate, setFromDate] = useState<string>('')
   const [toDate,   setToDate]   = useState<string>('')
 
-  // Fetch the bot snapshot once on mount. The file is served as a static asset
-  // from /public/results.json and updated by the bot every 15 minutes.
+  // Poll the bot snapshot every POLL_MS. On the first successful load, default
+  // the level filter to the highest available level. Subsequent polls update the
+  // data without resetting the user's filter selections.
+  const POLL_MS = 15_000
+
   useEffect(() => {
-    fetch('/results.json')
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then((d: BotResults) => {
-        setData(d)
-        // Default to the highest level so all points are visible on first load
-        const maxLevel = Math.max(...d.trend_levels.map(t => t.level))
-        setSelectedLevel(maxLevel)
-      })
-      .catch(e => setError(e.message))
+    let cancelled = false
+
+    function load() {
+      fetch(`/results.json?_=${Date.now()}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        })
+        .then((d: BotResults) => {
+          if (cancelled) return
+          setData(d)
+          setError(null)
+          // Only initialise the level filter on the very first successful load
+          setSelectedLevel(prev => {
+            if (prev !== null) return prev
+            return Math.max(...d.trend_levels.map(t => t.level))
+          })
+        })
+        .catch(e => { if (!cancelled) setError(e.message) })
+    }
+
+    load()
+    const id = setInterval(load, POLL_MS)
+    return () => { cancelled = true; clearInterval(id) }
   }, [])
 
   // Derive filtered datasets whenever the raw data, selected level, or date range changes.

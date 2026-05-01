@@ -24,6 +24,7 @@ class DataFeed:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._is_testnet = settings.trading_mode == 'testnet'
+        self._mode_suffix = 'test' if self._is_testnet else 'live'
 
         self._client = Client(settings.api_key, settings.api_secret, testnet=self._is_testnet)
         if self._is_testnet:
@@ -42,6 +43,7 @@ class DataFeed:
         Saves the merged result back to cache.
         """
         cache_path = self._cache_path(symbol, timeframe)
+        self._migrate_old_cache(symbol, timeframe, cache_path)
         cached = self._read_cache(cache_path)
 
         if cached:
@@ -52,18 +54,18 @@ class DataFeed:
             logger.info(f"No cache found, fetching {limit} klines")
             fresh = self._fetch(symbol, timeframe, limit=limit)
 
-        merged = self._merge(cached, fresh, limit)
+        merged = self._merge(cached, fresh, timeframe, self._settings.kline_cache_limit)
         self._write_cache(cache_path, merged)
         logger.info(f"Kline cache ready: {len(merged)} candles")
         return merged
 
-    def append_kline(self, symbol: str, timeframe: str, kline: list, limit: int) -> None:
+    def append_kline(self, symbol: str, timeframe: str, kline: list) -> None:
         """Appends a single closed candle to the cache file."""
-        cache_path = self._cache_path(symbol, timeframe)
+        cache_path = self._cache_path(symbol, timeframe)  # already migrated on load_klines
         klines = self._read_cache(cache_path)
         if not klines or klines[-1][0] != kline[0]:
             klines.append(kline)
-            self._write_cache(cache_path, klines[-limit:])
+            self._write_cache(cache_path, klines[-self._settings.kline_cache_limit:])
 
     def _fetch(self, symbol: str, timeframe: str, limit: int, start_ms: Optional[int] = None) -> list:
         params = {'symbol': symbol, 'interval': timeframe, 'limit': limit}
@@ -131,9 +133,17 @@ class DataFeed:
     # Cache helpers                                                        #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _cache_path(symbol: str, timeframe: str) -> Path:
-        return Path('data') / f'{symbol}_{timeframe}.json'
+    def _cache_path(self, symbol: str, timeframe: str) -> Path:
+        return Path('data') / f'{symbol}_{timeframe}_{self._mode_suffix}.json'
+
+    def _migrate_old_cache(self, symbol: str, timeframe: str, new_path: Path) -> None:
+        """Rename the old mode-less cache file to the new name on first run."""
+        if new_path.exists():
+            return
+        old_path = Path('data') / f'{symbol}_{timeframe}.json'
+        if old_path.exists():
+            old_path.rename(new_path)
+            logger.info(f"Cache migrated: {old_path.name} → {new_path.name}")
 
     @staticmethod
     def _read_cache(path: Path) -> list:
@@ -151,9 +161,29 @@ class DataFeed:
         with open(path, 'w') as f:
             json.dump(klines, f)
 
-    @staticmethod
-    def _merge(cached: list, fresh: list, limit: int) -> list:
+    def _merge(self, cached: list, fresh: list, timeframe: str, cache_limit: int) -> list:
+        if not fresh:
+            return cached[-cache_limit:]
+
+        # Gap detection: if the first fresh candle opens more than one candle-width
+        # after the last cached close, the stored history is stale — discard it
+        # so we don't end up with a hole in the middle of the data.
+        if cached:
+            candle_ms = self._timeframe_to_ms(timeframe)
+            if int(fresh[0][0]) > int(cached[-1][6]) + candle_ms:
+                logger.warning(
+                    f"Gap detected in kline cache — discarding {len(cached)} stale candles"
+                )
+                cached = []
+
         combined = {int(k[0]): k for k in cached}
         combined.update({int(k[0]): k for k in fresh})
         sorted_klines = sorted(combined.values(), key=lambda k: int(k[0]))
-        return sorted_klines[-limit:]
+        return sorted_klines[-cache_limit:]
+
+    @staticmethod
+    def _timeframe_to_ms(timeframe: str) -> int:
+        units = {'m': 60_000, 'h': 3_600_000, 'd': 86_400_000}
+        unit = timeframe[-1]
+        value = int(timeframe[:-1])
+        return value * units.get(unit, 60_000)

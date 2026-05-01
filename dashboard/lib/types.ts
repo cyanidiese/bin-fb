@@ -36,6 +36,118 @@ export interface Kline {
   close: number;
 }
 
+// ── Backtest types ─────────────────────────────────────────────────────────
+
+export interface BacktestTrade {
+  side: 'BUY' | 'SELL';
+  level: number | null;
+  signal_type: string;
+  entry: number;
+  tp: number;
+  sl: number;
+  partial_price: number | null;
+  result: 'win' | 'partial' | 'trail' | 'loss';
+  close_price: number;
+  profit_pct: number;
+  open_candle: number;
+  close_candle: number | null;
+  best_price: number;
+  worst_price: number;
+  max_tp_reach_pct: number;
+  max_favorable_pct: number;
+  max_adverse_pct: number;
+}
+
+export interface BacktestPreset {
+  preset: string;
+  total_trades: number;
+  wins: number;
+  partials: number;
+  trails: number;
+  losses: number;
+  win_rate: number;
+  total_profit_pct: number;
+  avg_rr: number;
+  max_consecutive_losses: number;
+  total_profit_pts: number;
+  potential_win_pts: number;
+  potential_loss_pts: number;
+  avg_max_tp_reach_pct: number;
+  trades: BacktestTrade[];
+  settings: Record<string, number | boolean>;
+}
+
+export interface BacktestResults {
+  generated_at: string;
+  symbol: string;
+  timeframe: string;
+  klines_file: string;
+  total_klines: number;
+  presets: Record<string, BacktestPreset>;
+}
+
+// ── Paper trading types ────────────────────────────────────────────────────
+
+export interface PaperOpenOrder {
+  side: 'BUY' | 'SELL';
+  entry: number;
+  tp: number;
+  sl: number;
+  partial_price: number | null;
+  open_candle: number;
+  best_price: number;
+  worst_price: number;
+  max_tp_reach_pct: number;
+  unrealized_pct: number;
+  armed: boolean;
+}
+
+export interface PaperPreset extends BacktestPreset {
+  open_order: PaperOpenOrder | null;
+}
+
+export interface PaperResults {
+  generated_at: string;
+  started_at: string;
+  symbol: string;
+  timeframe: string;
+  current_price: number;
+  candle_index: number;
+  presets: Record<string, PaperPreset>;
+}
+
+// ── Backtest API (single-preset run) ──────────────────────────────────────
+
+export interface BacktestApiKline {
+  index: number
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface BacktestApiResponse {
+  klines: BacktestApiKline[]
+  preset: string
+  total_trades: number
+  wins: number
+  partials: number
+  trails: number
+  losses: number
+  win_rate: number
+  total_profit_pct: number
+  avg_rr: number
+  max_consecutive_losses: number
+  total_profit_pts: number
+  potential_win_pts: number
+  potential_loss_pts: number
+  avg_max_tp_reach_pct: number
+  trades: BacktestTrade[]
+}
+
+// ── Strategy snapshot ──────────────────────────────────────────────────────
+
 // The full snapshot written by bot/exporter.py after every candle close.
 // The dashboard reads this file from /results.json on each page load.
 export interface BotResults {

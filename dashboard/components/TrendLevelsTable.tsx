@@ -53,17 +53,30 @@ export default function TrendLevelsTable({ levels }: Props) {
       <table className="w-full text-sm">
         <thead className="bg-gray-900 text-gray-400 uppercase text-xs">
           <tr>
-            <th className="px-4 py-3 text-left cursor-pointer hover:text-white select-none" onClick={() => toggle('level')}>
+            <th className="px-4 py-3 text-left cursor-pointer hover:text-white select-none" onClick={() => toggle('level')}
+                title="Trend hierarchy level — L1 is the finest/fastest timeframe; higher levels are broader and slower to form">
               Lvl{arrow('level')}
             </th>
-            <th className="px-4 py-3 text-left cursor-pointer hover:text-white select-none" onClick={() => toggle('direction')}>
+            <th className="px-4 py-3 text-left cursor-pointer hover:text-white select-none" onClick={() => toggle('direction')}
+                title="Current trend direction at this level — ASC = higher highs and higher lows (uptrend), DESC = lower highs and lower lows (downtrend), NONE = not yet determined">
               Direction{arrow('direction')}
             </th>
-            {/* BoS = the price the market must close beyond to confirm this trend direction */}
-            <th className="px-4 py-3 text-left">Break of Structure</th>
-            <th className="px-4 py-3 text-left">BoS Since</th>
-            <th className="px-4 py-3 text-left">Last High</th>
-            <th className="px-4 py-3 text-left">Last Low</th>
+            <th className="px-4 py-3 text-left"
+                title="Break of Structure — the price level the market must close beyond to confirm the current trend direction. Also used as Stop Loss for signals generated at this level.">
+              Break of Structure
+            </th>
+            <th className="px-4 py-3 text-left"
+                title="When the current Break of Structure price was established (i.e. when the most recent trend confirmation candle closed)">
+              BoS Since
+            </th>
+            <th className="px-4 py-3 text-left"
+                title="Most recent confirmed swing high at this level — a candle peak with at least N lower highs on each side (N = SWING_NEIGHBOURS setting)">
+              Last High
+            </th>
+            <th className="px-4 py-3 text-left"
+                title="Most recent confirmed swing low at this level — a candle trough with at least N higher lows on each side">
+              Last Low
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800">

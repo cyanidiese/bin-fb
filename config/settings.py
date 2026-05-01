@@ -14,8 +14,38 @@ class Settings:
     symbol: str
     timeframe: str
     kline_limit: int
+    kline_cache_limit: int
     swing_neighbours: int
     timezone: str
+    # Recommendation engine
+    min_swing_points: int
+    min_profit_pct: float
+    min_profit_loss_ratio: float
+    precision_similarity_threshold: float
+    projection_lookback: int
+    proximity_zone_pct: float
+    partial_take_pct: float
+    trailing_stop_pct: float
+    # Conservative TP: multiply projected TP distance by this before evaluating
+    # (e.g. 0.90 = target 90% of full TP, easier to hit, smaller win)
+    tp_multiplier: float
+    # SL distance filters (% of entry). 0.0 = disabled.
+    min_sl_pct: float   # skip trades where SL is closer than this (too noisy)
+    max_sl_pct: float   # skip trades where SL is farther than this (too risky)
+    # When True: tighten SL to meet min_profit_loss_ratio instead of skipping the trade.
+    sl_adjust_to_rr: bool
+    # Max TP distance as % of entry. Trades with wider TP targets are skipped. 0.0 = disabled.
+    max_profit_pct: float
+    # Candle-based directional cooldown. 0 = disabled.
+    # After loss_streak_max consecutive losses on one side, block that side for
+    # loss_streak_cooldown_candles candles before allowing a new entry.
+    loss_streak_max: int
+    loss_streak_cooldown_candles: int
+    # Global pause: if both BUY and SELL each lost within global_pause_trigger_candles of
+    # each other, block ALL new entries for global_pause_candles candles.
+    # 0 = disabled. Requires loss_streak_max > 0 to be meaningful.
+    global_pause_trigger_candles: int
+    global_pause_candles: int
 
 
 def load_settings() -> Settings:
@@ -61,6 +91,24 @@ def load_settings() -> Settings:
         symbol=symbol.upper(),
         timeframe=os.getenv('TIMEFRAME', '15m'),
         kline_limit=int(os.getenv('KLINE_LIMIT', '1000')),
+        kline_cache_limit=int(os.getenv('KLINE_CACHE_LIMIT', '5000')),
         swing_neighbours=int(os.getenv('SWING_NEIGHBOURS', '2')),
         timezone=os.getenv('TIMEZONE', 'UTC'),
+        min_swing_points=int(os.getenv('MIN_SWING_POINTS', '3')),
+        min_profit_pct=float(os.getenv('MIN_PROFIT_PCT', '0.5')),
+        min_profit_loss_ratio=float(os.getenv('MIN_PROFIT_LOSS_RATIO', '1.5')),
+        precision_similarity_threshold=float(os.getenv('PRECISION_SIMILARITY_THRESHOLD', '0.10')),
+        projection_lookback=int(os.getenv('PROJECTION_LOOKBACK', '4')),
+        proximity_zone_pct=float(os.getenv('PROXIMITY_ZONE_PCT', '10.0')),
+        partial_take_pct=float(os.getenv('PARTIAL_TAKE_PCT', '0.0')),
+        trailing_stop_pct=float(os.getenv('TRAILING_STOP_PCT', '0.0')),
+        tp_multiplier=float(os.getenv('TP_MULTIPLIER', '1.0')),
+        min_sl_pct=float(os.getenv('MIN_SL_PCT', '0.0')),
+        max_sl_pct=float(os.getenv('MAX_SL_PCT', '0.0')),
+        sl_adjust_to_rr=os.getenv('SL_ADJUST_TO_RR', 'false').lower() in ('1', 'true', 'yes'),
+        max_profit_pct=float(os.getenv('MAX_PROFIT_PCT', '0.0')),
+        loss_streak_max=int(os.getenv('LOSS_STREAK_MAX', '0')),
+        loss_streak_cooldown_candles=int(os.getenv('LOSS_STREAK_COOLDOWN_CANDLES', '5')),
+        global_pause_trigger_candles=int(os.getenv('GLOBAL_PAUSE_TRIGGER_CANDLES', '0')),
+        global_pause_candles=int(os.getenv('GLOBAL_PAUSE_CANDLES', '10')),
     )

@@ -60,8 +60,46 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] Close / Open / Max / Min price lines on chart
 - [x] Price lines clamped to earliest active swing point
 - [x] Inactive points earlier than oldest active point removed from view
-- [ ] Auto-refresh — poll results.json every N seconds without manual reload
+- [x] Auto-refresh — polls results.json every 15s with cache-buster
 - [ ] Account info panel — balance, available margin, unrealised PnL via Binance REST
+
+## Kline cache improvement
+
+- [x] Rename cache files to `data/{SYMBOL}_{TIMEFRAME}_{MODE}.json`
+- [x] Auto-migrate old `{SYMBOL}_{TIMEFRAME}.json` on first run
+- [x] Implement smart append: merge new klines, detect gaps, trim to `KLINE_CACHE_LIMIT`
+- [x] Add `KLINE_CACHE_LIMIT` env var (default 5000)
+
+## Phase 3.5 — Backtesting / preset comparison
+
+- [x] `bot/fake_order.py` — FakeOrder model with TP/SL check logic + two-stage partial take
+- [x] `bot/backtester.py` — preset runner: replay klines, fake order lifecycle, stats aggregation
+- [x] `backtest.py` — CLI: 57 presets, dual output (archive + dashboard feed), summary table
+- [x] Same-candle TP+SL spike → loss (SL priority, conservative default)
+- [x] Candle-direction same-candle priority in FakeOrder.check() (ascending/descending)
+- [x] Presets via `dataclasses.replace()` — no env mutation, backtest-safe
+- [x] Partial take (two-stage arm+trigger) in FakeOrder and backtester
+- [x] Trailing stop (arm + _max_favorable + trail_price) — 'trail' result type
+- [x] Dashboard `/backtest` page — sortable summary table + per-preset trade drill-down
+- [x] P&L stats block: actual pts, potential win/loss, avg TP reach
+- [x] Preset settings chips displayed below trade list
+- [x] `trailing_stop_pct`, `tp_multiplier`, `min_sl_pct`, `max_sl_pct` settings + presets
+- [x] `sl_adjust_to_rr` — tighten SL to meet RR instead of skipping
+- [x] `max_profit_pct` — skip trades with TP distance wider than N%
+- [x] SELL SL ×1.5 adjustment for min_sl_pct check (spikes harsher on SELL)
+- [x] Absolute SL floor (0.01% of entry) — reject degenerate micro-swing signals
+- [x] Candle-direction same-candle TP+SL priority in FakeOrder.check()
+- [x] Direction-based consecutive loss cooldown (candle-based, per side)
+- [x] Global pause (both sides lose within N candles → pause all entries)
+- [x] `OrderManager` — 3-order live structure + startup reconciliation (`bot/order_manager.py`)
+- [x] 4 rounds of preset tuning — best result: `trail_15_from_30_full` (62.5%, +795pts, MaxDD=2)
+- [x] `bot/paper_trader.py` — live fake-order engine, per-candle lifecycle, state persistence, JSON export
+- [x] `paper_trade.py` — CLI entry point (10 curated presets, DataFeed + PaperTrader wiring)
+- [x] `dashboard/app/paper/page.tsx` — auto-refresh, open orders panel, summary table, trade drill-down
+- [x] `dashboard/lib/types.ts` — PaperOpenOrder, PaperPreset, PaperResults interfaces
+- [x] Analyse existing presets, identify improvement levers, create 7 improved variants per family
+- [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
+- [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
 
 ## Phase 4 — Order placement
 

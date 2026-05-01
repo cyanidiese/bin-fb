@@ -7,6 +7,7 @@ from pathlib import Path
 from config.settings import load_settings
 from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
+from bot.recommendation_engine import RecommendationEngine
 from bot import display
 from bot import exporter
 
@@ -46,17 +47,22 @@ async def run() -> None:
     )
 
     feed = DataFeed(settings)
-    analyzer = Analyzer(settings.swing_neighbours)
+    engine = RecommendationEngine(settings)
+    analyzer = Analyzer(settings.swing_neighbours, engine)
 
     klines = feed.load_klines(settings.symbol, settings.timeframe, settings.kline_limit)
     analyzer.build_from_klines(klines)
     logger.info("Initial trend state built")
-    display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), analyzer.get_recommendations())
+
+    recs = analyzer.get_recommendations()
+    best = analyzer.get_best_recommendation()
+    display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs)
     exporter.export(
         settings.symbol, settings.timeframe, settings.trading_mode,
         analyzer.get_current_price(), analyzer.get_trend(),
-        analyzer.get_klines(), analyzer.get_recommendations(),
+        analyzer.get_klines(), recs,
         analyzer.get_all_points(),
+        best,
     )
 
     async def on_candle_close(kline: list) -> None:
@@ -65,7 +71,8 @@ async def run() -> None:
             raise SystemExit(0)
 
         recs = analyzer.add_candle(kline)
-        feed.append_kline(settings.symbol, settings.timeframe, kline, settings.kline_limit)
+        feed.append_kline(settings.symbol, settings.timeframe, kline)
+        best = analyzer.get_best_recommendation()
 
         candle_close_time = int(kline[6]) // 1000
         display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs, candle_close_time)
@@ -74,14 +81,16 @@ async def run() -> None:
             analyzer.get_current_price(), analyzer.get_trend(),
             analyzer.get_klines(), recs,
             analyzer.get_all_points(),
+            best,
         )
+
+        if best is not None:
+            logger.info(f"Best signal: {best}")
+            trades_logger.info(f"BEST | symbol={settings.symbol} | {best}")
 
         if recs:
             for rec in recs:
-                logger.info(f"Signal: {rec}")
-                trades_logger.info(
-                    f"SIGNAL | symbol={settings.symbol} | {rec}"
-                )
+                trades_logger.info(f"CANDIDATE | symbol={settings.symbol} | {rec}")
 
     _first_tick = True
 

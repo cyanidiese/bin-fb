@@ -2,12 +2,14 @@ from typing import List, Optional
 
 from bot.kline_processor import KlineProcessor
 from bot.recommendation import Recommendation
+from bot.recommendation_engine import RecommendationEngine
 from bot.trend import Trend
 
 
 class Analyzer:
-    def __init__(self, swing_neighbours: int = 2):
+    def __init__(self, swing_neighbours: int = 2, engine: Optional[RecommendationEngine] = None):
         self._processor = KlineProcessor(swing_neighbours)
+        self._engine = engine
         self._trend: Optional[Trend] = None
         self._klines: list = []
         self._current_price: float = 0.0
@@ -15,6 +17,7 @@ class Analyzer:
         # Never cleared on BoS — the trend's removePointsUpTo() wipes the live
         # trend state but we want the dashboard to show the full historical picture.
         self._all_points: list = []
+        self._best_recommendation: Optional[Recommendation] = None
 
     def _capture_bigger_trends(self) -> None:
         """Snapshot any new L2+ points into the permanent history.
@@ -49,6 +52,7 @@ class Analyzer:
     def build_from_klines(self, klines: list) -> None:
         self._klines = list(klines)
         self._all_points = []
+        self._best_recommendation = None
         self._trend = Trend(1)
         for point_dict in self._processor.detect_points(klines):
             # Capture L1 point before the trend processes it — processing may
@@ -81,7 +85,21 @@ class Analyzer:
             self._trend.checkPointObject(point_dict)
             self._capture_bigger_trends()
 
-        return self._trend.getRecommendations() if new_points else []
+        if new_points:
+            self._refresh_recommendations()
+
+        pct = self._engine._s.proximity_zone_pct if self._engine else 10.0
+        return self._trend.getRecommendations(
+            entry_price=self._current_price,
+            proximity_zone_pct=pct,
+        )
+
+    def _refresh_recommendations(self) -> None:
+        """Run the scoring engine and cache the best recommendation."""
+        if self._engine is None or self._trend is None:
+            self._best_recommendation = None
+            return
+        self._best_recommendation = self._engine.generate(self._trend, self._current_price)
 
     def update_price(self, price: float) -> None:
         self._current_price = price
@@ -90,9 +108,24 @@ class Analyzer:
         return self._current_price
 
     def get_recommendations(self) -> List[Recommendation]:
+        """All per-level candidates (unfiltered, for display)."""
         if self._trend is None:
             return []
-        return self._trend.getRecommendations()
+        pct = self._engine._s.proximity_zone_pct if self._engine else 10.0
+        return self._trend.getRecommendations(
+            entry_price=self._current_price,
+            proximity_zone_pct=pct,
+        )
+
+    def get_scored_recommendations(self) -> List[Recommendation]:
+        """All candidates that survive scoring filters, with precision/RR set."""
+        if self._engine is None or self._trend is None:
+            return []
+        return self._engine.collect_all(self._trend, self._current_price)
+
+    def get_best_recommendation(self) -> Optional[Recommendation]:
+        """The single winner selected by the engine, or None."""
+        return self._best_recommendation
 
     def get_all_points(self) -> list:
         # Determine which historical points are currently "active" (still present

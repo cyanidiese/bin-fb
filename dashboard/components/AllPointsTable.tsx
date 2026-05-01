@@ -35,12 +35,11 @@ function PointRow({ point }: { point: SwingPoint }) {
   )
 }
 
-// Column header definitions — the same headers are rendered in both column tables
-const COLS: { key: SortKey; label: string }[] = [
-  { key: 'time',  label: 'Time'  },
-  { key: 'level', label: 'Lvl'   },
-  { key: 'type',  label: 'Type'  },
-  { key: 'price', label: 'Price' },
+const COLS: { key: SortKey; label: string; title: string }[] = [
+  { key: 'time',  label: 'Time',  title: 'Candle open time when this swing point was confirmed (requires SWING_NEIGHBOURS candles on each side to close before detection)' },
+  { key: 'level', label: 'Lvl',   title: 'Trend level this swing point belongs to — L1 is the finest/fastest, higher levels require larger price moves to form' },
+  { key: 'type',  label: 'Type',  title: 'High = swing high (local price peak confirmed by lower highs on both sides), Low = swing low (local price trough)' },
+  { key: 'price', label: 'Price', title: 'Price value of the swing point' },
 ]
 
 // Full list of ACTIVE swing points for the active level selection, displayed in two
@@ -81,7 +80,8 @@ export default function AllPointsTable({ points }: Props) {
     <tr className="bg-gray-900 text-gray-400 uppercase text-xs">
       {COLS.map(c => (
         <th key={c.key} className="px-3 py-2 text-left cursor-pointer hover:text-white select-none whitespace-nowrap"
-            onClick={() => toggle(c.key)}>
+            onClick={() => toggle(c.key)}
+            title={c.title}>
           {c.label}{arrow(c.key)}
         </th>
       ))}

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from bot.recommendation import Recommendation
 from bot.trend import Trend
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ def export(
     klines: list,
     recommendations: list,
     all_points_history: Optional[list] = None,
+    best_recommendation: Optional[Recommendation] = None,
 ) -> None:
     if trend is None:
         return
@@ -77,16 +79,7 @@ def export(
         for k in klines[-_MAX_KLINES:]
     ]
 
-    signals = [
-        {
-            'level': rec.getLevel(),
-            'side': rec.getSide(),
-            'signal_type': rec.getType().value,
-            'target': rec.getTarget(),
-            'stop': rec.getStop(),
-        }
-        for rec in recommendations
-    ]
+    signals = [_rec_dict(rec) for rec in recommendations]
 
     result = {
         'symbol': symbol,
@@ -98,6 +91,7 @@ def export(
         'all_points': all_points,
         'klines': kline_data,
         'signals': signals,
+        'best_signal': _rec_dict(best_recommendation) if best_recommendation is not None else None,
     }
 
     try:
@@ -105,6 +99,20 @@ def export(
         _OUTPUT_PATH.write_text(json.dumps(result, indent=2))
     except Exception as e:
         logger.error(f"Failed to write results.json: {e}")
+
+
+def _rec_dict(rec: Recommendation) -> dict:
+    return {
+        'level': rec.getLevel(),
+        'side': rec.getSide(),
+        'signal_type': rec.getType().value,
+        'is_reversal': rec.isReversal(),
+        'entry': rec.getEntryPrice(),
+        'target': rec.getTarget(),
+        'stop': rec.getStop(),
+        'rr': rec.getRR(),
+        'precision': rec.getPrecision(),
+    }
 
 
 def _ts(unix_seconds: Optional[int]) -> Optional[str]:

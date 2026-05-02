@@ -14,6 +14,12 @@ class RecommendationTypes(Enum):
     LOWERING_NEAR_LAST_LOW = 'lowering_near_last_low'
     LOWERING_NEAR_SUPPOSED_LOW = 'lowering_near_supposed_low'
     LOWERING_BELOW_SUPPOSED_LOW = 'lowering_below_supposed_low'
+    # SELL fired when price approaches a projected lower high from below in a
+    # descending trend (before the lower high is confirmed as a swing point).
+    DESCENDING_NEAR_LOWER_HIGH = 'descending_near_lower_high'
+    # BUY fired when price approaches a projected higher low from above in an
+    # ascending trend (before the higher low is confirmed as a swing point).
+    ASCENDING_NEAR_HIGHER_LOW = 'ascending_near_higher_low'
 
 
 class Recommendation:

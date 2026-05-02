@@ -71,7 +71,10 @@ async def run() -> None:
             raise SystemExit(0)
 
         recs = analyzer.add_candle(kline)
-        feed.append_kline(settings.symbol, settings.timeframe, kline)
+        try:
+            feed.refresh_klines(settings.symbol, settings.timeframe, fetch_count=10)
+        except Exception as e:
+            logger.warning(f"Kline refresh failed — cache not updated: {e}")
         best = analyzer.get_best_recommendation()
 
         candle_close_time = int(kline[6]) // 1000

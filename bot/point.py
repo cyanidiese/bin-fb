@@ -20,7 +20,7 @@ class Point:
         Expected keys:
           - is_high  (bool)  — True if this candle is a local high
           - is_low   (bool)  — True if this candle is a local low
-          - value    (dict)  — {'high': float, 'low': float}
+          - value    (dict)  — {'high': float, 'low': float, 'close': float}
           - time     (int)   — Unix timestamp (seconds)
 
         @param point_object  Raw dict produced by the kline-scanning loop.
@@ -29,6 +29,7 @@ class Point:
         self._is_low_point = bool(point_object['is_low'])
         self._value_high = float(point_object['value']['high'])
         self._value_low = float(point_object['value']['low'])
+        self._value_close = float(point_object['value'].get('close', point_object['value']['high']))
         self._time = int(point_object['time'])
 
     # ------------------------------------------------------------------ #
@@ -54,6 +55,10 @@ class Point:
     def getLowValue(self) -> float:
         """Returns the candle's low price at this point."""
         return self._value_low
+
+    def getCloseValue(self) -> float:
+        """Returns the candle's close price at this point."""
+        return self._value_close
 
     def getMainValue(self) -> float:
         """
@@ -88,6 +93,7 @@ class Point:
             'value': {
                 'high': self._value_high,
                 'low': self._value_low,
+                'close': self._value_close,
             },
             'time': self._time,
         })

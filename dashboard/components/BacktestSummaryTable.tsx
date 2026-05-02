@@ -13,6 +13,8 @@ interface Props {
   selectedPreset: string | null
   onSelect: (name: string) => void
   onDelete?: (name: string) => void
+  onToggleLock?: (name: string, action: 'lock' | 'unlock') => void
+  lockedPresets?: Set<string>
 }
 
 const COLS: { key: SortKey; label: string; align: 'left' | 'right'; title: string }[] = [
@@ -29,15 +31,17 @@ const COLS: { key: SortKey; label: string; align: 'left' | 'right'; title: strin
   { key: 'avg_max_tp_reach_pct',  label: 'AvgTP%',  align: 'right', title: 'Average % of TP distance price reached on non-winning trades. Above 80% means price nearly hit TP — consider lowering the partial take threshold.' },
 ]
 
-export default function BacktestSummaryTable({ presets, selectedPreset, onSelect, onDelete }: Props) {
+type PendingAction = { name: string; type: 'delete' | 'lock' | 'unlock' }
+
+export default function BacktestSummaryTable({ presets, selectedPreset, onSelect, onDelete, onToggleLock, lockedPresets }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('total_profit_pct')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  // Row hover / delete state
+  // Row hover / pending-action state
   const [hoveredRow, setHoveredRow] = useState<string | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
 
-  // Quick-delete: skip per-item confirmation
+  // Quick-delete: skip per-item confirmation (delete only, not lock/unlock)
   const [skipConfirm, setSkipConfirm] = useState(false)
   const [confirmEnableSkip, setConfirmEnableSkip] = useState(false)
 
@@ -63,8 +67,7 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
 
   function handleRowEnter(name: string) {
     setHoveredRow(name)
-    // Cancel any pending confirmation when moving to a different row
-    if (pendingDelete && pendingDelete !== name) setPendingDelete(null)
+    if (pendingAction && pendingAction.name !== name) setPendingAction(null)
   }
 
   function handleDeleteClick(e: React.MouseEvent, name: string) {
@@ -73,19 +76,28 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
     if (skipConfirm) {
       onDelete(name)
     } else {
-      setPendingDelete(name)
+      setPendingAction({ name, type: 'delete' })
     }
   }
 
-  function handleConfirmDelete(e: React.MouseEvent, name: string) {
+  function handleLockClick(e: React.MouseEvent, name: string, action: 'lock' | 'unlock') {
     e.stopPropagation()
-    setPendingDelete(null)
-    onDelete?.(name)
+    if (!onToggleLock) return
+    setPendingAction({ name, type: action })
   }
 
-  function handleCancelDelete(e: React.MouseEvent) {
+  function handleConfirm(e: React.MouseEvent) {
     e.stopPropagation()
-    setPendingDelete(null)
+    if (!pendingAction) return
+    const { name, type } = pendingAction
+    setPendingAction(null)
+    if (type === 'delete') onDelete?.(name)
+    else onToggleLock?.(name, type)
+  }
+
+  function handleCancel(e: React.MouseEvent) {
+    e.stopPropagation()
+    setPendingAction(null)
   }
 
   const arrow = (key: SortKey) => key === sortKey ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''
@@ -152,9 +164,11 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
           <tbody>
             {sorted.map(p => {
               const isSelected = p.preset === selectedPreset
-              const isPending = pendingDelete === p.preset
+              const isPending = pendingAction?.name === p.preset
               const isHovered = hoveredRow === p.preset
-              const showActions = onDelete && (isHovered || isPending)
+              const isLocked = lockedPresets?.has(p.preset) ?? false
+              const hasActions = (onDelete && !isLocked) || !!onToggleLock
+              const showActions = hasActions && (isHovered || isPending)
               const profitColor = p.total_profit_pct > 0 ? 'text-emerald-400' : p.total_profit_pct < 0 ? 'text-red-400' : 'text-gray-400'
 
               return (
@@ -165,7 +179,7 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
                   onMouseLeave={() => setHoveredRow(null)}
                   className={`border-b border-gray-800/60 transition-colors ${
                     isPending
-                      ? 'bg-red-950/20 cursor-default'
+                      ? pendingAction?.type === 'delete' ? 'bg-red-950/20 cursor-default' : 'bg-amber-950/20 cursor-default'
                       : isSelected
                         ? 'bg-blue-950/60 cursor-pointer'
                         : 'hover:bg-gray-800/40 cursor-pointer'
@@ -188,33 +202,51 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
                         >
                           {isPending ? (
                             <>
-                              <span className="text-gray-500">Delete?</span>
+                              <span className="text-gray-500">
+                                {pendingAction?.type === 'delete' ? 'Delete?' :
+                                 pendingAction?.type === 'lock'   ? 'Lock?' : 'Unlock?'}
+                              </span>
                               <button
-                                onClick={e => handleConfirmDelete(e, p.preset)}
-                                className="text-red-400 hover:text-red-300 font-semibold transition-colors"
+                                onClick={handleConfirm}
+                                className={`font-semibold transition-colors ${pendingAction?.type === 'delete' ? 'text-red-400 hover:text-red-300' : 'text-amber-400 hover:text-amber-300'}`}
                               >
                                 Yes
                               </button>
                               <span className="text-gray-700">|</span>
                               <button
-                                onClick={handleCancelDelete}
+                                onClick={handleCancel}
                                 className="text-gray-500 hover:text-gray-300 transition-colors"
                               >
                                 No
                               </button>
                             </>
                           ) : (
-                            <button
-                              onClick={e => handleDeleteClick(e, p.preset)}
-                              className="text-gray-600 hover:text-red-400 transition-colors whitespace-nowrap"
-                            >
-                              🗑 Remove
-                            </button>
+                            <div className="flex items-center gap-2">
+                              {onToggleLock && (
+                                <button
+                                  onClick={e => handleLockClick(e, p.preset, isLocked ? 'unlock' : 'lock')}
+                                  className="text-gray-600 hover:text-amber-400 transition-colors whitespace-nowrap"
+                                >
+                                  {isLocked ? '🔓 Unlock' : '🔒 Lock'}
+                                </button>
+                              )}
+                              {onDelete && !isLocked && (
+                                <button
+                                  onClick={e => handleDeleteClick(e, p.preset)}
+                                  className="text-gray-600 hover:text-red-400 transition-colors whitespace-nowrap"
+                                >
+                                  🗑 Remove
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <span className="font-semibold text-white">{p.preset}</span>
+                      <span className="flex items-center gap-1.5 font-semibold text-white">
+                        {isLocked && <span className="text-amber-500 text-[10px]" title="Locked preset — cannot be deleted">🔒</span>}
+                        {p.preset}
+                      </span>
                     )}
                   </td>
 

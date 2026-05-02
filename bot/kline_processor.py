@@ -51,5 +51,6 @@ class KlineProcessor:
         )
 
         if is_high or is_low:
-            return [{'is_high': is_high, 'is_low': is_low, 'value': {'high': high, 'low': low}, 'time': time_s}]
+            close = float(klines[i][4])
+            return [{'is_high': is_high, 'is_low': is_low, 'value': {'high': high, 'low': low, 'close': close}, 'time': time_s}]
         return []

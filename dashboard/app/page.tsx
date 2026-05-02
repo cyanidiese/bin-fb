@@ -11,6 +11,22 @@ import LevelFilter from '@/components/LevelFilter'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import { useLocalStorage } from '@/lib/useLocalStorage'
 
+function tsToDatetimeLocal(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function snapTo15Min(dt: string): string {
+  if (!dt) return dt
+  const ms = new Date(dt).getTime()
+  if (isNaN(ms)) return dt
+  const snapped = Math.floor(ms / 900_000) * 900_000
+  const d = new Date(snapped)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function Page() {
   // Raw snapshot loaded from /results.json (written by bot/exporter.py after each candle close)
   const [data, setData] = useState<BotResults | null>(null)
@@ -81,9 +97,14 @@ export default function Page() {
     const oldestActiveMs = activeMs.length > 0 ? Math.min(...activeMs) : 0
     const filteredPoints = levelPoints.filter(p => p.active || new Date(p.time).getTime() >= oldestActiveMs)
 
+    // When no fromDate is set, auto-clip klines to the oldest active swing point so
+    // the chart stays focused on the current structure. When fromDate IS explicitly
+    // set, honour it exactly — don't let the auto-clip override the user's choice.
+    const effectiveFromMs = !fromDate && oldestActiveMs > 0 ? oldestActiveMs : fromMs
+
     const filteredKlines = data.klines.filter(k => {
       const ms = k.time * 1000
-      return ms >= fromMs && ms <= toMs
+      return ms >= effectiveFromMs && ms <= toMs
     })
 
     return { filteredPoints, filteredKlines, filteredLevels, availableLevels }
@@ -105,6 +126,9 @@ export default function Page() {
     )
   }
 
+  const klineMinDate = data.klines.length > 0 ? tsToDatetimeLocal(data.klines[0].time) : ''
+  const klineMaxDate = data.klines.length > 0 ? tsToDatetimeLocal(data.klines[data.klines.length - 1].time) : ''
+
   return (
     <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
       {/* Symbol, timeframe, mode badge, current price, and snapshot timestamp */}
@@ -122,15 +146,21 @@ export default function Page() {
           <span className="uppercase tracking-wider">From</span>
           <input
             type="datetime-local"
+            step={900}
             value={fromDate}
-            onChange={e => setFromDate(e.target.value)}
+            min={klineMinDate}
+            max={klineMaxDate}
+            onChange={e => setFromDate(snapTo15Min(e.target.value))}
             className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
           />
           <span className="uppercase tracking-wider">To</span>
           <input
             type="datetime-local"
+            step={900}
             value={toDate}
-            onChange={e => setToDate(e.target.value)}
+            min={klineMinDate}
+            max={klineMaxDate}
+            onChange={e => setToDate(snapTo15Min(e.target.value))}
             className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
           />
         </div>

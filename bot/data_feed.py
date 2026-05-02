@@ -67,6 +67,31 @@ class DataFeed:
             klines.append(kline)
             self._write_cache(cache_path, klines[-self._settings.kline_cache_limit:])
 
+    def refresh_klines(self, symbol: str, timeframe: str, fetch_count: int = 10) -> list:
+        """
+        Fetch recent klines from the REST API and merge into the cache.
+
+        Called on every candle close (fetch_count=10) and on backtest start
+        (fetch_count=1500).  If the fetched batch has a gap vs the existing
+        cache, re-fetches 1500 klines to fill it.
+        Returns the updated kline list.
+        """
+        cache_path = self._cache_path(symbol, timeframe)
+        cached = self._read_cache(cache_path)
+
+        fresh = self._fetch(symbol, timeframe, limit=fetch_count)
+
+        if cached and fresh and fetch_count < 1500:
+            candle_ms = self._timeframe_to_ms(timeframe)
+            if int(fresh[0][0]) > int(cached[-1][6]) + candle_ms:
+                logger.warning("Gap detected in kline cache — re-fetching 1500 klines")
+                fresh = self._fetch(symbol, timeframe, limit=1500)
+
+        merged = self._merge(cached, fresh, timeframe, self._settings.kline_cache_limit)
+        self._write_cache(cache_path, merged)
+        logger.info(f"Kline cache refreshed: {len(merged)} candles")
+        return merged
+
     def _fetch(self, symbol: str, timeframe: str, limit: int, start_ms: Optional[int] = None) -> list:
         params = {'symbol': symbol, 'interval': timeframe, 'limit': limit}
         if start_ms is not None:

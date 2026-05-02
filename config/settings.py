@@ -36,6 +36,9 @@ class Settings:
     sl_adjust_to_rr: bool
     # Max TP distance as % of entry. Trades with wider TP targets are skipped. 0.0 = disabled.
     max_profit_pct: float
+    # Correction quality bonus weight in precision scoring. 0.0 = disabled (no change to scoring).
+    # When > 0, signals that follow a well-formed correction get a precision boost up to this value.
+    correction_weight: float
     # Candle-based directional cooldown. 0 = disabled.
     # After loss_streak_max consecutive losses on one side, block that side for
     # loss_streak_cooldown_candles candles before allowing a new entry.
@@ -46,6 +49,15 @@ class Settings:
     # 0 = disabled. Requires loss_streak_max > 0 to be meaningful.
     global_pause_trigger_candles: int
     global_pause_candles: int
+    # When True: in a descending trend with last confirmed swing = LOW, fire a SELL
+    # when price approaches the projected lower high from below (within proximity_zone_pct).
+    # SL = last confirmed HIGH, TP = supposed_next_low. Default False so existing
+    # presets are unaffected.
+    lower_high_sell: bool
+    # Mirror of lower_high_sell: in an ascending trend with last confirmed swing = HIGH,
+    # fire a BUY when price approaches the projected higher low from above.
+    # SL = last confirmed LOW, TP = supposed_next_high. Default False.
+    higher_low_buy: bool
 
 
 def load_settings() -> Settings:
@@ -107,8 +119,11 @@ def load_settings() -> Settings:
         max_sl_pct=float(os.getenv('MAX_SL_PCT', '0.0')),
         sl_adjust_to_rr=os.getenv('SL_ADJUST_TO_RR', 'false').lower() in ('1', 'true', 'yes'),
         max_profit_pct=float(os.getenv('MAX_PROFIT_PCT', '0.0')),
+        correction_weight=float(os.getenv('CORRECTION_WEIGHT', '0.0')),
         loss_streak_max=int(os.getenv('LOSS_STREAK_MAX', '0')),
         loss_streak_cooldown_candles=int(os.getenv('LOSS_STREAK_COOLDOWN_CANDLES', '5')),
         global_pause_trigger_candles=int(os.getenv('GLOBAL_PAUSE_TRIGGER_CANDLES', '0')),
         global_pause_candles=int(os.getenv('GLOBAL_PAUSE_CANDLES', '10')),
+        lower_high_sell=os.getenv('LOWER_HIGH_SELL', 'false').lower() in ('1', 'true', 'yes'),
+        higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
     )

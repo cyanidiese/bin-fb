@@ -99,7 +99,8 @@
       "Bash(.venv/bin/python3 backtest_api.py '{\"trailing_stop_pct\": 0.05, \"partial_take_pct\": 0.15, \"min_profit_loss_ratio\": 4, \"proximity_zone_pct\": 20}')",
       "Bash(.venv/bin/python3 backtest_api.py '{\"trailing_stop_pct\": 0.05, \"partial_take_pct\": 0.15, \"tp_multiplier\": 0.95, \"min_profit_loss_ratio\": 4, \"proximity_zone_pct\": 20, \"loss_streak_max\": 2, \"loss_streak_cooldown_candles\": 2, \"global_pause_trigger_candles\": 2, \"global_pause_candles\": 7}')",
       "Bash(.venv/bin/python3 backtest_api.py '{\"trailing_stop_pct\": 0.05, \"partial_take_pct\": 0.15, \"tp_multiplier\": 0.95, \"min_profit_loss_ratio\": 4, \"proximity_zone_pct\": 20, \"min_profit_pct\": 0.7, \"loss_streak_max\": 2, \"loss_streak_cooldown_candles\": 2, \"global_pause_trigger_candles\": 2, \"global_pause_candles\": 7}')",
-      "Bash(.venv/bin/python3 backtest_api.py '{\"trailing_stop_pct\": 0.05, \"partial_take_pct\": 0.15, \"tp_multiplier\": 0.95, \"min_profit_loss_ratio\": 3, \"proximity_zone_pct\": 20, \"min_profit_pct\": 0.7, \"loss_streak_max\": 2, \"loss_streak_cooldown_candles\": 2, \"global_pause_trigger_candles\": 2, \"global_pause_candles\": 7}')"
+      "Bash(.venv/bin/python3 backtest_api.py '{\"trailing_stop_pct\": 0.05, \"partial_take_pct\": 0.15, \"tp_multiplier\": 0.95, \"min_profit_loss_ratio\": 3, \"proximity_zone_pct\": 20, \"min_profit_pct\": 0.7, \"loss_streak_max\": 2, \"loss_streak_cooldown_candles\": 2, \"global_pause_trigger_candles\": 2, \"global_pause_candles\": 7}')",
+      "Bash(.venv/bin/python3 *)"
     ]
   }
 }

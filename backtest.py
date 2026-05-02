@@ -22,6 +22,7 @@ from pathlib import Path
 
 from config.settings import load_settings
 from bot.backtester import Backtester
+from bot.data_feed import DataFeed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -478,6 +479,28 @@ PRESETS: dict = {
         'global_pause_candles': 10,
     },
 
+    # ── Correction quality bonus ──────────────────────────────────────────────
+    # correction_weight adds a bonus (0.0–weight) to precision when a signal
+    # follows a well-formed correction (2+ swings, 20–80% depth).
+    # Default weight=0.0 leaves all existing presets unaffected.
+    'correction_w10': {'correction_weight': 0.10},
+    'correction_w20': {'correction_weight': 0.20},
+    'correction_w30': {'correction_weight': 0.30},
+    # Combined: correction bonus on top of two proven good configs
+    'correction_w20_trail15_30': {
+        'correction_weight': 0.20,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+    },
+    'correction_w20_high_rr': {
+        'correction_weight': 0.20,
+        'min_profit_loss_ratio': 2.5,
+        'min_profit_pct': 1.0,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+    },
+
     # ── Full old-bot clone with all translated settings ───────────────────────
     'db_full_clone': {
         'min_profit_loss_ratio': 4.0,
@@ -532,6 +555,99 @@ PRESETS: dict = {
         'min_profit_loss_ratio': 4.0,
     },
 
+    # ── Round 5: systematic exploration on proven best base ──────────────────
+    # Base = trail_15_from_30_full (13T, 53.8%, +1.12%, MaxDD=5)
+    # Each entry tests one or more additional levers on top of that base.
+    # Base settings: arm=30%, trail=15%, tp×0.95, cooldown(2/5/3/10)
+
+    # Axis A: entry zone tightening
+    'r5_tight': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'proximity_zone_pct': 5.0,
+    },
+    # Axis B: higher RR filter
+    'r5_rr3': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'min_profit_loss_ratio': 3.0,
+    },
+    # Axis C: SL distance filter
+    'r5_sl_filter': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'min_sl_pct': 0.05, 'max_sl_pct': 1.50,
+    },
+    # Axis D: SL adjust-to-RR
+    'r5_sl_adjust': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'sl_adjust_to_rr': True, 'min_profit_loss_ratio': 3.0,
+    },
+    # Axis A+B combined
+    'r5_tight_rr3': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'proximity_zone_pct': 5.0, 'min_profit_loss_ratio': 3.0,
+    },
+    # Axis A+C combined
+    'r5_tight_sl': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'proximity_zone_pct': 5.0, 'min_sl_pct': 0.05, 'max_sl_pct': 1.50,
+    },
+    # All selectivity levers combined
+    'r5_all_filters': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'proximity_zone_pct': 5.0, 'min_profit_loss_ratio': 3.0,
+        'min_sl_pct': 0.05, 'max_sl_pct': 1.50,
+    },
+    # Axis E: tighter trail (10% instead of 15%)
+    'r5_trail10': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.10, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+    # Axis F: earlier arm threshold (25% and 20%)
+    'r5_arm25': {
+        'partial_take_pct': 0.25, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+    'r5_arm20': {
+        'partial_take_pct': 0.20, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+    # Axis G: add cooldown to the best arm-15% config (trail_15_from_15 had 21T, 57.1%, +0.84%)
+    'r5_arm15_cooldown': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+    # Axis H: sl_adjust_rr_tp95 (11T, 54.5%, +1.02%) + cooldown
+    'r5_sl_adj_cooldown': {
+        'sl_adjust_to_rr': True, 'min_profit_loss_ratio': 3.0, 'tp_multiplier': 0.95,
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+    # Axis I: trail10 + rr3 (double-selectivity on tighter trail)
+    'r5_trail10_rr3': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.10, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'min_profit_loss_ratio': 3.0,
+    },
+
     # ── Combined: all new levers + db_full_clone base ─────────────────────────
     'full_clone_max_tp': {
         'min_profit_loss_ratio': 4.0,
@@ -553,6 +669,121 @@ PRESETS: dict = {
         'max_sl_pct': 1.50,
         'sl_adjust_to_rr': True,
     },
+
+    # ── lower_high_sell: SELL at projected lower high before confirmation ─────
+    # Fires a SELL when price is within proximity_zone_pct of supposed_next_high
+    # in a descending trend (last confirmed swing = LOW).  SL = last confirmed
+    # HIGH, TP = supposed_next_low.  Default presets are unaffected (flag=False).
+    'lh_sell_prox10': {'lower_high_sell': True},
+    'lh_sell_prox15': {'lower_high_sell': True, 'proximity_zone_pct': 15.0},
+    'lh_sell_prox20': {'lower_high_sell': True, 'proximity_zone_pct': 20.0},
+    # Combined with trailing stop (proven profitable mechanism)
+    'lh_sell_trail15': {
+        'lower_high_sell': True,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+    },
+    'lh_sell_prox15_trail15': {
+        'lower_high_sell': True,
+        'proximity_zone_pct': 15.0,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+    },
+    # With cooldown to reduce loss streaks
+    'lh_sell_prox15_cooldown': {
+        'lower_high_sell': True,
+        'proximity_zone_pct': 15.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3,
+        'global_pause_candles': 10,
+    },
+
+    # ── higher_low_buy: BUY at projected higher low before confirmation ───────
+    # Mirror of lower_high_sell. Fires a BUY when price is within proximity_zone_pct
+    # of supposed_next_low from above in an ascending trend (last confirmed swing = HIGH).
+    # SL = last confirmed LOW, TP = supposed_next_high.
+    'hl_buy_prox10': {'higher_low_buy': True},
+    'hl_buy_prox15': {'higher_low_buy': True, 'proximity_zone_pct': 15.0},
+    'hl_buy_prox20': {'higher_low_buy': True, 'proximity_zone_pct': 20.0},
+    'hl_buy_trail15': {
+        'higher_low_buy': True,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+    },
+    'hl_buy_prox15_trail15': {
+        'higher_low_buy': True,
+        'proximity_zone_pct': 15.0,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+    },
+    'hl_buy_prox15_cooldown': {
+        'higher_low_buy': True,
+        'proximity_zone_pct': 15.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3,
+        'global_pause_candles': 10,
+    },
+
+    # ── Both flags enabled (all pre-confirmation entries) ────────────────────
+    'pre_confirm_prox10': {'lower_high_sell': True, 'higher_low_buy': True},
+    'pre_confirm_prox15': {
+        'lower_high_sell': True, 'higher_low_buy': True,
+        'proximity_zone_pct': 15.0,
+    },
+    'pre_confirm_trail15': {
+        'lower_high_sell': True, 'higher_low_buy': True,
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+    },
+    'pre_confirm_prox15_trail15': {
+        'lower_high_sell': True, 'higher_low_buy': True,
+        'proximity_zone_pct': 15.0,
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+    },
+}
+
+# ── Locked presets ─────────────────────────────────────────────────────────────
+# These are the top-performing presets that must never be modified or deleted.
+# They are merged into the run set at backtest time and enforced read-only in the
+# dashboard API. Add entries here to preserve a preset across code changes.
+LOCKED_PRESETS: dict[str, dict] = {
+    'trail_15_from_30_full': {
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3,
+        'global_pause_candles': 10,
+    },
+    'trail_15_from_30_cooldown': {
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3,
+        'global_pause_candles': 10,
+    },
+    'sl_adjust_rr_tp95': {
+        'sl_adjust_to_rr': True,
+        'min_profit_loss_ratio': 3.0,
+        'tp_multiplier': 0.95,
+        'partial_take_pct': 0.15,
+        'trailing_stop_pct': 0.20,
+    },
+    'trail_20_from_30_cooldown': {
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3,
+        'global_pause_candles': 10,
+    },
 }
 
 
@@ -566,6 +797,17 @@ def main() -> None:
         '--out',
         help='Output JSON file path. Defaults to data/backtest_{timestamp}.json.',
     )
+    parser.add_argument(
+        '--no-fetch',
+        action='store_true',
+        help='Skip fetching new klines from the API before running.',
+    )
+    parser.add_argument(
+        '--klines-count',
+        type=int,
+        default=1500,
+        help='Number of klines to fetch and use for the backtest (default: 1500).',
+    )
     args = parser.parse_args()
 
     settings = load_settings()
@@ -577,6 +819,15 @@ def main() -> None:
         suffix = 'test' if settings.trading_mode == 'testnet' else 'live'
         klines_path = Path('data') / f'{settings.symbol}_{settings.timeframe}_{suffix}.json'
 
+    # ── Refresh klines cache from API (default path only) ────────────────────
+    if not args.no_fetch and not args.klines:
+        try:
+            feed = DataFeed(settings)
+            feed.refresh_klines(settings.symbol, settings.timeframe, fetch_count=args.klines_count)
+            logger.info("Kline cache refreshed from API")
+        except Exception as e:
+            logger.warning(f"Could not refresh klines from API: {e} — using existing cache")
+
     if not klines_path.exists():
         logger.error(f"Klines file not found: {klines_path}")
         logger.error("Run the bot first to populate the cache, or specify --klines <path>.")
@@ -584,19 +835,39 @@ def main() -> None:
 
     with open(klines_path) as f:
         klines = json.load(f)
+
+    # Clip to the requested count — take the most recent N candles
+    if args.klines_count and len(klines) > args.klines_count:
+        klines = klines[-args.klines_count:]
     logger.info(f"Loaded {len(klines)} klines from {klines_path}")
 
     # ── Run ───────────────────────────────────────────────────────────────────
+    all_presets = {**LOCKED_PRESETS, **PRESETS}
     backtester = Backtester(settings)
-    results = backtester.run(klines, PRESETS)
+    results = backtester.run(klines, all_presets)
 
     # ── Build output payload ──────────────────────────────────────────────────
     ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
     preset_dicts = {}
     for name, r in results.items():
         d = r.to_dict()
-        d['settings'] = PRESETS[name]
+        d['settings'] = all_presets[name]
         preset_dicts[name] = d
+
+    # Preserve any locks the user added via the dashboard so they survive a rerun.
+    dashboard_path = Path('dashboard') / 'public' / 'backtest_results.json'
+    code_locked = set(LOCKED_PRESETS.keys())
+    extra_locked: list[str] = []
+    if dashboard_path.exists():
+        try:
+            with open(dashboard_path) as f:
+                old = json.load(f)
+            extra_locked = [
+                n for n in old.get('locked_presets', [])
+                if n not in code_locked and n in preset_dicts
+            ]
+        except Exception:
+            pass
 
     output = {
         'generated_at': datetime.now(timezone.utc).isoformat(),
@@ -605,6 +876,7 @@ def main() -> None:
         'klines_file': str(klines_path),
         'total_klines': len(klines),
         'presets': preset_dicts,
+        'locked_presets': list(code_locked) + extra_locked,
     }
 
     # ── Archive copy ──────────────────────────────────────────────────────────

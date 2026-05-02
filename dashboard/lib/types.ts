@@ -84,6 +84,7 @@ export interface BacktestResults {
   klines_file: string;
   total_klines: number;
   presets: Record<string, BacktestPreset>;
+  locked_presets?: string[];
 }
 
 // ── Paper trading types ────────────────────────────────────────────────────

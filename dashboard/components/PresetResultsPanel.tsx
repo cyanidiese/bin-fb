@@ -102,6 +102,9 @@ export default function PresetResultsPanel({ preset }: Props) {
       : null,
   }))
 
+  const klineMinDate = result?.klines.length ? toDateStr(result.klines[0].time) : ''
+  const klineMaxDate = result?.klines.length ? toDateStr(result.klines[result.klines.length - 1].time) : ''
+
   const stats = result
     ? [
         { label: 'Trades',  value: String(result.total_trades),                                                  color: 'text-gray-300' },
@@ -171,6 +174,8 @@ export default function PresetResultsPanel({ preset }: Props) {
                 <input
                   type="datetime-local"
                   value={fromDate}
+                  min={klineMinDate}
+                  max={klineMaxDate}
                   onChange={e => setFromDate(e.target.value)}
                   className={DATE_INPUT_CLS}
                 />
@@ -178,6 +183,8 @@ export default function PresetResultsPanel({ preset }: Props) {
                 <input
                   type="datetime-local"
                   value={toDate}
+                  min={klineMinDate}
+                  max={klineMaxDate}
                   onChange={e => setToDate(e.target.value)}
                   className={DATE_INPUT_CLS}
                 />

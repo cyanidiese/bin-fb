@@ -41,21 +41,15 @@ export default function SwingPointsChart({ klines, points }: Props) {
     const sorted = [...points].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
     )
-
-    // Clamp the close price line to start at the earliest active swing point.
-    // Inactive (historical) points can predate the current trend structure, so
-    // anchoring to active points keeps the chart focused on the relevant window.
     const activeSorted = sorted.filter(p => p.active)
-    const minPointMs = activeSorted.length > 0
-      ? Math.min(...activeSorted.map(p => new Date(p.time).getTime()))
-      : sorted.length > 0
-        ? Math.min(...sorted.map(p => new Date(p.time).getTime()))
-        : 0
-    const visibleKlines = klines.filter(k => k.time * 1000 >= minPointMs)
-    const closes = visibleKlines.map(k => ({ x: k.time * 1000, y: k.close }))
-    const opens  = visibleKlines.map(k => ({ x: k.time * 1000, y: k.open  }))
-    const highs  = visibleKlines.map(k => ({ x: k.time * 1000, y: k.high  }))
-    const lows   = visibleKlines.map(k => ({ x: k.time * 1000, y: k.low   }))
+
+    // Use the klines exactly as received — the parent (page.tsx) already clips
+    // them to the correct date range, including the auto-clip to the oldest
+    // active swing point when no explicit fromDate is set.
+    const closes = klines.map(k => ({ x: k.time * 1000, y: k.close }))
+    const opens  = klines.map(k => ({ x: k.time * 1000, y: k.open  }))
+    const highs  = klines.map(k => ({ x: k.time * 1000, y: k.high  }))
+    const lows   = klines.map(k => ({ x: k.time * 1000, y: k.low   }))
 
     const dots      = sorted.map(p => ({ x: new Date(p.time).getTime(), y: p.price }))
     const trendDots = activeSorted.map(p => ({ x: new Date(p.time).getTime(), y: p.price }))

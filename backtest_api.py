@@ -40,6 +40,9 @@ DEFAULTS = {
     'loss_streak_cooldown_candles': 5,
     'global_pause_trigger_candles': 0,
     'global_pause_candles': 10,
+    'correction_weight': 0.0,
+    'lower_high_sell': False,
+    'higher_low_buy': False,
 }
 
 
@@ -70,10 +73,13 @@ def build_settings(overrides: dict) -> Settings:
         sl_adjust_to_rr=bool(p['sl_adjust_to_rr']),
         partial_take_pct=float(p['partial_take_pct']),
         trailing_stop_pct=float(p['trailing_stop_pct']),
+        correction_weight=float(p['correction_weight']),
         loss_streak_max=int(p['loss_streak_max']),
         loss_streak_cooldown_candles=int(p['loss_streak_cooldown_candles']),
         global_pause_trigger_candles=int(p['global_pause_trigger_candles']),
         global_pause_candles=int(p['global_pause_candles']),
+        lower_high_sell=bool(p['lower_high_sell']),
+        higher_low_buy=bool(p['higher_low_buy']),
     )
 
 

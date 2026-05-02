@@ -98,6 +98,20 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] `dashboard/app/paper/page.tsx` — auto-refresh, open orders panel, summary table, trade drill-down
 - [x] `dashboard/lib/types.ts` — PaperOpenOrder, PaperPreset, PaperResults interfaces
 - [x] Analyse existing presets, identify improvement levers, create 7 improved variants per family
+- [x] BoS close-price fix — `point.getCloseValue()`, `kline_processor` passes close price
+- [x] Corrections as sub-trends — `correction_weight` setting (default 0.0, no behavior change)
+- [x] Dashboard datetime pickers — min/max from kline range enforced at browser level
+- [x] Fix `backtest_api.py` missing `correction_weight` arg in `Settings()` call
+- [x] Round 5 presets (13 new, best: `r5_arm15_cooldown` +1.74% 66.7% 18T)
+- [x] Locked presets system — `LOCKED_PRESETS` dict, API enforcement (403), dashboard 🔒 icon
+- [x] Live lock/unlock from dashboard — `/api/toggle-preset-lock`, amber confirmation UX
+- [x] Dashboard-added locks preserved across reruns (merged into output before overwrite)
+- [x] `--klines-count` arg for `backtest.py` — controls fetch + clips loaded klines
+- [x] `POST /api/run-backtest` — spawns backtest.py, waits for completion
+- [x] Run Backtest button + step-50 klines input + loading overlay on backtest page
+- [x] `lower_high_sell` setting — DESCENDING_NEAR_LOWER_HIGH signal, 6 new presets
+- [x] `higher_low_buy` setting — ASCENDING_NEAR_HIGHER_LOW signal (mirror), 6+4 new presets
+- [ ] Run backtest with lh_sell presets and evaluate results
 - [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
 - [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
 

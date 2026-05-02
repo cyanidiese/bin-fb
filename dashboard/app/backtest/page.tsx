@@ -20,6 +20,9 @@ export default function BacktestPage() {
   const [data, setData] = useState<BacktestResults | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:backtest:selectedPreset', null)
+  const [klinesCount, setKlinesCount] = useLocalStorage<number>('db:backtest:klinesCount', 1500)
+  const [isRunning, setIsRunning] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
 
   const [tableFilters, setTableFilters] = useLocalStorage('db:backtest:tableFilters', initTableFilters())
   const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:backtest:tableFiltersOpen', false)
@@ -32,6 +35,47 @@ export default function BacktestPage() {
   }
   function patchSettingsFilter(key: string, patch: Partial<FilterState>) {
     setSettingsFilters(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
+  }
+
+  async function handleToggleLock(name: string, action: 'lock' | 'unlock') {
+    try {
+      const res = await fetch('/api/toggle-preset-lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, action }),
+      })
+      if (!res.ok) return
+      const r = await fetch(`/backtest_results.json?t=${Date.now()}`)
+      if (!r.ok) return
+      setData(await r.json())
+    } catch { /* silently ignore network errors */ }
+  }
+
+  async function handleRunBacktest() {
+    setIsRunning(true)
+    setRunError(null)
+    try {
+      const res = await fetch('/api/run-backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ klines_count: klinesCount }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setRunError(json.error ?? 'Backtest failed')
+        return
+      }
+      // Reload results after successful run
+      const r = await fetch(`/backtest_results.json?t=${Date.now()}`)
+      if (r.ok) {
+        const updated: BacktestResults = await r.json()
+        setData(updated)
+      }
+    } catch (e) {
+      setRunError(String(e))
+    } finally {
+      setIsRunning(false)
+    }
   }
 
   async function handleDelete(name: string) {
@@ -109,15 +153,66 @@ export default function BacktestPage() {
   return (
     <main className="p-4 space-y-6 max-w-full">
       {/* Header */}
-      <div className="flex flex-wrap items-baseline gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-bold text-white">Backtest Results</h1>
         <span className="text-gray-500 text-sm font-mono">
           {data.symbol} · {data.timeframe} · {data.total_klines.toLocaleString()} candles
         </span>
-        <span className="text-gray-600 text-xs ml-auto">
+        <span className="text-gray-600 text-xs">
           {new Date(data.generated_at).toLocaleString()}
         </span>
+
+        {/* Run controls */}
+        <div className="ml-auto flex items-center gap-2">
+          {runError && (
+            <span className="text-[11px] text-red-400 font-mono max-w-xs truncate" title={runError}>
+              {runError}
+            </span>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <span className="uppercase tracking-wider">Klines</span>
+            <input
+              type="number"
+              min={50}
+              max={10000}
+              step={50}
+              value={klinesCount}
+              onChange={e => setKlinesCount(Math.max(50, Number(e.target.value)))}
+              disabled={isRunning}
+              className="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+            />
+          </label>
+          <button
+            onClick={handleRunBacktest}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border border-indigo-700 bg-indigo-900/60 text-indigo-300 hover:bg-indigo-800/80 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isRunning ? (
+              <>
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                </svg>
+                Running…
+              </>
+            ) : '▶ Run Backtest'}
+          </button>
+        </div>
       </div>
+
+      {/* Panels — dimmed + spinner overlay while backtest is running */}
+      <div className="relative">
+        {isRunning && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-start pt-24 bg-gray-950/60 rounded-lg">
+            <svg className="animate-spin h-8 w-8 text-indigo-400" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+            </svg>
+            <p className="mt-3 text-sm text-indigo-300 font-mono">Running backtest over {klinesCount.toLocaleString()} klines…</p>
+          </div>
+        )}
+
+        <div className={`space-y-6 transition-opacity duration-300 ${isRunning ? 'opacity-30 pointer-events-none' : ''}`}>
 
       {/* Table column filters — above Presets table */}
       <PresetFilters
@@ -137,6 +232,8 @@ export default function BacktestPage() {
           selectedPreset={selectedPreset}
           onSelect={setSelectedPreset}
           onDelete={handleDelete}
+          onToggleLock={handleToggleLock}
+          lockedPresets={new Set(data.locked_presets ?? [])}
         />
       </CollapsibleSection>
 
@@ -221,6 +318,9 @@ export default function BacktestPage() {
           </CollapsibleSection>
         </section>
       )}
+
+        </div>{/* end dimmed content */}
+      </div>{/* end relative overlay wrapper */}
     </main>
   )
 }

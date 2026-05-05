@@ -115,6 +115,29 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
 - [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
 
+## Phase 3.6 — Multi-symbol support (design approved 2026-05-04)
+
+See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
+
+### Python backend
+- [ ] `config/settings.py` — add `load_symbols()` + `load_settings(symbol)` with per-symbol env overrides
+- [ ] `bot/risk_manager.py` — new: async-safe capital budget tracker (asyncio.Lock, can_open/open/close)
+- [ ] `bot/exporter.py` — write to `results_{symbol}.json` instead of `results.json`
+- [ ] `bot/paper_trader.py` — accept optional `risk_manager` param
+- [ ] `paper_trade.py` — rewrite: loop over symbols, asyncio.gather, write symbols.json
+- [ ] `backtest.py` — loop over symbols, write `backtest_results_{symbol}.json` per symbol
+- [ ] `backtest_api.py` — accept `symbol` param; default to first symbol
+- [ ] `main.py` — write `symbols.json` at startup (stays single-symbol for display)
+- [ ] Migrate existing `paper_state.json` → `paper_state_BTCUSDT.json`
+
+### Dashboard
+- [ ] Fetch `symbols.json` in all pages; wire `useSymbol` + `SymbolSwitcher` into header
+- [ ] `app/page.tsx` — fetch `results_{symbol}.json`; scope localStorage keys to symbol
+- [ ] `app/backtest/page.tsx` — fetch `backtest_results_{symbol}.json`; add CrossSymbolComparison
+- [ ] `app/paper/page.tsx` — fetch `paper_results_{symbol}.json`
+- [ ] `components/CrossSymbolComparison.tsx` — new: 3-tab cross-symbol preset comparison
+- [ ] `lib/types.ts` — add `SymbolConfig` type for symbols.json
+
 ## Phase 4 — Order placement
 
 - [ ] Design order placement logic based on Recommendation

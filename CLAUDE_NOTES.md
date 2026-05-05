@@ -171,6 +171,25 @@ Solution: `Analyzer` maintains `_all_points` — a list that accumulates every d
 
 ---
 
+## Multi-symbol support — design approved 2026-05-04
+
+Full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`  
+Summary in: `UPCOMING_FEATURES.md`
+
+Key decisions:
+- Config: `SYMBOLS=BTCUSDT,XAUUSDT` in `.env`; per-symbol overrides via `{SYMBOL}_{SETTING}` env vars
+- Concurrency: pure asyncio — `asyncio.gather` over per-symbol coroutines; klines loaded sync at startup
+- File naming: all output files get `{SYMBOL}_` prefix (`results_{SYMBOL}.json` etc.)
+- Symbol discovery: bot writes `dashboard/public/symbols.json` at startup
+- New module: `bot/risk_manager.py` — async-safe capital budget gating for live orders
+- Backtest: serial loop over symbols; no parallelism needed
+- `main.py`: stays single-symbol for now (display UI not multi-symbol-ready)
+- Dashboard: `SymbolSwitcher.tsx` + `useSymbol.ts` already exist and are compatible — just need wiring
+- New dashboard component: `CrossSymbolComparison.tsx` (3-tab preset comparison across symbols)
+- Combined efficiency metric: average profit% across symbols (default sort in Tab 3)
+
+---
+
 ## Next steps
 1. ~~**Dashboard auto-refresh**~~ — done (polls every 15s with cache-buster)
 2. ~~**Dashboard backtest page**~~ — done (`/backtest` route, summary table + per-preset trade drill-down)

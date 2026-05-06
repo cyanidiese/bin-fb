@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import type { BacktestResults, BacktestPreset, BacktestApiResponse } from '@/lib/types'
+import type { BacktestResults, BacktestPreset, BacktestApiResponse, BacktestTrade } from '@/lib/types'
 import { SETTINGS_META } from '@/components/PresetSettingsPanel'
 import EditableSettingsPanel from '@/components/EditableSettingsPanel'
 import PresetChart from '@/components/PresetChart'
 import BacktestTradeList from '@/components/BacktestTradeList'
+import { useSymbolContext } from '@/lib/SymbolContext'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,6 @@ function addDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 16)
 }
 
-// Abbreviations used in auto-generated preset names
 const NAME_ABBREV: Record<string, string> = {
   swing_neighbours: 'sw',
   min_swing_points: 'msp',
@@ -58,6 +58,12 @@ function generatePresetName(overrides: Record<string, number | boolean>): string
   return `custom_${parts.join('_')}`
 }
 
+function avgProfit(results: Record<string, BacktestApiResponse | null>): number | null {
+  const vals = Object.values(results).filter((r): r is BacktestApiResponse => r !== null)
+  if (vals.length === 0) return null
+  return vals.reduce((s, r) => s + r.total_profit_pct, 0) / vals.length
+}
+
 // ── style constants ────────────────────────────────────────────────────────
 
 const DATE_INPUT_CLS =
@@ -68,48 +74,53 @@ const NAV_BTN_CLS =
 // ── page ───────────────────────────────────────────────────────────────────
 
 export default function CreatePresetPage() {
+  const { symbol, availableSymbols } = useSymbolContext()
+
   const [backtestData, setBacktestData] = useState<BacktestResults | null>(null)
 
   const [baseName, setBaseName] = useState<string>('')
   const [overrides, setOverrides] = useState<Record<string, number | boolean>>({})
   const [settingsTouched, setSettingsTouched] = useState(false)
-
-  // Controls which settings EditableSettingsPanel initialises from (its key forces a remount
-  // on each base-change or restore so the panel re-reads the new baseSettings).
   const [panelBaseSettings, setPanelBaseSettings] = useState<Record<string, number | boolean>>({})
   const [restoreKey, setRestoreKey] = useState(0)
 
-  const [result, setResult] = useState<BacktestApiResponse | null>(null)
+  // Per-symbol results
+  const [results, setResults] = useState<Record<string, BacktestApiResponse | null>>({})
+
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Best result tracking across Check runs (resets when base preset changes)
-  const [bestResult, setBestResult] = useState<BacktestApiResponse | null>(null)
+  // Best run tracking (keyed by avg profit across all symbols)
+  const [bestResults, setBestResults] = useState<Record<string, BacktestApiResponse | null>>({})
   const [bestOverrides, setBestOverrides] = useState<Record<string, number | boolean> | null>(null)
+  const [bestAvgProfit, setBestAvgProfit] = useState<number | null>(null)
 
-  // Chart date range
+  // Chart date range — scoped to active tab
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+
+  const [hoveredTradeIdx, setHoveredTradeIdx] = useState<number | null>(null)
 
   // Save state
   const [saveName, setSaveName] = useState('')
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
-  // ── initial data load ──────────────────────────────────────────────────
-
+  // Reload preset list whenever the selected symbol changes
   useEffect(() => {
-    fetch(`/backtest_results.json?t=${Date.now()}`)
+    fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
       .then(r => r.ok ? r.json() : null)
       .then((d: BacktestResults | null) => { if (d) setBacktestData(d) })
       .catch(() => null)
-  }, [])
+  }, [symbol])
 
-  // Init chart dates when result loads
+  // Reset chart date range and hover when the active symbol's result changes
+  const activeResult = results[symbol] ?? null
   useEffect(() => {
-    if (!result?.klines.length) return
-    setFromDate(toDateStr(result.klines[0].time))
-    setToDate(toDateStr(result.klines[result.klines.length - 1].time))
-  }, [result])
+    if (!activeResult?.klines.length) return
+    setFromDate(toDateStr(activeResult.klines[0].time))
+    setToDate(toDateStr(activeResult.klines[activeResult.klines.length - 1].time))
+    setHoveredTradeIdx(null)
+  }, [activeResult])
 
   // ── derived ────────────────────────────────────────────────────────────
 
@@ -118,51 +129,58 @@ export default function CreatePresetPage() {
     return Object.values(backtestData.presets).sort((a, b) => b.total_profit_pct - a.total_profit_pct)
   }, [backtestData])
 
+  const hasAnyResult = Object.values(results).some(r => r !== null)
+
   const filteredKlines = useMemo(() => {
-    if (!result || !fromDate || !toDate) return result?.klines ?? []
-    return result.klines.filter(k => {
+    if (!activeResult || !fromDate || !toDate) return activeResult?.klines ?? []
+    return activeResult.klines.filter(k => {
       const d = toDateStr(k.time)
       return d >= fromDate && d <= toDate
     })
-  }, [result, fromDate, toDate])
+  }, [activeResult, fromDate, toDate])
 
   const chartKlines = useMemo(
     () => filteredKlines.map((k, i) => ({ ...k, index: i })),
     [filteredKlines],
   )
 
-  const chartTrades = useMemo(() => {
-    if (!result || !filteredKlines.length) return result?.trades ?? []
+  const { chartTrades, chartTradeOriginalIdxs } = useMemo(() => {
+    const all = activeResult?.trades ?? []
+    if (!activeResult || !filteredKlines.length) {
+      return { chartTrades: all, chartTradeOriginalIdxs: all.map((_, i) => i) }
+    }
     const minIdx = filteredKlines[0].index
     const maxIdx = filteredKlines[filteredKlines.length - 1].index
-    const visible = result.trades.filter(t =>
-      t.open_candle <= maxIdx && (t.close_candle ?? t.open_candle + 1) >= minIdx,
-    )
-    return visible.map(t => ({
-      ...t,
-      open_candle: Math.max(0, t.open_candle - minIdx),
-      close_candle: t.close_candle != null
-        ? Math.min(chartKlines.length - 1, Math.max(0, t.close_candle - minIdx))
-        : null,
-    }))
-  }, [result, filteredKlines, chartKlines])
+    const trades: BacktestTrade[] = []
+    const idxs: number[] = []
+    activeResult.trades.forEach((t, i) => {
+      if (t.open_candle <= maxIdx && (t.close_candle ?? t.open_candle + 1) >= minIdx) {
+        trades.push({
+          ...t,
+          open_candle: Math.max(0, t.open_candle - minIdx),
+          close_candle: t.close_candle != null
+            ? Math.min(chartKlines.length - 1, Math.max(0, t.close_candle - minIdx))
+            : null,
+        })
+        idxs.push(i)
+      }
+    })
+    return { chartTrades: trades, chartTradeOriginalIdxs: idxs }
+  }, [activeResult, filteredKlines, chartKlines])
 
-  // Button states
-  const canRestoreBest =
-    bestResult !== null &&
-    (result === null || result.total_profit_pct < bestResult.total_profit_pct)
-
-  // canSave: settings are valid to save (regardless of current save status)
-  const canSave = result !== null && settingsTouched
+  const currentAvg = avgProfit(results)
+  const canRestoreBest = bestAvgProfit !== null && (currentAvg === null || currentAvg < bestAvgProfit)
+  const canSave = hasAnyResult && settingsTouched
 
   // ── handlers ───────────────────────────────────────────────────────────
 
   const handleBaseChange = (name: string) => {
     setBaseName(name)
-    setResult(null)
+    setResults({})
     setError(null)
-    setBestResult(null)
+    setBestResults({})
     setBestOverrides(null)
+    setBestAvgProfit(null)
     setSettingsTouched(false)
     setSaveName('')
     setSaveStatus('idle')
@@ -182,61 +200,77 @@ export default function CreatePresetPage() {
   const handleCheck = useCallback(async () => {
     setLoading(true)
     setError(null)
-    setResult(null)
+    setResults({})
     setSaveStatus('idle')
+
+    const symbols = availableSymbols.length > 0 ? availableSymbols : ['BTCUSDT']
+
     try {
-      const res = await fetch('/api/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: overrides }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-      const apiResult = data as BacktestApiResponse
-      setResult(apiResult)
+      const entries = await Promise.all(
+        symbols.map(sym =>
+          fetch('/api/backtest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings: overrides, symbol: sym }),
+          })
+            .then(async r => {
+              const data = await r.json()
+              if (!r.ok) throw new Error(data.error ?? `HTTP ${r.status}`)
+              return [sym, data as BacktestApiResponse] as const
+            })
+            .catch(e => [sym, null] as const)
+        )
+      )
+
+      const newResults = Object.fromEntries(entries)
+      setResults(newResults)
       setSaveName(generatePresetName(overrides))
-      // Update best if this run is better
-      setBestResult(prev => {
-        if (!prev || apiResult.total_profit_pct > prev.total_profit_pct) {
-          setBestOverrides({ ...overrides })
-          return apiResult
-        }
-        return prev
-      })
+
+      // Track best by avg profit across all symbols
+      const newAvg = avgProfit(newResults)
+      if (newAvg !== null && (bestAvgProfit === null || newAvg > bestAvgProfit)) {
+        setBestResults(newResults)
+        setBestOverrides({ ...overrides })
+        setBestAvgProfit(newAvg)
+      }
+
+      const errors = entries.filter(([, r]) => r === null).map(([s]) => s)
+      if (errors.length > 0) {
+        setError(`Failed for: ${errors.join(', ')}`)
+      }
     } catch (e) {
       setError(String(e))
     } finally {
       setLoading(false)
     }
-  }, [overrides])
+  }, [overrides, availableSymbols, bestAvgProfit])
 
   const handleRestoreBest = useCallback(() => {
-    if (!bestOverrides || !bestResult) return
-    const restored = { ...bestOverrides }
-    setOverrides(restored)
-    setResult(bestResult)
-    setSaveName(generatePresetName(restored))
+    if (!bestOverrides || Object.keys(bestResults).length === 0) return
+    setOverrides(bestOverrides)
+    setResults(bestResults)
+    setSaveName(generatePresetName(bestOverrides))
     setSettingsTouched(true)
     setSaveStatus('idle')
-    // Force EditableSettingsPanel to remount with the restored values
-    setPanelBaseSettings(restored)
+    setPanelBaseSettings(bestOverrides)
     setRestoreKey(k => k + 1)
-  }, [bestOverrides, bestResult])
+  }, [bestOverrides, bestResults])
 
   const handleSave = useCallback(async () => {
-    if (!result || !saveName.trim()) return
+    // Save uses the active tab's result (or first available)
+    const saveResult = activeResult ?? Object.values(results).find(r => r !== null) ?? null
+    if (!saveResult || !saveName.trim()) return
     setSaveStatus('saving')
     try {
       const res = await fetch('/api/save-preset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: saveName.trim(), result, settings: overrides }),
+        body: JSON.stringify({ name: saveName.trim(), result: saveResult, settings: overrides }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setSaveStatus('saved')
-      // Refresh preset list so the new preset appears in the dropdown
-      fetch(`/backtest_results.json?t=${Date.now()}`)
+      fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setBacktestData(d) })
         .catch(() => null)
@@ -244,7 +278,7 @@ export default function CreatePresetPage() {
       setError(`Save failed: ${String(e)}`)
       setSaveStatus('idle')
     }
-  }, [result, saveName, overrides])
+  }, [activeResult, results, saveName, overrides, availableSymbols])
 
   // ── render ─────────────────────────────────────────────────────────────
 
@@ -262,7 +296,6 @@ export default function CreatePresetPage() {
         {/* Left column — settings editor */}
         <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-4">
 
-          {/* Base preset picker */}
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold shrink-0">
               Base preset
@@ -281,47 +314,40 @@ export default function CreatePresetPage() {
             </select>
           </div>
 
-          {/* Active overrides count */}
           {Object.keys(overrides).length > 0 && (
             <p className="text-[10px] text-amber-400/80 font-mono">
               {Object.keys(overrides).length} setting{Object.keys(overrides).length !== 1 ? 's' : ''} differ from defaults
             </p>
           )}
 
-          {/* Editable settings — key includes restoreKey so the panel remounts and
-              re-reads panelBaseSettings whenever the base preset changes or best is restored */}
           <EditableSettingsPanel
             key={`${baseName}-${restoreKey}`}
             baseSettings={panelBaseSettings}
             onChange={handleOverridesChange}
           />
 
-          {/* Action buttons */}
           <div className="pt-2 border-t border-gray-800 space-y-2">
-
-            {/* Row 1: Check + Restore best */}
             <div className="flex gap-2">
               <button
                 onClick={handleCheck}
                 disabled={loading}
                 className="flex-1 py-2 rounded border border-indigo-700 bg-indigo-900/60 text-indigo-300 text-sm font-semibold hover:bg-indigo-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {loading ? 'Running backtest…' : 'Check'}
+                {loading ? 'Running…' : 'Check'}
               </button>
 
               <button
                 onClick={handleRestoreBest}
                 disabled={!canRestoreBest}
-                title={bestResult
-                  ? `Best result: ${bestResult.total_profit_pct >= 0 ? '+' : ''}${bestResult.total_profit_pct.toFixed(2)}%`
+                title={bestAvgProfit !== null
+                  ? `Best avg: ${bestAvgProfit >= 0 ? '+' : ''}${bestAvgProfit.toFixed(2)}%`
                   : 'No best result yet'}
                 className="px-3 py-2 rounded border border-amber-700 bg-amber-900/40 text-amber-300 text-xs font-semibold hover:bg-amber-800/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
               >
-                ↩ Restore best value
+                ↩ Restore best
               </button>
             </div>
 
-            {/* Row 2: name input + Save */}
             <div className="flex gap-2">
               <input
                 type="text"
@@ -339,7 +365,6 @@ export default function CreatePresetPage() {
                 {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? '✓ Saved' : 'Save'}
               </button>
             </div>
-
           </div>
         </div>
 
@@ -351,123 +376,133 @@ export default function CreatePresetPage() {
             </div>
           )}
 
-          {!result && !loading && !error && (
+          {!hasAnyResult && !loading && !error && (
             <div className="flex items-center justify-center h-48 rounded-lg border border-gray-800 bg-gray-900/30 text-gray-600 text-sm">
               Adjust settings and press Check to run the backtest.
             </div>
           )}
 
           {loading && (
-            <div className="flex items-center justify-center h-48 rounded-lg border border-gray-800 bg-gray-900/30 text-gray-500 text-sm">
-              Running backtest…
+            <div className="flex items-center justify-center h-48 rounded-lg border border-gray-800 bg-gray-900/30 text-gray-500 text-sm gap-2">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+              </svg>
+              Running across {availableSymbols.length} symbol{availableSymbols.length !== 1 ? 's' : ''}…
             </div>
           )}
 
-          {result && (
+          {hasAnyResult && (
             <>
-              {/* Stats grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  {
-                    label: 'Actual P&L',
-                    value: `${result.total_profit_pts >= 0 ? '+' : ''}${result.total_profit_pts.toFixed(1)} pts`,
-                    sub: `${result.total_profit_pct >= 0 ? '+' : ''}${result.total_profit_pct.toFixed(2)}%`,
-                    color: result.total_profit_pts >= 0 ? 'text-emerald-400' : 'text-red-400',
-                  },
-                  {
-                    label: 'Win rate',
-                    value: `${(result.win_rate * 100).toFixed(1)}%`,
-                    sub: `${result.wins}W  ${result.partials}P  ${result.trails}T  ${result.losses}L`,
-                    color: result.win_rate >= 0.5 ? 'text-emerald-400' : 'text-amber-400',
-                  },
-                  {
-                    label: 'Avg RR',
-                    value: result.avg_rr.toFixed(2),
-                    sub: `${result.total_trades} trades`,
-                    color: 'text-gray-300',
-                  },
-                  {
-                    label: 'Avg TP reach',
-                    value: `${result.avg_max_tp_reach_pct.toFixed(1)}%`,
-                    sub: 'raise if > 80%',
-                    color: result.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300',
-                  },
-                ].map(s => (
-                  <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-3">
-                    <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1">{s.label}</p>
-                    <p className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</p>
-                    <p className="text-[10px] text-gray-600 mt-0.5 font-mono">{s.sub}</p>
-                  </div>
-                ))}
+              {/* ── Stats table — all symbols always visible ── */}
+              <div className="rounded-lg border border-gray-800 bg-gray-900/50 overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-500">
+                      <th className="text-left px-3 py-2 font-normal">Symbol</th>
+                      <th className="text-right px-3 py-2 font-normal">Profit%</th>
+                      <th className="text-right px-3 py-2 font-normal">Win%</th>
+                      <th className="text-right px-3 py-2 font-normal">Trades</th>
+                      <th className="text-right px-3 py-2 font-normal">W/P/T/L</th>
+                      <th className="text-right px-3 py-2 font-normal">Avg RR</th>
+                      <th className="text-right px-3 py-2 font-normal">MaxDD</th>
+                      <th className="text-right px-3 py-2 font-normal">AvgTP%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {availableSymbols.map(sym => {
+                      const r = results[sym]
+                      if (!r) return (
+                        <tr key={sym} className="border-b border-gray-900">
+                          <td className="px-3 py-2 text-indigo-300 font-semibold">{sym}</td>
+                          <td colSpan={7} className="px-3 py-2 text-gray-600 italic">no data</td>
+                        </tr>
+                      )
+                      const profitColor = r.total_profit_pct >= 0 ? 'text-emerald-400' : 'text-red-400'
+                      const winColor = r.win_rate >= 0.5 ? 'text-emerald-400' : 'text-amber-400'
+                      return (
+                        <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
+                          <td className="px-3 py-2 text-indigo-300 font-semibold">{sym}</td>
+                          <td className={`text-right px-3 py-2 font-semibold ${profitColor}`}>
+                            {r.total_profit_pct >= 0 ? '+' : ''}{r.total_profit_pct.toFixed(2)}%
+                          </td>
+                          <td className={`text-right px-3 py-2 ${winColor}`}>
+                            {(r.win_rate * 100).toFixed(1)}%
+                          </td>
+                          <td className="text-right px-3 py-2 text-gray-300">{r.total_trades}</td>
+                          <td className="text-right px-3 py-2 text-gray-400">
+                            {r.wins}/{r.partials}/{r.trails}/{r.losses}
+                          </td>
+                          <td className="text-right px-3 py-2 text-gray-300">{r.avg_rr.toFixed(2)}</td>
+                          <td className={`text-right px-3 py-2 ${r.max_consecutive_losses >= 4 ? 'text-amber-400' : 'text-gray-300'}`}>
+                            {r.max_consecutive_losses}
+                          </td>
+                          <td className={`text-right px-3 py-2 ${r.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300'}`}>
+                            {r.avg_max_tp_reach_pct.toFixed(1)}%
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {/* Avg row when multiple symbols loaded */}
+                    {availableSymbols.length > 1 && currentAvg !== null && (
+                      <tr className="bg-gray-900/60">
+                        <td className="px-3 py-2 text-gray-500 text-[10px] uppercase tracking-wide">avg</td>
+                        <td className={`text-right px-3 py-2 font-semibold ${currentAvg >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {currentAvg >= 0 ? '+' : ''}{currentAvg.toFixed(2)}%
+                        </td>
+                        <td colSpan={6} />
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
 
-              {/* Chart panel */}
-              <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 space-y-3">
-                {/* Panel header + compact stats */}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <p className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold shrink-0">
-                    Price + orders
-                  </p>
-                  <div className="flex flex-wrap gap-3 text-[11px] font-mono">
-                    {[
-                      { label: 'Trades',  value: String(result.total_trades),                                                  color: 'text-gray-300' },
-                      { label: 'W/P/T/L', value: `${result.wins}/${result.partials}/${result.trails}/${result.losses}`,        color: 'text-gray-300' },
-                      { label: 'Win%',    value: `${(result.win_rate * 100).toFixed(1)}%`,                                     color: 'text-gray-300' },
-                      { label: 'Profit',  value: `${result.total_profit_pct >= 0 ? '+' : ''}${result.total_profit_pct.toFixed(2)}%`, color: result.total_profit_pct >= 0 ? 'text-emerald-400' : 'text-red-400' },
-                      { label: 'Avg RR',  value: result.avg_rr.toFixed(2),                                                     color: 'text-gray-300' },
-                      { label: 'MaxDD',   value: String(result.max_consecutive_losses),                                        color: result.max_consecutive_losses >= 4 ? 'text-amber-400' : 'text-gray-300' },
-                      { label: 'AvgTP%',  value: `${result.avg_max_tp_reach_pct.toFixed(1)}%`,                                 color: result.avg_max_tp_reach_pct >= 80 ? 'text-amber-400' : 'text-gray-300' },
-                    ].map(s => (
-                      <span key={s.label}>
-                        <span className="text-gray-600">{s.label}: </span>
-                        <span className={s.color}>{s.value}</span>
+              {/* ── Chart + orders for the selected symbol ── */}
+              <div className="rounded-lg border border-gray-800 bg-gray-900/50 overflow-hidden">
+                {activeResult && (
+                  <div className="p-3 space-y-4">
+                    {/* Date controls */}
+                    <div className="flex items-center flex-wrap gap-2">
+                      <button className={NAV_BTN_CLS}
+                        onClick={() => { setFromDate(addDays(fromDate, -1)); setToDate(addDays(toDate, -1)) }}>
+                        ← Back
+                      </button>
+                      <span className="text-[11px] text-gray-500 font-mono">From</span>
+                      <input type="datetime-local" value={fromDate}
+                        onChange={e => setFromDate(e.target.value)} className={DATE_INPUT_CLS} />
+                      <span className="text-[11px] text-gray-500 font-mono">To</span>
+                      <input type="datetime-local" value={toDate}
+                        onChange={e => setToDate(e.target.value)} className={DATE_INPUT_CLS} />
+                      <button className={NAV_BTN_CLS}
+                        onClick={() => { setFromDate(addDays(fromDate, 1)); setToDate(addDays(toDate, 1)) }}>
+                        Fwd →
+                      </button>
+                      <span className="text-[10px] text-gray-600 font-mono">
+                        {chartKlines.length} candles · {chartTrades.length} trades
                       </span>
-                    ))}
+                    </div>
+
+                    <PresetChart
+                      klines={chartKlines}
+                      trades={chartTrades}
+                      originalIdxs={chartTradeOriginalIdxs}
+                      hoveredTradeIdx={hoveredTradeIdx}
+                      onTradeHover={setHoveredTradeIdx}
+                    />
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
+                        Orders ({activeResult.total_trades})
+                      </p>
+                      <BacktestTradeList
+                        presetName="custom"
+                        trades={activeResult.trades}
+                        hoveredIdx={hoveredTradeIdx}
+                        onHover={setHoveredTradeIdx}
+                      />
+                    </div>
                   </div>
-                </div>
-
-                {/* Date controls */}
-                <div className="flex items-center flex-wrap gap-2">
-                  <button
-                    className={NAV_BTN_CLS}
-                    onClick={() => { setFromDate(addDays(fromDate, -1)); setToDate(addDays(toDate, -1)) }}
-                  >
-                    ← Back
-                  </button>
-                  <span className="text-[11px] text-gray-500 font-mono">From</span>
-                  <input
-                    type="datetime-local"
-                    value={fromDate}
-                    onChange={e => setFromDate(e.target.value)}
-                    className={DATE_INPUT_CLS}
-                  />
-                  <span className="text-[11px] text-gray-500 font-mono">To</span>
-                  <input
-                    type="datetime-local"
-                    value={toDate}
-                    onChange={e => setToDate(e.target.value)}
-                    className={DATE_INPUT_CLS}
-                  />
-                  <button
-                    className={NAV_BTN_CLS}
-                    onClick={() => { setFromDate(addDays(fromDate, 1)); setToDate(addDays(toDate, 1)) }}
-                  >
-                    Fwd →
-                  </button>
-                  <span className="text-[10px] text-gray-600 font-mono">
-                    {chartKlines.length} candles · {chartTrades.length} trades
-                  </span>
-                </div>
-
-                <PresetChart klines={chartKlines} trades={chartTrades} />
-              </div>
-
-              {/* Trades */}
-              <div className="space-y-1">
-                <p className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
-                  Orders ({result.total_trades})
-                </p>
-                <BacktestTradeList presetName="custom" trades={result.trades} />
+                )}
               </div>
             </>
           )}

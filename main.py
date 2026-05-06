@@ -9,7 +9,7 @@ from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot import display
-from bot import exporter
+from bot.exporter import export, write_symbols_json
 
 
 def setup_logging() -> None:
@@ -41,6 +41,7 @@ async def run() -> None:
     logger = logging.getLogger('main')
     trades_logger = logging.getLogger('trades')
     settings = load_settings()
+    write_symbols_json([settings.symbol])
     logger.info(
         f"Bot starting | mode={settings.trading_mode} | "
         f"symbol={settings.symbol} | timeframe={settings.timeframe}"
@@ -57,7 +58,7 @@ async def run() -> None:
     recs = analyzer.get_recommendations()
     best = analyzer.get_best_recommendation()
     display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs)
-    exporter.export(
+    export(
         settings.symbol, settings.timeframe, settings.trading_mode,
         analyzer.get_current_price(), analyzer.get_trend(),
         analyzer.get_klines(), recs,
@@ -79,7 +80,7 @@ async def run() -> None:
 
         candle_close_time = int(kline[6]) // 1000
         display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs, candle_close_time)
-        exporter.export(
+        export(
             settings.symbol, settings.timeframe, settings.trading_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
             analyzer.get_klines(), recs,

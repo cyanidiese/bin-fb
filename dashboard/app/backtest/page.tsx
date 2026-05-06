@@ -15,6 +15,8 @@ import {
   type FilterState,
 } from '@/lib/presetFilters'
 import { useLocalStorage } from '@/lib/useLocalStorage'
+import CrossSymbolComparison from '@/components/CrossSymbolComparison'
+import { useSymbolContext } from '@/lib/SymbolContext'
 
 export default function BacktestPage() {
   const [data, setData] = useState<BacktestResults | null>(null)
@@ -23,6 +25,8 @@ export default function BacktestPage() {
   const [klinesCount, setKlinesCount] = useLocalStorage<number>('db:backtest:klinesCount', 1500)
   const [isRunning, setIsRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
+  const { symbol, availableSymbols } = useSymbolContext()
+  const [allSymbolData, setAllSymbolData] = useState<Record<string, BacktestResults | null>>({})
 
   const [tableFilters, setTableFilters] = useLocalStorage('db:backtest:tableFilters', initTableFilters())
   const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:backtest:tableFiltersOpen', false)
@@ -45,7 +49,7 @@ export default function BacktestPage() {
         body: JSON.stringify({ name, action }),
       })
       if (!res.ok) return
-      const r = await fetch(`/backtest_results.json?t=${Date.now()}`)
+      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
       if (!r.ok) return
       setData(await r.json())
     } catch { /* silently ignore network errors */ }
@@ -58,7 +62,7 @@ export default function BacktestPage() {
       const res = await fetch('/api/run-backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ klines_count: klinesCount }),
+        body: JSON.stringify({ klines_count: klinesCount, symbol }),
       })
       const json = await res.json()
       if (!res.ok) {
@@ -66,7 +70,7 @@ export default function BacktestPage() {
         return
       }
       // Reload results after successful run
-      const r = await fetch(`/backtest_results.json?t=${Date.now()}`)
+      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
       if (r.ok) {
         const updated: BacktestResults = await r.json()
         setData(updated)
@@ -87,7 +91,7 @@ export default function BacktestPage() {
       })
       if (!res.ok) return
       // Refetch so all derived state (filteredPresets, activePreset) updates atomically
-      const r = await fetch(`/backtest_results.json?t=${Date.now()}`)
+      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
       if (!r.ok) return
       const json: BacktestResults = await r.json()
       setData(json)
@@ -96,7 +100,8 @@ export default function BacktestPage() {
   }
 
   useEffect(() => {
-    fetch(`/backtest_results.json?t=${Date.now()}`)
+    setData(null)
+    fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -112,7 +117,22 @@ export default function BacktestPage() {
         }
       })
       .catch(e => setError(String(e)))
-  }, [])
+  }, [symbol])
+
+  useEffect(() => {
+    if (availableSymbols.length < 2) return
+    Promise.all(
+      availableSymbols.map(s =>
+        fetch(`/backtest_results_${s}.json?t=${Date.now()}`)
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null)
+      )
+    ).then(results => {
+      const map: Record<string, BacktestResults | null> = {}
+      availableSymbols.forEach((s, i) => { map[s] = results[i] as BacktestResults | null })
+      setAllSymbolData(map)
+    })
+  }, [availableSymbols, symbol])
 
   const presetList: BacktestPreset[] = useMemo(() => {
     if (!data) return []
@@ -163,7 +183,7 @@ export default function BacktestPage() {
         </span>
 
         {/* Run controls */}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           {runError && (
             <span className="text-[11px] text-red-400 font-mono max-w-xs truncate" title={runError}>
               {runError}
@@ -238,7 +258,7 @@ export default function BacktestPage() {
       </CollapsibleSection>
 
       {/* Visualize panel */}
-      <PresetResultsPanel preset={activePreset} />
+      <PresetResultsPanel preset={activePreset} symbol={symbol} />
 
       {/* Trade drill-down */}
       {activePreset && (
@@ -321,6 +341,12 @@ export default function BacktestPage() {
 
         </div>{/* end dimmed content */}
       </div>{/* end relative overlay wrapper */}
+
+      {availableSymbols.length > 1 && (
+        <CollapsibleSection title="Cross-Symbol Comparison" storageKey="db:backtest:s:crosssymbol">
+          <CrossSymbolComparison symbols={availableSymbols} dataBySymbol={allSymbolData} />
+        </CollapsibleSection>
+      )}
     </main>
   )
 }

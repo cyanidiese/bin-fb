@@ -1,3 +1,4 @@
+import dataclasses
 import os
 from dataclasses import dataclass
 
@@ -60,7 +61,7 @@ class Settings:
     higher_low_buy: bool
 
 
-def load_settings() -> Settings:
+def load_settings(symbol: str | None = None) -> Settings:
     trading_mode = os.getenv('TRADING_MODE', 'testnet').lower()
 
     if trading_mode not in ('testnet', 'live'):
@@ -81,8 +82,8 @@ def load_settings() -> Settings:
     if not api_secret:
         missing.append(key_names[1])
 
-    symbol = os.getenv('SYMBOL', '')
-    if not symbol:
+    resolved_symbol = symbol.upper() if symbol else os.getenv('SYMBOL', '').upper()
+    if not resolved_symbol:
         missing.append('SYMBOL')
 
     if missing:
@@ -96,11 +97,11 @@ def load_settings() -> Settings:
                 "Set this only after reviewing all risk parameters."
             )
 
-    return Settings(
+    base = Settings(
         trading_mode=trading_mode,
         api_key=api_key,
         api_secret=api_secret,
-        symbol=symbol.upper(),
+        symbol=resolved_symbol,
         timeframe=os.getenv('TIMEFRAME', '15m'),
         kline_limit=int(os.getenv('KLINE_LIMIT', '1000')),
         kline_cache_limit=int(os.getenv('KLINE_CACHE_LIMIT', '5000')),
@@ -127,3 +128,43 @@ def load_settings() -> Settings:
         lower_high_sell=os.getenv('LOWER_HIGH_SELL', 'false').lower() in ('1', 'true', 'yes'),
         higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
     )
+
+    if symbol is not None:
+        base = _apply_symbol_overrides(base, symbol)
+
+    return base
+
+
+def load_symbols() -> list[str]:
+    raw = os.getenv('SYMBOLS', '').strip()
+    if raw:
+        return [s.strip().upper() for s in raw.split(',') if s.strip()]
+    fallback = os.getenv('SYMBOL', '').strip()
+    if fallback:
+        return [fallback.upper()]
+    raise RuntimeError("Neither SYMBOLS nor SYMBOL is set in .env")
+
+
+def _apply_symbol_overrides(settings: Settings, symbol: str) -> Settings:
+    prefix = symbol.upper() + '_'
+    field_names = {f.name for f in dataclasses.fields(Settings)}
+    overrides: dict = {}
+    for env_key, env_val in os.environ.items():
+        if not env_key.startswith(prefix):
+            continue
+        field_name = env_key[len(prefix):].lower()
+        if field_name not in field_names:
+            continue
+        current = getattr(settings, field_name)
+        try:
+            if isinstance(current, bool):
+                overrides[field_name] = env_val.lower() in ('1', 'true', 'yes')
+            elif isinstance(current, int):
+                overrides[field_name] = int(env_val)
+            elif isinstance(current, float):
+                overrides[field_name] = float(env_val)
+            else:
+                overrides[field_name] = env_val
+        except (ValueError, TypeError):
+            pass
+    return dataclasses.replace(settings, **overrides) if overrides else settings

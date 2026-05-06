@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config.settings import load_settings
+from config.settings import load_settings, load_symbols
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
 
@@ -633,6 +633,73 @@ PRESETS: dict = {
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
     },
+    # ── Round 6: patch BTC weakness in the best cross-symbol preset ───────────
+    # r5_arm15_cooldown is #1 cross-symbol (+3.85% combined) but bleeds on BTC
+    # (-0.24%). BTC's own top presets share three levers not in arm15_cooldown:
+    #   • min_profit_loss_ratio=4.0  (high-RR filter)
+    #   • trailing_stop_pct=0.20     (wider trail locks in more of the move)
+    #   • max_profit_pct=3.0         (skip trades where TP is too far — BTC outliers)
+    # Three new variants add each lever and the full combination.
+
+    # Lever 1: RR filter only — keeps XAU/ETH trades mostly intact (avg RR 4-5×)
+    # while cutting BTC's marginal low-quality entries (avg RR 10× but many losers).
+    'r6_arm15_rr4': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'min_profit_loss_ratio': 4.0,
+    },
+    # Lever 2: wider trail + max-profit cap — mirrors BTC's top-2 presets on arm15 base.
+    # max_profit_pct=3.0 skips BTC's outsized-TP outliers; 0.20 trail secures gains faster.
+    'r6_arm15_maxp3_trail20': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'max_profit_pct': 3.0,
+    },
+    # All three BTC-fix levers on the arm15_cooldown base.
+    'r6_arm15_full': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'min_profit_loss_ratio': 4.0, 'max_profit_pct': 3.0,
+    },
+
+    # ── Round 7: gap-fill combinations suggested by data analysis ─────────────
+    # Analysis shows: partial=0.15, trail=0.15–0.20, tp_mult=0.95, cooldown, maxp=3.0
+    # is the winning cluster. Four untested combinations:
+
+    # Gap 1: arm20 (partial=0.20 — XAU's 75%-win best) + BTC fix (maxp3 + trail20).
+    # r5_arm20 is #4 cross-symbol (+2.85%) with XAU=+2.57%. Adding maxp3+trail20
+    # replicates the same fix that took arm15 from +3.74% → +4.35%.
+    'r7_arm20_maxp3_trail20': {
+        'partial_take_pct': 0.20, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'max_profit_pct': 3.0,
+    },
+    # Gap 2: simplest maxp3 variant — trail_15_from_15 (only two settings, #3 at +3.13%)
+    # + just max_profit_pct=3.0. No cooldown, no tp_mult overhead. Baseline for the lever.
+    'r7_trail15_maxp3': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
+        'max_profit_pct': 3.0,
+    },
+    # Gap 3: same but trail=0.20. Isolates whether wider trail adds value over maxp3 alone,
+    # without cooldown complexity. Answers: does trail20+maxp3 ≈ r6_arm15_maxp3_trail20?
+    'r7_trail20_maxp3': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
+        'max_profit_pct': 3.0,
+    },
+    # Gap 4: full_clone_max_tp (+2.62%, no cooldown) — the only top preset missing
+    # cooldown. Cooldown added +0.61% to arm15; same gain here would push it to ~3.2%.
+    'r7_full_clone_cooldown': {
+        'min_profit_loss_ratio': 4.0, 'proximity_zone_pct': 20.0,
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
+        'min_sl_pct': 0.05, 'max_sl_pct': 1.50, 'max_profit_pct': 3.0,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+    },
+
     # Axis H: sl_adjust_rr_tp95 (11T, 54.5%, +1.02%) + cooldown
     'r5_sl_adj_cooldown': {
         'sl_adjust_to_rr': True, 'min_profit_loss_ratio': 3.0, 'tp_multiplier': 0.95,
@@ -787,6 +854,96 @@ LOCKED_PRESETS: dict[str, dict] = {
 }
 
 
+def run_for_symbol(symbol: str, args) -> None:
+    settings = load_settings(symbol)
+
+    if args.klines:
+        klines_path = Path(args.klines)
+    else:
+        suffix = 'test' if settings.trading_mode == 'testnet' else 'live'
+        klines_path = Path('data') / f'{symbol}_{settings.timeframe}_{suffix}.json'
+
+    if not args.no_fetch and not args.klines:
+        try:
+            feed = DataFeed(settings)
+            feed.refresh_klines(symbol, settings.timeframe, fetch_count=args.klines_count)
+            logger.info(f"[{symbol}] Kline cache refreshed from API")
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not refresh klines: {e} — using existing cache")
+
+    if not klines_path.exists():
+        logger.error(f"[{symbol}] Klines file not found: {klines_path}")
+        return
+
+    with open(klines_path) as f:
+        klines = json.load(f)
+
+    if args.klines_count and len(klines) > args.klines_count:
+        klines = klines[-args.klines_count:]
+    logger.info(f"[{symbol}] Loaded {len(klines)} klines from {klines_path}")
+
+    all_presets = {**LOCKED_PRESETS, **PRESETS}
+    backtester = Backtester(settings)
+    results = backtester.run(klines, all_presets)
+
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+    preset_dicts = {
+        name: {**r.to_dict(), 'settings': all_presets[name]}
+        for name, r in results.items()
+    }
+
+    code_locked = set(LOCKED_PRESETS.keys())
+    extra_locked: list[str] = []
+    dashboard_path = Path('dashboard') / 'public' / f'backtest_results_{symbol}.json'
+    if dashboard_path.exists():
+        try:
+            with open(dashboard_path) as f:
+                old = json.load(f)
+            extra_locked = [
+                n for n in old.get('locked_presets', [])
+                if n not in code_locked and n in preset_dicts
+            ]
+        except Exception:
+            pass
+
+    output = {
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'symbol': symbol,
+        'timeframe': settings.timeframe,
+        'klines_file': str(klines_path),
+        'total_klines': len(klines),
+        'presets': preset_dicts,
+        'locked_presets': list(code_locked) + extra_locked,
+    }
+
+    archive_path = Path('data') / f'backtest_{symbol}_{ts}.json'
+    archive_path.parent.mkdir(exist_ok=True)
+    with open(archive_path, 'w') as f:
+        json.dump(output, f, indent=2)
+    logger.info(f"[{symbol}] Archive saved to {archive_path}")
+
+    if dashboard_path.parent.exists():
+        with open(dashboard_path, 'w') as f:
+            json.dump(output, f, indent=2)
+        logger.info(f"[{symbol}] Dashboard feed updated at {dashboard_path}")
+
+    print(f"\n{'='*20} {symbol} {'='*20}")
+    header = (
+        f"{'Preset':<25} {'Trades':>6} {'Wins':>5} {'Part':>5} "
+        f"{'Trail':>6} {'Loss':>5} {'Win%':>6} {'Profit%':>8} "
+        f"{'Pts':>8} {'MaxDD':>6} {'AvgTP%':>7}"
+    )
+    print(header)
+    print('─' * len(header))
+    for name, r in results.items():
+        print(
+            f"{name:<25} {r.total():>6} {r.wins():>5} {r.partials():>5} "
+            f"{r.trails():>6} {r.losses():>5} {r.win_rate():>5.1%} "
+            f"{r.total_profit_pct():>+8.2f} {r.total_profit_pts():>+8.1f} "
+            f"{r.max_consecutive_losses():>6} {r.avg_max_tp_reach_pct():>6.1f}%"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Backtest the recommendation engine.')
     parser.add_argument(
@@ -808,106 +965,17 @@ def main() -> None:
         default=1500,
         help='Number of klines to fetch and use for the backtest (default: 1500).',
     )
+    parser.add_argument(
+        '--symbols',
+        nargs='+',
+        metavar='SYMBOL',
+        help='Symbols to backtest. Overrides SYMBOLS from .env.',
+    )
     args = parser.parse_args()
 
-    settings = load_settings()
-
-    # ── Resolve klines source ─────────────────────────────────────────────────
-    if args.klines:
-        klines_path = Path(args.klines)
-    else:
-        suffix = 'test' if settings.trading_mode == 'testnet' else 'live'
-        klines_path = Path('data') / f'{settings.symbol}_{settings.timeframe}_{suffix}.json'
-
-    # ── Refresh klines cache from API (default path only) ────────────────────
-    if not args.no_fetch and not args.klines:
-        try:
-            feed = DataFeed(settings)
-            feed.refresh_klines(settings.symbol, settings.timeframe, fetch_count=args.klines_count)
-            logger.info("Kline cache refreshed from API")
-        except Exception as e:
-            logger.warning(f"Could not refresh klines from API: {e} — using existing cache")
-
-    if not klines_path.exists():
-        logger.error(f"Klines file not found: {klines_path}")
-        logger.error("Run the bot first to populate the cache, or specify --klines <path>.")
-        sys.exit(1)
-
-    with open(klines_path) as f:
-        klines = json.load(f)
-
-    # Clip to the requested count — take the most recent N candles
-    if args.klines_count and len(klines) > args.klines_count:
-        klines = klines[-args.klines_count:]
-    logger.info(f"Loaded {len(klines)} klines from {klines_path}")
-
-    # ── Run ───────────────────────────────────────────────────────────────────
-    all_presets = {**LOCKED_PRESETS, **PRESETS}
-    backtester = Backtester(settings)
-    results = backtester.run(klines, all_presets)
-
-    # ── Build output payload ──────────────────────────────────────────────────
-    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
-    preset_dicts = {}
-    for name, r in results.items():
-        d = r.to_dict()
-        d['settings'] = all_presets[name]
-        preset_dicts[name] = d
-
-    # Preserve any locks the user added via the dashboard so they survive a rerun.
-    dashboard_path = Path('dashboard') / 'public' / 'backtest_results.json'
-    code_locked = set(LOCKED_PRESETS.keys())
-    extra_locked: list[str] = []
-    if dashboard_path.exists():
-        try:
-            with open(dashboard_path) as f:
-                old = json.load(f)
-            extra_locked = [
-                n for n in old.get('locked_presets', [])
-                if n not in code_locked and n in preset_dicts
-            ]
-        except Exception:
-            pass
-
-    output = {
-        'generated_at': datetime.now(timezone.utc).isoformat(),
-        'symbol': settings.symbol,
-        'timeframe': settings.timeframe,
-        'klines_file': str(klines_path),
-        'total_klines': len(klines),
-        'presets': preset_dicts,
-        'locked_presets': list(code_locked) + extra_locked,
-    }
-
-    # ── Archive copy ──────────────────────────────────────────────────────────
-    archive_path = Path(args.out) if args.out else Path('data') / f'backtest_{ts}.json'
-    archive_path.parent.mkdir(exist_ok=True)
-    with open(archive_path, 'w') as f:
-        json.dump(output, f, indent=2)
-    logger.info(f"Archive saved to {archive_path}")
-
-    # ── Dashboard live feed ───────────────────────────────────────────────────
-    dashboard_path = Path('dashboard') / 'public' / 'backtest_results.json'
-    if dashboard_path.parent.exists():
-        with open(dashboard_path, 'w') as f:
-            json.dump(output, f, indent=2)
-        logger.info(f"Dashboard feed updated at {dashboard_path}")
-    else:
-        logger.warning(f"Dashboard public dir not found — skipping {dashboard_path}")
-
-    # ── Print summary table ───────────────────────────────────────────────────
-    print()
-    header = f"{'Preset':<25} {'Trades':>6} {'Wins':>5} {'Part':>5} {'Trail':>6} {'Loss':>5} {'Win%':>6} {'Profit%':>8} {'Pts':>8} {'MaxDD':>6} {'AvgTP%':>7}"
-    print(header)
-    print('─' * len(header))
-    for name, r in results.items():
-        print(
-            f"{name:<25} {r.total():>6} {r.wins():>5} {r.partials():>5} {r.trails():>6} {r.losses():>5} "
-            f"{r.win_rate():>5.1%} {r.total_profit_pct():>+8.2f} "
-            f"{r.total_profit_pts():>+8.1f} {r.max_consecutive_losses():>6} "
-            f"{r.avg_max_tp_reach_pct():>6.1f}%"
-        )
-    print()
+    symbols = [s.upper() for s in args.symbols] if args.symbols else load_symbols()
+    for symbol in symbols:
+        run_for_symbol(symbol, args)
 
 
 if __name__ == '__main__':

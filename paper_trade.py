@@ -1,21 +1,26 @@
 """
-Paper trading runner — streams live Binance klines and runs a curated set
-of presets with FakeOrder simulation. No real orders are placed.
+Paper trading runner — streams live Binance klines for multiple symbols
+simultaneously and runs curated preset configurations with FakeOrder simulation.
+No real orders are placed.
 
 Usage:
   python paper_trade.py
+  python paper_trade.py --symbols BTCUSDT XAUUSDT
 
-State is persisted to data/paper_state.json so sessions survive restarts.
-Results are exported to dashboard/public/paper_results.json for the dashboard.
+State is persisted per symbol to data/paper_state_{SYMBOL}.json.
+Results are exported to dashboard/public/paper_results_{SYMBOL}.json.
 """
+import argparse
 import asyncio
 import logging
 import sys
 from pathlib import Path
 
 from bot.data_feed import DataFeed
+from bot.exporter import write_symbols_json
 from bot.paper_trader import PaperTrader
-from config.settings import load_settings
+from bot.risk_manager import RiskManager
+from config.settings import load_settings, load_symbols
 
 logging.basicConfig(
     level=logging.INFO,
@@ -106,37 +111,49 @@ PAPER_PRESETS: dict = {
 }
 
 
-async def main() -> None:
-    settings = load_settings()
+async def run_symbol(symbol: str, risk_manager: RiskManager) -> None:
+    settings = load_settings(symbol)
     feed = DataFeed(settings)
 
-    logger.info(
-        f"Paper trading {settings.symbol} {settings.timeframe} "
-        f"— {len(PAPER_PRESETS)} presets"
-    )
-
-    logger.info("Loading historical klines...")
-    klines = feed.load_klines(settings.symbol, settings.timeframe, settings.kline_limit)
+    logger.info(f"[{symbol}] Loading historical klines...")
+    klines = feed.load_klines(symbol, settings.timeframe, settings.kline_limit)
 
     trader = PaperTrader(
         base_settings=settings,
         presets=PAPER_PRESETS,
-        state_path=Path('data/paper_state.json'),
-        export_path=Path('dashboard/public/paper_results.json'),
+        state_path=Path(f'data/paper_state_{symbol}.json'),
+        export_path=Path(f'dashboard/public/paper_results_{symbol}.json'),
     )
     trader.build_from_klines(klines)
 
-    logger.info("Starting live stream. Press Ctrl+C to stop.")
-    try:
-        await feed.stream_klines(
-            symbol=settings.symbol,
-            timeframe=settings.timeframe,
-            on_candle_close=trader.on_candle,
-            on_price_update=trader.on_price_update,
-        )
-    except KeyboardInterrupt:
-        logger.info("Paper trader stopped.")
+    logger.info(f"[{symbol}] Starting live stream. Press Ctrl+C to stop.")
+    await feed.stream_klines(
+        symbol=symbol,
+        timeframe=settings.timeframe,
+        on_candle_close=trader.on_candle,
+        on_price_update=trader.on_price_update,
+    )
+
+
+async def _run(symbols: list[str]) -> None:
+    write_symbols_json(symbols)
+    risk_manager = RiskManager()
+    logger.info(
+        f"Paper trading {len(symbols)} symbol(s): {', '.join(symbols)} "
+        f"— {len(PAPER_PRESETS)} presets each"
+    )
+    await asyncio.gather(*[run_symbol(s, risk_manager) for s in symbols])
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description='Paper trade one or more symbols.')
+    parser.add_argument(
+        '--symbols', nargs='+', metavar='SYMBOL',
+        help='Override SYMBOLS from .env (e.g. --symbols BTCUSDT XAUUSDT)',
+    )
+    args = parser.parse_args()
+    symbols = [s.upper() for s in args.symbols] if args.symbols else load_symbols()
+    try:
+        asyncio.run(_run(symbols))
+    except KeyboardInterrupt:
+        logger.info("Paper trader stopped.")

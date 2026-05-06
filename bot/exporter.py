@@ -9,7 +9,6 @@ from bot.trend import Trend
 
 logger = logging.getLogger(__name__)
 
-_OUTPUT_PATH = Path('dashboard/public/results.json')
 _MAX_KLINES = 1000
 
 
@@ -94,11 +93,12 @@ def export(
         'best_signal': _rec_dict(best_recommendation) if best_recommendation is not None else None,
     }
 
+    output_path = Path(f'dashboard/public/results_{symbol}.json')
     try:
-        _OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _OUTPUT_PATH.write_text(json.dumps(result, indent=2))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(result, indent=2))
     except Exception as e:
-        logger.error(f"Failed to write results.json: {e}")
+        logger.error(f"Failed to write results_{symbol}.json: {e}")
 
 
 def _rec_dict(rec: Recommendation) -> dict:
@@ -119,3 +119,12 @@ def _ts(unix_seconds: Optional[int]) -> Optional[str]:
     if unix_seconds is None:
         return None
     return datetime.fromtimestamp(unix_seconds, tz=timezone.utc).isoformat()
+
+
+def write_symbols_json(symbols: list[str]) -> None:
+    path = Path('dashboard/public/symbols.json')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'symbols': symbols}, indent=2))
+    except Exception as e:
+        logger.error(f"Failed to write symbols.json: {e}")

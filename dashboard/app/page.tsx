@@ -10,6 +10,7 @@ import SignalsPanel from '@/components/SignalsPanel'
 import LevelFilter from '@/components/LevelFilter'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import { useLocalStorage } from '@/lib/useLocalStorage'
+import { useSymbolContext } from '@/lib/SymbolContext'
 
 function tsToDatetimeLocal(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
@@ -27,18 +28,18 @@ function snapTo15Min(dt: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export default function Page() {
-  // Raw snapshot loaded from /results.json (written by bot/exporter.py after each candle close)
+function PageContent({ symbol }: { symbol: string }) {
+  // Raw snapshot loaded from /results_${symbol}.json (written by bot/exporter.py after each candle close)
   const [data, setData] = useState<BotResults | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Which trend level the user has selected in the filter control.
   // Selecting L2 means: show L1 and L2 data only (hide L3 and above).
   // Defaults to the highest available level (show everything) once data loads.
-  const [selectedLevel, setSelectedLevel] = useLocalStorage<number | null>('db:strategy:selectedLevel', null)
+  const [selectedLevel, setSelectedLevel] = useLocalStorage<number | null>(`db:strategy:${symbol}:selectedLevel`, null)
   // datetime-local inputs use "YYYY-MM-DDTHH:mm" strings; empty string means no limit
-  const [fromDate, setFromDate] = useLocalStorage<string>('db:strategy:fromDate', '')
-  const [toDate,   setToDate]   = useLocalStorage<string>('db:strategy:toDate', '')
+  const [fromDate, setFromDate] = useLocalStorage<string>(`db:strategy:${symbol}:fromDate`, '')
+  const [toDate,   setToDate]   = useLocalStorage<string>(`db:strategy:${symbol}:toDate`, '')
 
   // Poll the bot snapshot every POLL_MS. On the first successful load, default
   // the level filter to the highest available level. Subsequent polls update the
@@ -47,15 +48,18 @@ export default function Page() {
 
   useEffect(() => {
     let cancelled = false
+    setData(null)
 
     function load() {
-      fetch(`/results.json?_=${Date.now()}`)
+      fetch(`/results_${symbol}.json?_=${Date.now()}`)
         .then(r => {
+          if (r.status === 404) return null   // file not yet written — not an error
           if (!r.ok) throw new Error(`HTTP ${r.status}`)
           return r.json()
         })
-        .then((d: BotResults) => {
+        .then((d: BotResults | null) => {
           if (cancelled) return
+          if (d === null) return              // keep showing "no data" state
           setData(d)
           setError(null)
           // Only initialise the level filter on the very first successful load
@@ -70,7 +74,7 @@ export default function Page() {
     load()
     const id = setInterval(load, POLL_MS)
     return () => { cancelled = true; clearInterval(id) }
-  }, [])
+  }, [symbol])
 
   // Derive filtered datasets whenever the raw data, selected level, or date range changes.
   const { filteredPoints, filteredKlines, filteredLevels, availableLevels } = useMemo(() => {
@@ -113,15 +117,16 @@ export default function Page() {
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen text-red-400">
-        Failed to load results.json: {error}
+        Failed to load results_{symbol}.json: {error}
       </div>
     )
   }
 
   if (!data || selectedLevel === null) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-gray-500">
-        Loading…
+      <div className="flex flex-col items-center justify-center min-h-screen gap-2 text-gray-500">
+        <span>No data for <span className="text-gray-300 font-mono">{symbol}</span> yet.</span>
+        <span className="text-xs text-gray-600">Run the bot or paper trader to generate results_{symbol}.json.</span>
       </div>
     )
   }
@@ -193,4 +198,10 @@ export default function Page() {
       </CollapsibleSection>
     </main>
   )
+}
+
+export default function Page() {
+  const { symbol } = useSymbolContext()
+
+  return <PageContent key={symbol} symbol={symbol} />
 }

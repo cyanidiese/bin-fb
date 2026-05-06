@@ -15,6 +15,7 @@ import {
   type FilterState,
 } from '@/lib/presetFilters'
 import { useLocalStorage } from '@/lib/useLocalStorage'
+import { useSymbolContext } from '@/lib/SymbolContext'
 
 const REFRESH_MS = 15_000
 
@@ -88,6 +89,8 @@ export default function PaperPage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:paper:selectedPreset', null)
 
+  const { symbol, availableSymbols } = useSymbolContext()
+
   const [tableFilters, setTableFilters] = useLocalStorage('db:paper:tableFilters', initTableFilters())
   const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:paper:tableFiltersOpen', false)
 
@@ -102,7 +105,7 @@ export default function PaperPage() {
   }
 
   function fetchData() {
-    fetch(`/paper_results.json?t=${Date.now()}`)
+    fetch(`/paper_results_${symbol}.json?t=${Date.now()}`)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -122,11 +125,12 @@ export default function PaperPage() {
   }
 
   useEffect(() => {
+    setData(null)
     fetchData()
     const id = setInterval(fetchData, REFRESH_MS)
     return () => clearInterval(id)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [symbol])
 
   const presetList: PaperPreset[] = useMemo(() => {
     if (!data) return []
@@ -189,7 +193,7 @@ export default function PaperPage() {
         <span className="text-gray-400 text-sm font-mono font-semibold">
           {data.current_price.toLocaleString()} USDT
         </span>
-        <span className="text-gray-600 text-xs ml-auto">
+        <span className="text-gray-600 text-xs">
           running {runningDays} · updated {new Date(data.generated_at).toLocaleTimeString()}
         </span>
       </div>

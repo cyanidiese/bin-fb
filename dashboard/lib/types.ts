@@ -162,3 +162,9 @@ export interface BotResults {
   klines: Kline[];           // last N candles (configured in exporter, default 200)
   signals: Signal[];         // active signals at export time
 }
+
+// ── Symbol config (written by bot at startup) ─────────────────────────────
+
+export interface SymbolConfig {
+  symbols: string[]
+}

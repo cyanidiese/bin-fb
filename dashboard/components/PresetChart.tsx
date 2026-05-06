@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import {
   Chart as ChartJS,
   LinearScale,
@@ -18,6 +18,9 @@ ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend)
 interface Props {
   klines: BacktestApiKline[]
   trades: BacktestTrade[]
+  originalIdxs?: number[]
+  hoveredTradeIdx?: number | null
+  onTradeHover?: (idx: number | null) => void
 }
 
 function fmtTick(unixSec: number): string {
@@ -29,15 +32,34 @@ function fmtTick(unixSec: number): string {
   return `${mm}/${dd} ${hh}:${mi}`
 }
 
-export default function PresetChart({ klines, trades }: Props) {
-  // Keep trades in a ref so the stable plugin always reads the current list
-  // without needing to be destroyed and re-registered on every filter change.
+export default function PresetChart({ klines, trades, originalIdxs, hoveredTradeIdx = null, onTradeHover = () => {} }: Props) {
   const tradesRef = useRef<BacktestTrade[]>(trades)
   tradesRef.current = trades
 
-  // Plugin created once — stable identity, reads from ref at draw time.
+  // Default: identity mapping — each chart trade i maps to original index i.
+  const effectiveOriginalIdxs = originalIdxs ?? trades.map((_, i) => i)
+  const originalIdxsRef = useRef<number[]>(effectiveOriginalIdxs)
+  originalIdxsRef.current = effectiveOriginalIdxs
+
+  // Source of truth for chart drawing — updated synchronously in afterEvent
+  // so the chart.update('none') call that follows always reads the fresh value.
+  const hoveredIdxRef = useRef<number | null>(hoveredTradeIdx)
+  hoveredIdxRef.current = hoveredTradeIdx
+
+  const onTradeHoverRef = useRef(onTradeHover)
+  onTradeHoverRef.current = onTradeHover
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartRef = useRef<any>(null)
+
+  // When the hover comes from the table, redraw the chart to show the highlight.
+  useEffect(() => {
+    chartRef.current?.update('none')
+  }, [hoveredTradeIdx])
+
   const plugin = useMemo<Plugin<'line'>>(() => ({
     id: 'tradeRects',
+
     beforeDatasetsDraw(chart) {
       const ctx = chart.ctx
       const xs = chart.scales.x
@@ -46,7 +68,14 @@ export default function PresetChart({ klines, trades }: Props) {
 
       ctx.save()
 
-      for (const t of tradesRef.current) {
+      const hovered = hoveredIdxRef.current
+      const hasHovered = hovered !== null
+
+      for (let i = 0; i < tradesRef.current.length; i++) {
+        const t = tradesRef.current[i]
+        const isHovered = hasHovered && originalIdxsRef.current[i] === hovered
+        const dim = hasHovered && !isHovered
+
         const x1 = xs.getPixelForValue(t.open_candle)
         const x2 = xs.getPixelForValue(t.close_candle ?? t.open_candle + 1)
         const w = Math.max(x2 - x1, 3)
@@ -60,29 +89,33 @@ export default function PresetChart({ klines, trades }: Props) {
         const partial = t.result === 'partial'
         const trail   = t.result === 'trail'
 
-        ctx.fillStyle = `rgba(52,211,153,${won ? 0.30 : 0.08})`
+        const fade = dim ? 0.25 : 1.0
+        const bw = isHovered ? 2 : 1
+
+        ctx.fillStyle = `rgba(52,211,153,${(won ? 0.30 : 0.08) * fade})`
         ctx.fillRect(x1, Math.min(ey, ty), w, Math.abs(ty - ey))
-        ctx.strokeStyle = `rgba(52,211,153,${won ? 0.7 : 0.3})`
-        ctx.lineWidth = 1
+        ctx.strokeStyle = `rgba(52,211,153,${(won ? 0.7 : 0.3) * fade})`
+        ctx.lineWidth = bw
         ctx.strokeRect(x1, Math.min(ey, ty), w, Math.abs(ty - ey))
 
-        ctx.fillStyle = `rgba(248,113,113,${lost ? 0.30 : 0.08})`
+        ctx.fillStyle = `rgba(248,113,113,${(lost ? 0.30 : 0.08) * fade})`
         ctx.fillRect(x1, Math.min(ey, sy), w, Math.abs(sy - ey))
-        ctx.strokeStyle = `rgba(248,113,113,${lost ? 0.7 : 0.3})`
-        ctx.lineWidth = 1
+        ctx.strokeStyle = `rgba(248,113,113,${(lost ? 0.7 : 0.3) * fade})`
+        ctx.lineWidth = bw
         ctx.strokeRect(x1, Math.min(ey, sy), w, Math.abs(sy - ey))
 
         if ((partial || trail) && t.close_price != null) {
           const cy = ys.getPixelForValue(t.close_price)
-          ctx.fillStyle = trail ? 'rgba(56,189,248,0.30)' : 'rgba(251,191,36,0.30)'
+          const base = trail ? [56, 189, 248] : [251, 191, 36]
+          ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},${0.30 * fade})`
           ctx.fillRect(x1, Math.min(ey, cy), w, Math.abs(cy - ey))
-          ctx.strokeStyle = trail ? 'rgba(56,189,248,0.7)' : 'rgba(251,191,36,0.7)'
-          ctx.lineWidth = 1
+          ctx.strokeStyle = `rgba(${base[0]},${base[1]},${base[2]},${0.7 * fade})`
+          ctx.lineWidth = bw
           ctx.strokeRect(x1, Math.min(ey, cy), w, Math.abs(cy - ey))
         }
 
-        ctx.strokeStyle = 'rgba(209,213,219,0.5)'
-        ctx.lineWidth = 1
+        ctx.strokeStyle = `rgba(209,213,219,${0.5 * fade})`
+        ctx.lineWidth = bw
         ctx.beginPath()
         ctx.moveTo(x1, ey)
         ctx.lineTo(x2, ey)
@@ -91,8 +124,55 @@ export default function PresetChart({ klines, trades }: Props) {
 
       ctx.restore()
     },
+
+    afterEvent(chart, args) {
+      const xs = chart.scales.x
+      const ys = chart.scales.y
+      if (!xs || !ys) return
+
+      const { event, inChartArea } = args
+
+      if (!inChartArea || event.type === 'mouseout' || event.x == null || event.y == null) {
+        if (chart.canvas) chart.canvas.style.cursor = 'default'
+        if (hoveredIdxRef.current !== null) {
+          hoveredIdxRef.current = null
+          onTradeHoverRef.current(null)
+          chart.update('none')
+        }
+        return
+      }
+
+      const mx = event.x
+      const my = event.y
+      let found: number | null = null
+
+      for (let i = 0; i < tradesRef.current.length; i++) {
+        const t = tradesRef.current[i]
+        const x1 = xs.getPixelForValue(t.open_candle)
+        const x2 = xs.getPixelForValue(t.close_candle ?? t.open_candle + 1)
+        const w = Math.max(x2 - x1, 3)
+        const ey = ys.getPixelForValue(t.entry)
+        const ty = ys.getPixelForValue(t.tp)
+        const sy = ys.getPixelForValue(t.sl)
+        const yMin = Math.min(ey, ty, sy)
+        const yMax = Math.max(ey, ty, sy)
+
+        if (mx >= x1 && mx <= x1 + w && my >= yMin && my <= yMax) {
+          found = originalIdxsRef.current[i]
+          break
+        }
+      }
+
+      if (chart.canvas) chart.canvas.style.cursor = found !== null ? 'pointer' : 'default'
+
+      if (found !== hoveredIdxRef.current) {
+        hoveredIdxRef.current = found
+        onTradeHoverRef.current(found)
+        chart.update('none')
+      }
+    },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), []) // intentionally empty — ref carries the live data
+  }), []) // intentionally empty — all live data accessed via refs
 
   const idxToTime = useMemo(() => {
     const m = new Map<number, number>()
@@ -200,7 +280,7 @@ export default function PresetChart({ klines, trades }: Props) {
 
   return (
     <div style={{ height: 380 }}>
-      <Line data={data} options={options} plugins={[plugin]} />
+      <Line ref={chartRef} data={data} options={options} plugins={[plugin]} />
     </div>
   )
 }

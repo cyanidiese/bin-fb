@@ -219,7 +219,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
       </div>
 
       {tab === 'combined' && (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto space-y-2">
           <table className="w-full text-xs font-mono">
             <thead>
               <tr className="border-b border-gray-800">
@@ -254,6 +254,31 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
                   ))}
                 </tr>
               ))}
+            </tbody>
+          </table>
+
+          {/* Best-per-symbol summary row */}
+          <table className="w-full text-xs font-mono">
+            <tbody>
+              <tr className="border-t-2 border-indigo-900 border-b border-gray-800 bg-indigo-950/30">
+                <td
+                  className="py-1 pr-4 text-indigo-400 font-semibold whitespace-nowrap"
+                  title="Maximum possible earnings if the best-performing preset were used for each symbol independently"
+                >
+                  Best per symbol
+                </td>
+                <td className="text-right pr-4 font-semibold">
+                  {usdtCell(bestPerSymbol.reduce((sum, r) => sum + r.usdt, 0))}
+                </td>
+                {loadedSymbols.map(s => {
+                  const r = bestPerSymbol.find(x => x.symbol === s)
+                  return (
+                    <td key={s} className="text-right pr-4" title={r ? `Best preset: ${r.preset}` : undefined}>
+                      {r ? usdtCell(r.usdt) : <span className="text-gray-600">—</span>}
+                    </td>
+                  )
+                })}
+              </tr>
             </tbody>
           </table>
         </div>

@@ -1,8 +1,10 @@
 // Server-only helpers shared between /api/symbols route handlers.
 import fs from 'fs'
 import path from 'path'
+import { BOT_ROOT, isAlive } from '../_utils'
 
-export const BOT_ROOT = path.resolve(process.cwd(), '..')
+export { BOT_ROOT, isAlive }
+
 export const REGISTRY_PATH = path.join(BOT_ROOT, 'symbol_registry.json')
 const SYMBOLS_JSON = path.join(BOT_ROOT, 'dashboard', 'public', 'symbols.json')
 
@@ -34,13 +36,3 @@ export function writeRegistry(data: RegistryFile): void {
   fs.writeFileSync(SYMBOLS_JSON, JSON.stringify({ symbols: data.symbols }, null, 2))
 }
 
-/** Returns true if the OS process with `pid` is still alive. */
-export function isAlive(pid: number | null): boolean {
-  if (!pid) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}

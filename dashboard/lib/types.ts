@@ -168,3 +168,36 @@ export interface BotResults {
 export interface SymbolConfig {
   symbols: string[]
 }
+
+// ── Symbol Discovery ───────────────────────────────────────────────────────
+
+export interface CandidateResult {
+  symbol: string
+  efficiency_score: number        // total_profit_pct_sum / total_order_count across fast presets
+  total_net_profit: number        // sum of total_profit_pct across fast presets
+  total_order_count: number
+  profit_factor: number           // sum(pos_pcts) / sum(abs(neg_pcts))
+  best_preset_id: string
+  best_preset_profit_pct: number
+  win_rate: number
+  max_drawdown: number
+  sharpe_ratio: number            // approx: mean(trade_pcts) / stdev(trade_pcts)
+  baseline_efficiency: number
+  vs_baseline_pct: number         // (efficiency / baseline - 1) × 100
+  potential_gain_usdt: number     // (best_preset_profit_pct / 100) × position_size × leverage
+}
+
+export interface DiscoveryState {
+  status: 'idle' | 'running' | 'complete' | 'cancelled' | 'error'
+  pid: number | null
+  total_precandidates: number
+  processed_count: number
+  in_progress: string[]
+  last_run_timestamp: string | null
+  error?: string
+}
+
+export interface DiscoveryCandidatesFile {
+  generated_at: string
+  candidates: CandidateResult[]
+}

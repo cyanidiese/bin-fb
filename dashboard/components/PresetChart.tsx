@@ -229,6 +229,8 @@ export default function PresetChart({ klines, trades, originalIdxs, hoveredTrade
     scales: {
       x: {
         type: 'linear' as const,
+        min: klines.at(0)?.index,
+        max: klines.at(-1)?.index,
         ticks: {
           color: '#6b7280',
           maxTicksLimit: 8,
@@ -268,7 +270,7 @@ export default function PresetChart({ klines, trades, originalIdxs, hoveredTrade
         },
       },
     },
-  }), [idxToTime])
+  }), [idxToTime, klines])
 
   if (klines.length === 0) {
     return (

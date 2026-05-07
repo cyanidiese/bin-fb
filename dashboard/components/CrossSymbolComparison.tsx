@@ -66,6 +66,8 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
   const [positionSize, setPositionSize] = useState(1000)
   const [leverage, setLeverage] = useState(1)
 
+  const [minTotal, setMinTotal] = useState<string>('')
+
   const [combinedSort,   setCombinedSort]   = useState<SortState>({ key: 'total',  dir: 'desc' })
   const [sideBySideSort, setSideBySideSort] = useState<SortState>({ key: '',       dir: 'desc' })
   const [bestSort,       setBestSort]       = useState<SortState>({ key: 'usdt',   dir: 'desc' })
@@ -219,11 +221,27 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
       </div>
 
       {tab === 'combined' && (
-        <div className="overflow-x-auto space-y-2">
+        <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono">
             <thead>
               <tr className="border-b border-gray-800">
-                <Th sortKey="name"  sort={combinedSort} onSort={k => setCombinedSort(s => toggleSort(s, k))} align="left">Preset</Th>
+                <Th sortKey="name"  sort={combinedSort} onSort={k => setCombinedSort(s => toggleSort(s, k))} align="left">
+                  <span className="flex items-center gap-2">
+                    Preset
+                    <span className="flex items-center gap-1 font-normal text-gray-600">
+                      <span>min $</span>
+                      <input
+                        type="number"
+                        step={1}
+                        placeholder="0"
+                        value={minTotal}
+                        onChange={e => setMinTotal(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        className="w-16 bg-gray-900 border border-gray-700 rounded px-1.5 py-0 text-gray-300 font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                    </span>
+                  </span>
+                </Th>
                 <Th sortKey="total" sort={combinedSort} onSort={k => setCombinedSort(s => toggleSort(s, k))} accent
                     title="Sum of USDT profit across all symbols. Presets absent from a symbol contribute $0.">
                   Total USDT
@@ -236,7 +254,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
               </tr>
             </thead>
             <tbody>
-              {combinedRows.map(row => (
+              {combinedRows.filter(row => minTotal === '' || row.total >= Number(minTotal)).map(row => (
                 <tr key={row.name} className="border-b border-gray-900 hover:bg-gray-900/40">
                   <td className="py-1 pr-4 text-gray-300">{row.name}</td>
                   <td className="text-right pr-4 font-semibold">
@@ -255,12 +273,8 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
                 </tr>
               ))}
             </tbody>
-          </table>
-
-          {/* Best-per-symbol summary row */}
-          <table className="w-full text-xs font-mono">
-            <tbody>
-              <tr className="border-t-2 border-indigo-900 border-b border-gray-800 bg-indigo-950/30">
+            <tfoot>
+              <tr className="border-t-2 border-indigo-900 bg-indigo-950/30">
                 <td
                   className="py-1 pr-4 text-indigo-400 font-semibold whitespace-nowrap"
                   title="Maximum possible earnings if the best-performing preset were used for each symbol independently"
@@ -279,7 +293,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol }: Props) 
                   )
                 })}
               </tr>
-            </tbody>
+            </tfoot>
           </table>
         </div>
       )}

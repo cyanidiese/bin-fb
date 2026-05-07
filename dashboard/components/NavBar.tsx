@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { href: '/backtest',  label: 'Backtest' },
   { href: '/paper',     label: 'Paper'    },
   { href: '/create',    label: 'Create'   },
+  { href: '/risk',      label: 'Risk'     },
   { href: '/settings',  label: 'Settings' },
 ]
 

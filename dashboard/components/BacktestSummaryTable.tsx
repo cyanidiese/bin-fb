@@ -185,68 +185,65 @@ export default function BacktestSummaryTable({ presets, selectedPreset, onSelect
                         : 'hover:bg-gray-800/40 cursor-pointer'
                   }`}
                 >
-                  {/* Preset name cell — button sits inline at the right end */}
+                  {/* Preset name cell — name always truncates; buttons overlay absolutely */}
                   <td
-                    className="px-3 py-2 text-left"
+                    className="px-3 py-2 text-left relative overflow-hidden"
                     onClick={isPending ? e => e.stopPropagation() : undefined}
                   >
-                    {showActions ? (
-                      <div className="flex items-center gap-2 min-w-0">
-                        {/* Name truncates to make room for the inline button */}
-                        <span className="font-semibold text-white truncate min-w-0 flex-1">
-                          {p.preset}
-                        </span>
-                        <div
-                          className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          {isPending ? (
-                            <>
-                              <span className="text-gray-500">
-                                {pendingAction?.type === 'delete' ? 'Delete?' :
-                                 pendingAction?.type === 'lock'   ? 'Lock?' : 'Unlock?'}
-                              </span>
+                    <span className="font-semibold text-white block truncate">
+                      {isLocked && !showActions && (
+                        <span className="text-amber-500 text-[10px] mr-1" title="Locked preset — cannot be deleted">🔒</span>
+                      )}
+                      {p.preset}
+                    </span>
+
+                    {showActions && (
+                      <div
+                        className="absolute inset-y-0 right-0 flex items-center gap-1.5 pl-6 pr-3 text-[10px] font-mono"
+                        style={{ background: 'linear-gradient(to right, transparent, #111827 28%)' }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {isPending ? (
+                          <>
+                            <span className="text-gray-500">
+                              {pendingAction?.type === 'delete' ? 'Delete?' :
+                               pendingAction?.type === 'lock'   ? 'Lock?' : 'Unlock?'}
+                            </span>
+                            <button
+                              onClick={handleConfirm}
+                              className={`font-semibold transition-colors ${pendingAction?.type === 'delete' ? 'text-red-400 hover:text-red-300' : 'text-amber-400 hover:text-amber-300'}`}
+                            >
+                              Yes
+                            </button>
+                            <span className="text-gray-700">|</span>
+                            <button
+                              onClick={handleCancel}
+                              className="text-gray-500 hover:text-gray-300 transition-colors"
+                            >
+                              No
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {onToggleLock && (
                               <button
-                                onClick={handleConfirm}
-                                className={`font-semibold transition-colors ${pendingAction?.type === 'delete' ? 'text-red-400 hover:text-red-300' : 'text-amber-400 hover:text-amber-300'}`}
+                                onClick={e => handleLockClick(e, p.preset, isLocked ? 'unlock' : 'lock')}
+                                className="text-gray-600 hover:text-amber-400 transition-colors whitespace-nowrap"
                               >
-                                Yes
+                                {isLocked ? '🔓 Unlock' : '🔒 Lock'}
                               </button>
-                              <span className="text-gray-700">|</span>
+                            )}
+                            {onDelete && !isLocked && (
                               <button
-                                onClick={handleCancel}
-                                className="text-gray-500 hover:text-gray-300 transition-colors"
+                                onClick={e => handleDeleteClick(e, p.preset)}
+                                className="text-gray-600 hover:text-red-400 transition-colors whitespace-nowrap"
                               >
-                                No
+                                🗑 Remove
                               </button>
-                            </>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              {onToggleLock && (
-                                <button
-                                  onClick={e => handleLockClick(e, p.preset, isLocked ? 'unlock' : 'lock')}
-                                  className="text-gray-600 hover:text-amber-400 transition-colors whitespace-nowrap"
-                                >
-                                  {isLocked ? '🔓 Unlock' : '🔒 Lock'}
-                                </button>
-                              )}
-                              {onDelete && !isLocked && (
-                                <button
-                                  onClick={e => handleDeleteClick(e, p.preset)}
-                                  className="text-gray-600 hover:text-red-400 transition-colors whitespace-nowrap"
-                                >
-                                  🗑 Remove
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                            )}
+                          </>
+                        )}
                       </div>
-                    ) : (
-                      <span className="flex items-center gap-1.5 font-semibold text-white">
-                        {isLocked && <span className="text-amber-500 text-[10px]" title="Locked preset — cannot be deleted">🔒</span>}
-                        {p.preset}
-                      </span>
                     )}
                   </td>
 

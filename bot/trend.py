@@ -496,7 +496,7 @@ class Trend:
         rec: Optional[Recommendation] = None
         how_close = proximity_zone_pct  # default: no closeness bonus
 
-        if is_last_high is not None:
+        if is_last_high:
             last_low = self.getLastLow()
 
             # When higher_low_buy is enabled: in an ascending trend, fire BUY

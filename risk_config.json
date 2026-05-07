@@ -22,5 +22,11 @@
   "drawdown_warning_pct": 10.0,
   "drawdown_hard_stop_pct": 20.0,
   "backtest_initial_balance_usdt": 1000.0,
-  "symbol_weights": {}
+  "symbol_weights": {
+    "BTCUSDT": 1,
+    "XAUUSDT": 1,
+    "ETHUSDT": 1,
+    "SOLUSDT": 1,
+    "BNBUSDT": 1
+  }
 }

@@ -123,6 +123,7 @@ async def run_symbol(symbol: str, risk_manager: RiskManager) -> None:
         presets=PAPER_PRESETS,
         state_path=Path(f'data/paper_state_{symbol}.json'),
         export_path=Path(f'dashboard/public/paper_results_{symbol}.json'),
+        risk_manager=risk_manager,
     )
     trader.build_from_klines(klines)
 
@@ -137,7 +138,7 @@ async def run_symbol(symbol: str, risk_manager: RiskManager) -> None:
 
 async def _run(symbols: list[str]) -> None:
     write_symbols_json(symbols)
-    risk_manager = RiskManager()
+    risk_manager = RiskManager(mode="paper")
     logger.info(
         f"Paper trading {len(symbols)} symbol(s): {', '.join(symbols)} "
         f"— {len(PAPER_PRESETS)} presets each"

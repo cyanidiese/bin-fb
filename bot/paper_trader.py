@@ -16,6 +16,7 @@ from bot.analyzer import Analyzer
 from bot.backtester import PresetResult
 from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
+from bot.risk_manager import RiskManager
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,10 @@ class PaperTrader:
         presets: Dict[str, dict],
         state_path: Path,
         export_path: Path,
+        risk_manager: RiskManager | None = None,
     ):
         self._base = base_settings
+        self._risk_manager = risk_manager
         self._presets = presets
         self._state_path = state_path
         self._export_path = export_path
@@ -185,6 +188,12 @@ class PaperTrader:
         entry_price: float,
         candle_index: int,
     ) -> None:
+        if self._risk_manager is not None:
+            allowed, reason = self._risk_manager.can_open_sync(self._base.symbol)
+            if not allowed:
+                logger.debug(f"[{name}] blocked by risk manager: {reason}")
+                return
+
         settings = dataclasses.replace(self._base, **overrides)
         engine   = self._engines[name]
         cd       = self._cooldown[name]

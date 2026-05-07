@@ -1,6 +1,6 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-02 (session 9)
+## Last updated: 2026-05-07 (session 10)
 
 ---
 
@@ -47,8 +47,15 @@
 | Dashboard `/paper` page — open orders panel + summary table + drill-down | **done** |
 | `config/settings.py` — sl_adjust_to_rr, max_profit_pct | **done** |
 | `bot/order_manager.py` — 3-order live structure + reconciliation | **done** |
-| Risk management module | not started |
-| Tests | not started |
+| Symbol registry (add/remove symbols from Settings page) | **done** |
+| `config/risk_config.py` — load/save with atomic writes, default-merging | **done** |
+| `bot/risk_manager.py` — full RiskManager (balance, allocation, leverage, drawdown) | **done** |
+| `dashboard/app/api/risk/route.ts` — GET config+state, POST save config | **done** |
+| `dashboard/app/risk/page.tsx` — Risk page sections A–E with live polling | **done** |
+| `dashboard/components/NavBar.tsx` — Risk nav link | **done** |
+| Risk management module | **done** |
+| Tests (risk module — 21 tests) | **done** |
+| Tests (other modules) | not started |
 | Deployment files | not started |
 
 ---
@@ -203,8 +210,9 @@ Key decisions:
 10. ~~**Run Backtest button + klines count selector**~~ — done (`/api/run-backtest`, step-50 number input)
 11. ~~**Live lock/unlock from dashboard**~~ — done (`/api/toggle-preset-lock`, confirmation UX, persists across reruns)
 12. **Account info panel** — balance, available margin, unrealised PnL via Binance Futures REST
-13. **Risk management module** — position sizing, daily loss limit, leverage check on startup
+13. ~~**Risk management module**~~ — done (`feature/risk-module` branch, 21 tests)
 14. **Order placement** — wire `OrderManager` into main.py; requires risk module for sizing
+15. **Merge `feature/risk-module`** — review + merge into main when ready
 
 ### Partial take — real orders (Phase 4 note)
 For live/testnet orders, partial take requires a **trailing stop** on the exchange side (e.g. a trailing-stop-limit order that activates once price reaches `partial_price`). This is not trivial via Binance API. Deferred to Phase 4 order manager design.
@@ -567,3 +575,50 @@ Symmetric mirror of `lower_high_sell`. In the `if is_last_high is not None:` bra
 - `backtest_api.py` — default + build_settings wiring
 - `backtest.py` — 6 `hl_buy_*` presets + 4 `pre_confirm_*` presets (both flags together)
 | `FAILED_ORDER_COOLDOWN_CANDLES` | Candles to skip re-entry after same-signal SL hit | `2` |
+
+---
+
+### Session 10 — 2026-05-07: Risk module + dashboard cleanup
+
+#### Dashboard cleanup
+- **Orders table removed** from `PresetResultsPanel` (Backtest → Visualize Preset section). Hover state and `BacktestTradeList` import removed from the component. Chart still shows trade markers.
+- **Stale symbol files deleted**: removed data/backtest files for DOGEUSDT and XRPUSDT which were no longer in the symbol registry.
+- **Auto file cleanup on symbol deletion**: `DELETE /api/symbols/[symbol]` now calls `deleteSymbolFiles(symbol)` which removes `dashboard/public/backtest_results_{SYMBOL}.json`, `dashboard/public/results_{SYMBOL}.json`, `data/{SYMBOL}_15m*.json`, and all `data/backtest_{SYMBOL}_*.json` timestamped archives.
+
+#### Symbol registry (from previous session — landed in this branch)
+Settings page (`/settings`) allows adding and removing symbols. Registry stored in `symbol_registry.json` at project root. Temporary feature — will be disabled once paper trading starts.
+
+#### Risk module — fully implemented on `feature/risk-module` branch
+
+**Spec**: `docs/superpowers/specs/2026-05-07-risk-module-design.md`  
+**Plan**: `docs/superpowers/plans/2026-05-07-risk-module.md`
+
+**New files:**
+- `config/risk_config.py` — `load_risk_config()` (creates file if missing, merges new defaults), `save_risk_config()` (atomic write), `DEFAULT_CONFIG`
+- `risk_config.json` — project root, generated on first Python run; dashboard POST /api/risk saves here
+- `dashboard/app/api/risk/route.ts` — GET returns `{ config, state }`; POST saves full config atomically
+- `dashboard/app/risk/page.tsx` — full Risk page: sections A (global capital rules + balance tiers), B (per-symbol allocation weights), C (leverage controls), D (drawdown guard + reset button), E (live state polling)
+- `tests/test_risk_config.py` — 4 tests
+- `tests/test_risk_manager.py` — 17 tests
+
+**Modified files:**
+- `bot/risk_manager.py` — full replacement of old async-only stub. Now `threading.RLock`-based, re-entrant. Public interface: `update_balance()`, `can_open_sync()`, `get_leverage()`, `get_allocation()`, `notify()`, `reset_hard_stop()`, `snapshot()`, `async can_open()`
+- `bot/backtester.py` — added `initial_balance` + `risk_config_path` params; `PresetResult` gains `balance_start`, `balance_end`, `drawdown_triggered`; `_run_preset()` tracks compound balance per preset and gates entries after hard-stop drawdown
+- `backtest.py` — reads `backtest_initial_balance_usdt` from risk config; passes to `Backtester`
+- `bot/paper_trader.py` — `can_open_sync()` gate at top of `_try_open()` before all other checks
+- `paper_trade.py` — instantiates `RiskManager(mode="paper")`; passes to `PaperTrader`
+- `dashboard/components/NavBar.tsx` — added Risk link between Create and Settings
+
+**Key design decisions:**
+- `threading.RLock` (not asyncio.Lock) — safe in both sync backtester and async paper trader; re-entrant so internal helpers can call each other
+- True profit factor = `sum(positive profit_pct) / sum(abs(negative profit_pct))` from actual trade data — NOT potential win/loss pts
+- 60 s TTL cache per symbol for performance scores — new backtests picked up automatically within 1 min
+- Minimum 4 trades threshold for preset eligibility in scoring
+- Drawdown warning auto-resets; hard stop is latched (requires manual reset via dashboard Reset button)
+- `_pending_notify` pattern: store notification inside lock, fire `notify()` after releasing to avoid deadlock
+- In backtest mode: `estimated_size_usdt=0` → only hard_stop and profit_factor checks apply (capital gates always pass)
+- `risk_state.json` written atomically to `dashboard/public/`; polled by dashboard every 5 s
+
+**Test results (21 tests total, all passing):**
+- 4 `test_risk_config.py`: file creation, key merging, save/reload, corrupt-file fallback
+- 17 `test_risk_manager.py`: tier selection, allocation, capital gate, drawdown guard, leverage formula, TTL cache, backtester compound balance

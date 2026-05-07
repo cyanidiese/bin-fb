@@ -34,10 +34,16 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ## Phase 1 — Risk management
 
-- [ ] Max position size per trade (% of account or fixed USDT)
-- [ ] Max concurrent open positions
-- [ ] Daily loss limit with bot pause
-- [ ] Leverage validation on startup (warn above threshold)
+- [x] `config/risk_config.py` — load/save with atomic writes, default-merging, DEFAULT_CONFIG
+- [x] `bot/risk_manager.py` — full RiskManager: balance tiers, weighted allocation, leverage formula, drawdown guard, TTL-cached performance score
+- [x] `dashboard/app/api/risk/route.ts` — GET config+state, POST save config atomically
+- [x] `dashboard/app/risk/page.tsx` — Risk page sections A–E with live polling
+- [x] NavBar Risk link
+- [x] Paper trader gate — `can_open_sync()` before every entry
+- [x] Backtester compound balance tracking + drawdown hard-stop gate per preset
+- [ ] Daily loss limit with bot pause (deferred — handled via drawdown guard for now)
+- [ ] Leverage validation on startup (warn if set above threshold in exchange settings)
+- [ ] Merge `feature/risk-module` into main
 
 ## Phase 2 — Validation
 
@@ -123,7 +129,7 @@ See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
 - [x] `config/settings.py` — add `load_symbols()` + `load_settings(symbol)` with per-symbol env overrides
 - [x] `bot/risk_manager.py` — new: async-safe capital budget tracker (asyncio.Lock, can_open/open/close)
 - [x] `bot/exporter.py` — write to `results_{symbol}.json` instead of `results.json`
-- [ ] `bot/paper_trader.py` — accept optional `risk_manager` param
+- [x] `bot/paper_trader.py` — accept optional `risk_manager` param
 - [x] `paper_trade.py` — rewrite: loop over symbols, asyncio.gather, write symbols.json
 - [x] `backtest.py` — loop over symbols, write `backtest_results_{symbol}.json` per symbol
 - [x] `backtest_api.py` — accept `symbol` param; default to first symbol

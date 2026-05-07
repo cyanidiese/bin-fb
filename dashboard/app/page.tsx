@@ -62,11 +62,15 @@ function PageContent({ symbol }: { symbol: string }) {
           if (d === null) return              // keep showing "no data" state
           setData(d)
           setError(null)
-          // Only initialise the level filter on the very first successful load
+          // Initialise the level filter, or reset it if the stored value is
+          // below all available levels (happens when a placeholder file with
+          // no trend_levels was loaded first, setting selectedLevel to 0).
           setSelectedLevel(prev => {
-            if (prev !== null) return prev
             if (d.trend_levels.length === 0) return 0
-            return Math.max(...d.trend_levels.map(t => t.level))
+            const max = Math.max(...d.trend_levels.map(t => t.level))
+            const min = Math.min(...d.trend_levels.map(t => t.level))
+            if (prev === null || prev < min) return max
+            return prev
           })
         })
         .catch(e => { if (!cancelled) setError(e.message) })

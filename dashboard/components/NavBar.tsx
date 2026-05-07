@@ -32,7 +32,7 @@ export default function NavBar() {
           {label}
         </Link>
       ))}
-      <div className="ml-auto">
+      <div className="ml-auto max-w-[50%] min-w-0">
         <SymbolSwitcher symbols={availableSymbols} selected={symbol} onSelect={setSymbol} />
       </div>
     </nav>

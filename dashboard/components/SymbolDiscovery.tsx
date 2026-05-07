@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { CandidateResult, DiscoveryState, DiscoveryCandidatesFile } from '@/lib/types'
+import { useSymbolContext } from '@/lib/SymbolContext'
 
 const LEVERAGES = [1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100, 125]
 const POLL_MS = 3000
@@ -22,6 +23,7 @@ function pct(n: number) { return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%` }
 function usd(n: number) { return `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(2)}` }
 
 export default function SymbolDiscovery() {
+  const { availableSymbols } = useSymbolContext()
   const [state, setState] = useState<DiscoveryState>(DEFAULT_STATE)
   const [candidates, setCandidates] = useState<CandidateResult[]>([])
   const [adding, setAdding] = useState<string | null>(null)
@@ -114,13 +116,14 @@ export default function SymbolDiscovery() {
   }
 
   const visibleCandidates = useMemo(() => {
-    const filtered = candidates.filter(c => !addedSymbols.has(c.symbol))
+    const activeSet = new Set(availableSymbols)
+    const filtered = candidates.filter(c => !addedSymbols.has(c.symbol) && !activeSet.has(c.symbol))
     return [...filtered].sort((a, b) => {
       const av = a[sortKey] as number
       const bv = b[sortKey] as number
       return sortDir === 'desc' ? bv - av : av - bv
     })
-  }, [candidates, addedSymbols, sortKey, sortDir])
+  }, [candidates, addedSymbols, availableSymbols, sortKey, sortDir])
 
   const totalPotential = visibleCandidates.reduce((s, c) => s + c.potential_gain_usdt, 0)
   const bestPotential  = visibleCandidates.reduce((m, c) => Math.max(m, c.potential_gain_usdt), 0)

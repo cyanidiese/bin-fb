@@ -9,6 +9,54 @@ function getPython(): string {
   return fs.existsSync(venvPy) ? venvPy : 'python3'
 }
 
+const PUBLIC_DIR = path.join(BOT_ROOT, 'dashboard', 'public')
+
+/**
+ * Writes a minimal results_{symbol}.json so the Strategy page renders
+ * immediately after a symbol is added, without waiting for the bot to run.
+ * Tries to fetch the current price from Binance; falls back to 0.
+ */
+async function writePlaceholderResults(symbol: string): Promise<void> {
+  // Inherit mode + timeframe from an existing results file if one is present.
+  let mode = 'testnet'
+  let timeframe = '15m'
+  try {
+    const existing = fs.readdirSync(PUBLIC_DIR).find(f => f.startsWith('results_') && f.endsWith('.json') && !f.includes(symbol))
+    if (existing) {
+      const d = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, existing), 'utf8'))
+      if (d.mode) mode = d.mode
+      if (d.timeframe) timeframe = d.timeframe
+    }
+  } catch { /* use defaults */ }
+
+  let currentPrice = 0
+  try {
+    const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`, { signal: AbortSignal.timeout(4000) })
+    if (r.ok) {
+      const d = await r.json() as { price?: string }
+      currentPrice = parseFloat(d.price ?? '0') || 0
+    }
+  } catch { /* use 0 */ }
+
+  const placeholder = {
+    symbol,
+    timeframe,
+    mode,
+    generated_at: new Date().toISOString(),
+    current_price: currentPrice,
+    trend_levels: [],
+    all_points: [],
+    klines: [],
+    signals: [],
+  }
+
+  const dest = path.join(PUBLIC_DIR, `results_${symbol}.json`)
+  // Don't overwrite a real results file if somehow one already exists.
+  if (!fs.existsSync(dest)) {
+    fs.writeFileSync(dest, JSON.stringify(placeholder, null, 2))
+  }
+}
+
 /** GET /api/symbols — return registry, reconciling any stale "running" statuses. */
 export async function GET() {
   const reg = readRegistry()
@@ -58,6 +106,10 @@ export async function POST(req: NextRequest) {
   reg.symbols.push(symbol)
   reg.status[symbol] = { backtest: 'running', pid: null }
   writeRegistry(reg)
+
+  // Write a placeholder results file immediately so the Strategy page shows the
+  // symbol straight away rather than the "no data yet" message.
+  void writePlaceholderResults(symbol)
 
   // Spawn backtest subprocess in the background — do NOT await it.
   const python = getPython()

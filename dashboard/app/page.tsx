@@ -65,6 +65,7 @@ function PageContent({ symbol }: { symbol: string }) {
           // Only initialise the level filter on the very first successful load
           setSelectedLevel(prev => {
             if (prev !== null) return prev
+            if (d.trend_levels.length === 0) return 0
             return Math.max(...d.trend_levels.map(t => t.level))
           })
         })
@@ -127,6 +128,16 @@ function PageContent({ symbol }: { symbol: string }) {
       <div className="flex flex-col items-center justify-center min-h-screen gap-2 text-gray-500">
         <span>No data for <span className="text-gray-300 font-mono">{symbol}</span> yet.</span>
         <span className="text-xs text-gray-600">Run the bot or paper trader to generate results_{symbol}.json.</span>
+      </div>
+    )
+  }
+
+  if (data.klines.length === 0 && data.trend_levels.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-2 text-gray-500">
+        <span className="text-gray-300 font-mono">{symbol}</span>
+        <span>Waiting for bot analysis…</span>
+        <span className="text-xs text-gray-600">Strategy data will appear here once the bot processes this symbol.</span>
       </div>
     )
   }

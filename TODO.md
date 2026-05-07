@@ -117,6 +117,8 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] Run Backtest button + step-50 klines input + loading overlay on backtest page
 - [x] `lower_high_sell` setting — DESCENDING_NEAR_LOWER_HIGH signal, 6 new presets
 - [x] `higher_low_buy` setting — ASCENDING_NEAR_HIGHER_LOW signal (mirror), 6+4 new presets
+- [x] **Critical fix**: `bot/trend.py` — BUY signals were unreachable (`is_last_high is not None` → `is_last_high`)
+- [ ] Re-evaluate all presets now that both BUY and SELL signals fire correctly
 - [ ] Run backtest with lh_sell presets and evaluate results
 - [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
 - [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)

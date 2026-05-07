@@ -580,6 +580,21 @@ Symmetric mirror of `lower_high_sell`. In the `if is_last_high is not None:` bra
 
 ### Session 10 — 2026-05-07: Risk module + dashboard cleanup
 
+#### Critical bug fix: BUY signals were unreachable (`bot/trend.py`)
+
+`getRecommendation()` had `if is_last_high is not None:` where `isLastPointHigh()` returns `True`, `False`, or `None`. Since `False is not None` is `True`, both "last swing = HIGH" and "last swing = LOW" entered the SELL-biased block. The BUY-biased `else` block only ran when `is_last_high is None` (no points at all) — which never happens in practice because we return early if there aren't enough points.
+
+**Fix**: changed `if is_last_high is not None:` → `if is_last_high:` (one character).
+
+**Impact**: Before fix: ~99% SELL across all symbols. After fix:
+- BTCUSDT: 58% BUY / 42% SELL, best preset +2.57% pf=3.50 (was +1.16% pf=1.56)
+- ETHUSDT: best preset +9.61% pf=3.35 (was +1.73% pf=1.39)
+- SOLUSDT: best preset +8.36% pf=1.83 (was +6.11% pf=1.75)
+- BNBUSDT: best preset +4.07% pf=4.19 (was +0.98% pf=1.57)
+- XAUUSDT: best preset +2.19% pf=2.31 (was +2.35% pf=2.52 — slight change due to new mix)
+
+Risk module leverage scores after fix: BTCUSDT 10×, XAUUSDT 9×, ETHUSDT 10×, SOLUSDT 9×, BNBUSDT 10×.
+
 #### Dashboard cleanup
 - **Orders table removed** from `PresetResultsPanel` (Backtest → Visualize Preset section). Hover state and `BacktestTradeList` import removed from the component. Chart still shows trade markers.
 - **Stale symbol files deleted**: removed data/backtest files for DOGEUSDT and XRPUSDT which were no longer in the symbol registry.

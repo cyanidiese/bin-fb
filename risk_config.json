@@ -1,0 +1,26 @@
+{
+  "balance_tiers": [
+    {
+      "min_balance_usdt": 0,
+      "max_deploy_pct": 40,
+      "max_leverage_ceiling": 5
+    },
+    {
+      "min_balance_usdt": 1000,
+      "max_deploy_pct": 50,
+      "max_leverage_ceiling": 10
+    },
+    {
+      "min_balance_usdt": 5000,
+      "max_deploy_pct": 60,
+      "max_leverage_ceiling": 15
+    }
+  ],
+  "base_leverage": 2,
+  "max_leverage": 10,
+  "min_profit_factor": 1.2,
+  "drawdown_warning_pct": 10.0,
+  "drawdown_hard_stop_pct": 20.0,
+  "backtest_initial_balance_usdt": 1000.0,
+  "symbol_weights": {}
+}

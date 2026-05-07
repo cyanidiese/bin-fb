@@ -189,3 +189,27 @@ def test_perf_cache_ttl(tmp_path, monkeypatch):
     rm._perf_cache["BTCUSDT"] = (0.5, 0.0, 1.5)  # ts=0 → always expired
     rm.get_leverage("BTCUSDT")
     assert len(calls) == 2
+
+
+from bot.backtester import Backtester
+from config.settings import load_settings
+
+def test_backtester_tracks_compound_balance(tmp_path):
+    """PresetResult should include balance_start, balance_end, drawdown_triggered."""
+    cfg_path = tmp_path / "risk_config.json"
+    cfg_path.write_text(json.dumps({
+        "balance_tiers": [{"min_balance_usdt": 0, "max_deploy_pct": 100, "max_leverage_ceiling": 1}],
+        "base_leverage": 1, "max_leverage": 1, "min_profit_factor": 0.0,
+        "drawdown_warning_pct": 50.0, "drawdown_hard_stop_pct": 90.0,
+        "backtest_initial_balance_usdt": 500.0, "symbol_weights": {},
+    }))
+    settings = load_settings("BTCUSDT")
+    bt = Backtester(base_settings=settings, initial_balance=500.0, risk_config_path=cfg_path)
+    # Minimal klines — 5 flat candles — produces 0 trades so balance unchanged
+    # Format: [open_time_ms, open, high, low, close, volume, close_time_ms]
+    klines = [[0, "100", "101", "99", "100", "1000", 60000]] * 5
+    results = bt.run(klines, {"default": {}})
+    d = results["default"].to_dict()
+    assert d["balance_start"] == 500.0
+    assert d["balance_end"] == 500.0
+    assert d["drawdown_triggered"] is False

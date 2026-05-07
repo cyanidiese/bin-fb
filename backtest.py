@@ -23,6 +23,7 @@ from pathlib import Path
 from config.settings import load_settings, load_symbols
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
+from config.risk_config import load_risk_config, _CONFIG_PATH as RISK_CONFIG_PATH
 
 logging.basicConfig(
     level=logging.INFO,
@@ -883,7 +884,12 @@ def run_for_symbol(symbol: str, args) -> None:
     logger.info(f"[{symbol}] Loaded {len(klines)} klines from {klines_path}")
 
     all_presets = {**LOCKED_PRESETS, **PRESETS}
-    backtester = Backtester(settings)
+    risk_cfg = load_risk_config(RISK_CONFIG_PATH)
+    backtester = Backtester(
+        base_settings=settings,
+        initial_balance=risk_cfg.get("backtest_initial_balance_usdt", 0.0),
+        risk_config_path=RISK_CONFIG_PATH,
+    )
     results = backtester.run(klines, all_presets)
 
     ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import SymbolDiscovery from '@/components/SymbolDiscovery'
 
 type BacktestStatus = 'none' | 'running' | 'complete' | 'error' | 'cancelled'
 
@@ -227,6 +228,9 @@ export default function SettingsPage() {
             Results appear on the Backtest page once complete.
           </p>
         </div>
+
+        {/* Symbol Discovery */}
+        <SymbolDiscovery />
       </section>
     </main>
   )

@@ -928,6 +928,15 @@ def run_for_symbol(symbol: str, args) -> None:
         json.dump(output, f, indent=2)
     logger.info(f"[{symbol}] Archive saved to {archive_path}")
 
+    # Keep only the 5 most recent archives for this symbol.
+    all_archives = sorted(Path('data').glob(f'backtest_{symbol}_????????T??????.json'))
+    for stale in all_archives[:-5]:
+        try:
+            stale.unlink()
+            logger.info(f"[{symbol}] Removed old archive {stale.name}")
+        except Exception:
+            pass
+
     if dashboard_path.parent.exists():
         with open(dashboard_path, 'w') as f:
             json.dump(output, f, indent=2)

@@ -1,0 +1,233 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+
+type BacktestStatus = 'none' | 'running' | 'complete' | 'error' | 'cancelled'
+
+interface SymbolStatus {
+  backtest: BacktestStatus
+  pid: number | null
+}
+
+interface RegistryData {
+  symbols: string[]
+  updated_at: string
+  status: Record<string, SymbolStatus>
+}
+
+const POLL_MS = 3000
+
+function StatusBadge({ status }: { status: BacktestStatus }) {
+  if (status === 'running') {
+    return (
+      <span className="flex items-center gap-1.5 text-indigo-400" title="Backtest is currently running for this symbol">
+        <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+        </svg>
+        running…
+      </span>
+    )
+  }
+  if (status === 'complete') {
+    return <span className="text-emerald-400" title="Backtest finished successfully">✓ complete</span>
+  }
+  if (status === 'error') {
+    return <span className="text-red-400" title="Backtest exited with an error — check terminal logs">✗ error</span>
+  }
+  if (status === 'cancelled') {
+    return <span className="text-gray-500" title="Backtest was cancelled when the symbol was removed">cancelled</span>
+  }
+  return <span className="text-gray-600" title="No backtest has been run for this symbol yet">none</span>
+}
+
+export default function SettingsPage() {
+  const [registry, setRegistry] = useState<RegistryData | null>(null)
+  const [addInput, setAddInput] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  const fetchRegistry = useCallback(async () => {
+    try {
+      const res = await fetch('/api/symbols')
+      if (res.ok) setRegistry(await res.json())
+    } catch { /* network error — keep last state */ }
+  }, [])
+
+  // Initial load + polling
+  useEffect(() => {
+    fetchRegistry()
+    const id = setInterval(fetchRegistry, POLL_MS)
+    return () => clearInterval(id)
+  }, [fetchRegistry])
+
+  async function handleAdd() {
+    const symbol = addInput.trim().toUpperCase()
+    setAddError(null)
+    if (!symbol) { setAddError('Enter a symbol name'); return }
+
+    setAdding(true)
+    try {
+      const res = await fetch('/api/symbols', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setAddError(data.error ?? `HTTP ${res.status}`); return }
+      setAddInput('')
+      fetchRegistry()
+    } catch (e) {
+      setAddError(String(e))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  async function handleRemove(symbol: string) {
+    const status = registry?.status[symbol]?.backtest
+    const isRunning = status === 'running'
+    const msg = isRunning
+      ? `Cancel the running backtest for ${symbol} and remove it?\n\nPartial results will be discarded.`
+      : `Remove ${symbol} from active symbols?`
+    if (!window.confirm(msg)) return
+
+    setRemoving(symbol)
+    try {
+      await fetch(`/api/symbols/${symbol}`, { method: 'DELETE' })
+      fetchRegistry()
+    } finally {
+      setRemoving(null)
+    }
+  }
+
+  const updatedAt = registry?.updated_at
+    ? new Date(registry.updated_at).toLocaleTimeString()
+    : '—'
+
+  return (
+    <main className="p-4 space-y-6 max-w-2xl">
+      <div className="flex flex-wrap items-baseline gap-4">
+        <h1 className="text-lg font-bold text-white">Settings</h1>
+      </div>
+
+      {/* ── Symbol Registry ───────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+          Symbol Registry
+        </h2>
+
+        {/* Active symbols table */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 overflow-hidden">
+          <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
+            <p
+              className="text-xs text-gray-500 font-semibold uppercase tracking-wide"
+              title="Symbols currently tracked by the bot. Add or remove symbols below."
+            >
+              Active Symbols
+            </p>
+            <span
+              className="text-[10px] text-gray-600 font-mono"
+              title="Timestamp of the last change to symbol_registry.json"
+            >
+              {registry ? `${registry.symbols.length} symbol${registry.symbols.length !== 1 ? 's' : ''} · updated ${updatedAt}` : 'Loading…'}
+            </span>
+          </div>
+
+          {registry && registry.symbols.length === 0 && (
+            <p className="px-4 py-6 text-sm text-gray-600 italic text-center">
+              No symbols registered. Add one below.
+            </p>
+          )}
+
+          {registry && registry.symbols.length > 0 && (
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-gray-800 text-gray-500">
+                  <th
+                    className="text-left px-4 py-2 font-normal"
+                    title="Binance USD-M Futures symbol"
+                  >
+                    Symbol
+                  </th>
+                  <th
+                    className="text-left px-4 py-2 font-normal"
+                    title="Status of the most recent backtest run for this symbol"
+                  >
+                    Backtest
+                  </th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {registry.symbols.map(sym => {
+                  const st = registry.status[sym] ?? { backtest: 'none', pid: null }
+                  return (
+                    <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
+                      <td className="px-4 py-2 text-indigo-300 font-semibold">{sym}</td>
+                      <td className="px-4 py-2">
+                        <StatusBadge status={st.backtest} />
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          onClick={() => handleRemove(sym)}
+                          disabled={removing === sym}
+                          title={
+                            st.backtest === 'running'
+                              ? `Cancel backtest and remove ${sym}`
+                              : `Remove ${sym} from active symbols`
+                          }
+                          className="px-2 py-0.5 rounded border border-red-900/60 bg-red-950/30 text-red-400 text-[10px] font-semibold hover:bg-red-900/40 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {removing === sym ? 'Removing…' : 'Remove'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Add symbol */}
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-3">
+          <p
+            className="text-xs text-gray-500 font-semibold uppercase tracking-wide"
+            title="Add a new Binance USD-M Futures symbol. A backtest will start immediately."
+          >
+            Add Symbol
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={addInput}
+              onChange={e => { setAddInput(e.target.value.toUpperCase()); setAddError(null) }}
+              onKeyDown={e => e.key === 'Enter' && !adding && handleAdd()}
+              placeholder="e.g. ETHUSDT"
+              disabled={adding}
+              title="Enter a Binance USD-M Futures symbol (e.g. ETHUSDT, SOLUSDT). Must end in USDT."
+              className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-300 text-xs font-mono placeholder-gray-600 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed uppercase"
+            />
+            <button
+              onClick={handleAdd}
+              disabled={adding || !addInput.trim()}
+              title="Add the symbol and start a backtest immediately"
+              className="px-4 py-2 rounded border border-indigo-700 bg-indigo-900/60 text-indigo-300 text-xs font-semibold hover:bg-indigo-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+            >
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+          {addError && (
+            <p className="text-xs text-red-400 font-mono">{addError}</p>
+          )}
+          <p className="text-[10px] text-gray-600">
+            A backtest over the last 1500 klines starts immediately after adding.
+            Results appear on the Backtest page once complete.
+          </p>
+        </div>
+      </section>
+    </main>
+  )
+}

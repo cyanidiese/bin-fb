@@ -1,0 +1,32 @@
+{
+  "symbols": [
+    "BTCUSDT",
+    "XAUUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT"
+  ],
+  "updated_at": "2026-05-06T22:51:30.717Z",
+  "status": {
+    "BTCUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "XAUUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "ETHUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "SOLUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "BNBUSDT": {
+      "backtest": "complete",
+      "pid": null
+    }
+  }
+}

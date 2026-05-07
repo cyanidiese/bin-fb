@@ -5,10 +5,11 @@ import SymbolSwitcher from './SymbolSwitcher'
 import { useSymbolContext } from '@/lib/SymbolContext'
 
 const NAV_LINKS = [
-  { href: '/',         label: 'Strategy' },
-  { href: '/backtest', label: 'Backtest' },
-  { href: '/paper',    label: 'Paper'    },
-  { href: '/create',   label: 'Create'   },
+  { href: '/',          label: 'Strategy' },
+  { href: '/backtest',  label: 'Backtest' },
+  { href: '/paper',     label: 'Paper'    },
+  { href: '/create',    label: 'Create'   },
+  { href: '/settings',  label: 'Settings' },
 ]
 
 export default function NavBar() {

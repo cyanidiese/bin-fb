@@ -1,8 +1,13 @@
 import dataclasses
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Registry file lives in the project root (one level up from config/).
+_REGISTRY_PATH = Path(__file__).resolve().parent.parent / 'symbol_registry.json'
 
 load_dotenv()
 
@@ -136,6 +141,17 @@ def load_settings(symbol: str | None = None) -> Settings:
 
 
 def load_symbols() -> list[str]:
+    # Registry file is the authority when it exists and is readable.
+    if _REGISTRY_PATH.exists():
+        try:
+            data = json.loads(_REGISTRY_PATH.read_text())
+            symbols = [s.strip().upper() for s in data.get('symbols', []) if s.strip()]
+            if symbols:
+                return symbols
+        except Exception:
+            pass  # fall through to .env
+
+    # Fall back to .env
     raw = os.getenv('SYMBOLS', '').strip()
     if raw:
         return [s.strip().upper() for s in raw.split(',') if s.strip()]

@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import type { BacktestPreset, BacktestApiResponse, BacktestTrade } from '@/lib/types'
 import PresetChart from './PresetChart'
-import BacktestTradeList from './BacktestTradeList'
 import { useLocalStorage } from '@/lib/useLocalStorage'
 
 interface Props {
@@ -36,7 +35,6 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
 
   const [fromDate, setFromDate] = useLocalStorage<string>('db:visualize:fromDate', '')
   const [toDate, setToDate] = useLocalStorage<string>('db:visualize:toDate', '')
-  const [hoveredTradeIdx, setHoveredTradeIdx] = useState<number | null>(null)
 
   useEffect(() => {
     if (!open || !preset) {
@@ -70,12 +68,11 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
     return () => ctrl.abort()
   }, [open, preset?.preset, symbol])
 
-  // Reset date range and hover whenever a new result arrives (symbol or preset changed)
+  // Reset date range whenever a new result arrives (symbol or preset changed)
   useEffect(() => {
     if (!result?.klines.length) return
     setFromDate(toDateStr(result.klines[0].time))
     setToDate(toDateStr(result.klines[result.klines.length - 1].time))
-    setHoveredTradeIdx(null)
   }, [result])
 
   const filteredKlines = useMemo(() => {
@@ -95,12 +92,10 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
     [filteredKlines],
   )
 
-  // Track both the visible (re-indexed) trades and their original indices in result.trades
-  const { displayTrades, originalIdxs } = useMemo(() => {
-    if (!result) return { displayTrades: [] as BacktestTrade[], originalIdxs: [] as number[] }
+  const displayTrades = useMemo((): BacktestTrade[] => {
+    if (!result) return []
     const trades: BacktestTrade[] = []
-    const idxs: number[] = []
-    result.trades.forEach((t, i) => {
+    result.trades.forEach(t => {
       if (t.open_candle <= maxIdx && (t.close_candle ?? t.open_candle + 1) >= minIdx) {
         trades.push({
           ...t,
@@ -109,10 +104,9 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
             ? Math.min(displayKlines.length - 1, Math.max(0, t.close_candle - minIdx))
             : null,
         })
-        idxs.push(i)
       }
     })
-    return { displayTrades: trades, originalIdxs: idxs }
+    return trades
   }, [result, minIdx, maxIdx, displayKlines.length])
 
   const klineMinDate = result?.klines.length ? toDateStr(result.klines[0].time) : ''
@@ -216,25 +210,7 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
               <PresetChart
                 klines={displayKlines}
                 trades={displayTrades}
-                originalIdxs={originalIdxs}
-                hoveredTradeIdx={hoveredTradeIdx}
-                onTradeHover={setHoveredTradeIdx}
               />
-
-              {/* Orders list — hover synced with chart */}
-              {result.trades.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
-                    Orders ({result.total_trades})
-                  </p>
-                  <BacktestTradeList
-                    presetName={preset?.preset ?? ''}
-                    trades={result.trades}
-                    hoveredIdx={hoveredTradeIdx}
-                    onHover={setHoveredTradeIdx}
-                  />
-                </div>
-              )}
             </div>
           )}
         </div>

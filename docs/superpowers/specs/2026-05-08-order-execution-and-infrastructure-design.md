@@ -98,7 +98,26 @@ Next.js writes the command file, then polls `bot_command_result.json` every 2 se
 
 ---
 
-## 3. Bot State Heartbeat
+## 3. Bot State — RUNNING and STOPPED
+
+### 3.1 STOPPED Is a First-Class State
+
+STOPPED is a fully supported operating state, not an error condition. In STOPPED state:
+- No orders are placed, no WebSocket connections are open, no symbol workers are running.
+- The dashboard is fully usable: backtests can be run, settings can be changed, logs can be viewed.
+- The bot can be started from the dashboard (Start Bot button) or from the terminal (`python main.py`).
+
+### 3.2 Process Management
+
+The Next.js server is the always-running layer. It spawns and manages the bot process using the same `child_process.spawn` pattern already used for `backtest.py` and `discover.py`:
+
+- **Start bot**: `POST /api/bot/start` → Node.js `spawn('python', ['main.py'], { detached: true, stdio: 'ignore' })` → store PID in `data/bot_pid.json` → return immediately.
+- **Stop bot**: write `data/bot_command.json` (bot reads via 2s poll and shuts down cleanly) **or** send SIGTERM to PID from `data/bot_pid.json` if command file goes unacknowledged within 10s.
+- **Bot started from CLI**: PID is written to `data/bot_pid.json` by the bot itself on startup. Dashboard detects it via `bot_state.json` heartbeat regardless of who started the process.
+
+The Next.js server is **not required** for the bot to run — the bot functions independently if started from the terminal. The dashboard is a UI layer, not a hard dependency.
+
+### 3.3 Heartbeat File
 
 `dashboard/public/bot_state.json` (written by bot every 10 seconds):
 ```json
@@ -116,6 +135,10 @@ Next.js writes the command file, then polls `bot_command_result.json` every 2 se
 Dashboard considers bot **RUNNING** if `last_heartbeat` is less than 30 seconds old.  
 On clean shutdown, bot writes `"running": false` before exiting.  
 If the process is killed, the file goes stale naturally — dashboard shows STOPPED after 30s.
+
+### 3.4 Backtest While Stopped
+
+"Run Backtest" on the Backtest page works regardless of bot status — Next.js spawns `backtest.py` directly (existing behaviour, preserved). The bot does not need to be running for manual backtests.
 
 ---
 
@@ -157,6 +180,8 @@ Rendered in `layout.tsx`, before the nav menu. Reads `bot_state.json` polled eve
 | Live + Running | `LIVE · RUNNING` | Amber border, pulsing dot |
 | Live + Stopped | `LIVE · STOPPED` | Amber border, no pulse |
 
+Clicking the badge navigates to the Settings page.
+
 ### 4.4 Settings Page — UI Preview Section
 
 Three checkboxes (purely cosmetic, no backend effect):
@@ -168,11 +193,12 @@ These override the real state locally in the browser only.
 
 ---
 
-## 5. Stop Bot Control (§4 of prompt)
+## 5. Start Bot / Stop Bot Control (§4 of prompt)
 
-### 5.1 Button
+### 5.1 Settings Page Buttons
 
-"Stop Bot" button on the Settings page. Confirmation dialog identical to mode switch: shows unrealised P&L if orders are open.
+- **Start Bot** button — visible only when bot is STOPPED. No confirmation required. On click: `POST /api/bot/start` → Next.js spawns `python main.py` detached, stores PID in `data/bot_pid.json`, returns immediately. Dashboard polls `bot_state.json` until `running: true` appears (timeout 30s → show error).
+- **Stop Bot** button — visible only when bot is RUNNING. Confirmation dialog: shows unrealised P&L if orders are open.
 
 ### 5.2 Bot-Side Stop Sequence
 
@@ -182,8 +208,10 @@ These override the real state locally in the browser only.
 4. Discard all virtual orders (mark `abandoned`).
 5. Stop all symbol worker tasks.
 6. Write `bot_state.json: { running: false }`.
-7. Write success result.
+7. Write success result to `bot_command_result.json`.
 8. Call `sys.exit(0)`.
+
+If the bot does not acknowledge the stop command within 10s, the dashboard falls back to sending SIGTERM to the PID in `data/bot_pid.json`.
 
 ### 5.3 Shared Utility — `close_all_orders_at_market()`
 
@@ -567,7 +595,8 @@ Subsequent runs: user manages allocation weights manually via the Risk page. The
 | `dashboard/app/log/page.tsx` | System log page |
 | `dashboard/app/api/log/route.ts` | Serves `data/system_log.json` |
 | `dashboard/app/api/mode/route.ts` | GET current mode, POST mode switch command |
-| `dashboard/app/api/bot/stop/route.ts` | POST stop bot command |
+| `dashboard/app/api/bot/start/route.ts` | POST spawn `main.py`, store PID |
+| `dashboard/app/api/bot/stop/route.ts` | POST stop bot command (file + SIGTERM fallback) |
 | `dashboard/app/api/alerts/dismiss/route.ts` | POST dismiss alert by ID |
 | `dashboard/app/api/telegram/test/route.ts` | POST trigger test notification |
 | `dashboard/components/ModeBadge.tsx` | Global mode + running status badge |
@@ -588,6 +617,7 @@ Subsequent runs: user manages allocation weights manually via the Risk page. The
 | File | Purpose |
 |---|---|
 | `data/bot_mode.json` | Current runtime mode |
+| `data/bot_pid.json` | PID of running bot process (written by bot on startup, read by dashboard for SIGTERM fallback) |
 | `data/bot_command.json` | Pending command from dashboard |
 | `data/bot_command_result.json` | Command execution result |
 | `data/system_log.json` | Rolling 100-entry event log |

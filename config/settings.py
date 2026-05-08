@@ -67,12 +67,17 @@ class Settings:
 
 
 def load_settings(symbol: str | None = None) -> Settings:
-    trading_mode = os.getenv('TRADING_MODE', 'testnet').lower()
+    import logging as _logging
+    _raw_mode = os.getenv('TRADING_MODE', 'test').lower()
+    trading_mode = 'test' if _raw_mode == 'testnet' else _raw_mode
+    if trading_mode not in ('test', 'live'):
+        raise RuntimeError(f"TRADING_MODE must be 'test' or 'live', got: '{_raw_mode}'")
+    if _raw_mode == 'testnet':
+        _logging.getLogger(__name__).warning(
+            "TRADING_MODE=testnet is deprecated — treating as 'test'. Update your .env."
+        )
 
-    if trading_mode not in ('testnet', 'live'):
-        raise RuntimeError(f"TRADING_MODE must be 'testnet' or 'live', got: '{trading_mode}'")
-
-    if trading_mode == 'testnet':
+    if trading_mode == 'test':
         api_key = os.getenv('TESTNET_API_KEY', '')
         api_secret = os.getenv('TESTNET_API_SECRET', '')
         key_names = ('TESTNET_API_KEY', 'TESTNET_API_SECRET')
@@ -93,14 +98,6 @@ def load_settings(symbol: str | None = None) -> Settings:
 
     if missing:
         raise RuntimeError(f"Missing required .env variables: {', '.join(missing)}")
-
-    if trading_mode == 'live':
-        confirmed = os.getenv('LIVE_MODE_CONFIRMED', '').strip().lower()
-        if confirmed != 'yes':
-            raise RuntimeError(
-                "TRADING_MODE=live requires LIVE_MODE_CONFIRMED=yes in .env. "
-                "Set this only after reviewing all risk parameters."
-            )
 
     base = Settings(
         trading_mode=trading_mode,

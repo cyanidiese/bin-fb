@@ -29,16 +29,16 @@ def append_entry(
     _write(path, entries)
 
 
-def _read(path: Path) -> list:
+def _read(path: Path) -> list[dict]:
     if not path.exists():
         return []
     try:
         return json.loads(path.read_text())
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return []
 
 
-def _write(path: Path, entries: list) -> None:
+def _write(path: Path, entries: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(entries, indent=2))

@@ -16,6 +16,13 @@ interface RegistryData {
   status: Record<string, SymbolStatus>
 }
 
+interface BotState {
+  running: boolean
+  pid: number | null
+  mode: string
+  last_heartbeat: string | null
+}
+
 const POLL_MS = 3000
 
 function StatusBadge({ status }: { status: BacktestStatus }) {
@@ -48,6 +55,9 @@ export default function SettingsPage() {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [botState, setBotState] = useState<BotState | null>(null)
+  const [botActionLoading, setBotActionLoading] = useState(false)
+  const [botActionError, setBotActionError] = useState('')
 
   const fetchRegistry = useCallback(async () => {
     try {
@@ -62,6 +72,54 @@ export default function SettingsPage() {
     const id = setInterval(fetchRegistry, POLL_MS)
     return () => clearInterval(id)
   }, [fetchRegistry])
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch(`/bot_state.json?t=${Date.now()}`)
+        if (!r.ok) { setBotState(null); return }
+        const data = await r.json()
+        const isStale = data.last_heartbeat
+          ? (Date.now() - new Date(data.last_heartbeat).getTime()) > 30_000
+          : true
+        setBotState({ ...data, running: data.running && !isStale })
+      } catch {
+        setBotState(null)
+      }
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  const handleStart = async () => {
+    setBotActionLoading(true)
+    setBotActionError('')
+    try {
+      const r = await fetch('/api/bot/start', { method: 'POST' })
+      const data = await r.json()
+      if (!data.ok) setBotActionError(data.error || 'Failed to start bot')
+    } catch (e) {
+      setBotActionError(String(e))
+    } finally {
+      setBotActionLoading(false)
+    }
+  }
+
+  const handleStop = async () => {
+    if (!window.confirm('Stop the bot? All open orders will be closed at market price.')) return
+    setBotActionLoading(true)
+    setBotActionError('')
+    try {
+      const r = await fetch('/api/bot/stop', { method: 'POST' })
+      const data = await r.json()
+      if (!data.ok) setBotActionError(data.error || 'Failed to stop bot')
+    } catch (e) {
+      setBotActionError(String(e))
+    } finally {
+      setBotActionLoading(false)
+    }
+  }
 
   async function handleAdd() {
     const symbol = addInput.trim().toUpperCase()
@@ -112,6 +170,44 @@ export default function SettingsPage() {
       <div className="flex flex-wrap items-baseline gap-4">
         <h1 className="text-lg font-bold text-white">Settings</h1>
       </div>
+
+      {/* ── Bot Control ──────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+          Bot Control
+        </h2>
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+          <div className="flex items-center gap-4">
+            {botState?.running ? (
+              <button
+                onClick={handleStop}
+                disabled={botActionLoading}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {botActionLoading ? 'Stopping…' : 'Stop Bot'}
+              </button>
+            ) : (
+              <button
+                onClick={handleStart}
+                disabled={botActionLoading}
+                className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {botActionLoading ? 'Starting…' : 'Start Bot'}
+              </button>
+            )}
+            <span className="text-sm text-gray-400">
+              {botState === null
+                ? 'Status unknown'
+                : botState.running
+                  ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
+                  : 'Stopped'}
+            </span>
+          </div>
+          {botActionError && (
+            <p className="mt-3 text-sm text-red-400">{botActionError}</p>
+          )}
+        </div>
+      </section>
 
       {/* ── Symbol Registry ───────────────────────────────────────────── */}
       <section className="space-y-4">

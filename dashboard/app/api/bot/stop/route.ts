@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { BOT_ROOT, isAlive } from '../../_utils'
 import path from 'path'
 import fs from 'fs'
@@ -40,8 +41,12 @@ function sigterm(): boolean {
 }
 
 export async function POST() {
-  const id = crypto.randomUUID()
-  writeCommand(id)
+  const id = randomUUID()
+  try {
+    writeCommand(id)
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: `Failed to write command: ${err}` }, { status: 500 })
+  }
   const ok = await waitForResult(id)
   if (!ok) {
     const killed = sigterm()

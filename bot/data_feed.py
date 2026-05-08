@@ -23,7 +23,7 @@ _WS_LIVE = 'wss://fstream.binance.com/ws'
 class DataFeed:
     def __init__(self, settings: Settings):
         self._settings = settings
-        self._is_testnet = settings.trading_mode == 'testnet'
+        self._is_testnet = settings.trading_mode == 'test'
         self._mode_suffix = 'test' if self._is_testnet else 'live'
 
         self._client = Client(settings.api_key, settings.api_secret, testnet=self._is_testnet)
@@ -31,6 +31,21 @@ class DataFeed:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
 
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
+
+    def reinit(self, mode: str, api_key: str, api_secret: str) -> None:
+        """Re-initialise client and endpoints for a new mode without creating a new DataFeed."""
+        self._is_testnet = (mode == 'test')
+        self._mode_suffix = 'test' if self._is_testnet else 'live'
+        self._client = Client(api_key, api_secret, testnet=self._is_testnet)
+        if self._is_testnet:
+            self._client.FUTURES_URL = _FUTURES_REST_TESTNET
+        self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
+
+    @staticmethod
+    def combined_stream_url(symbols: list[str], timeframe: str, testnet: bool) -> str:
+        streams = '/'.join(f"{s.lower()}@kline_{timeframe}" for s in symbols)
+        base = _WS_TESTNET if testnet else _WS_LIVE
+        return f"{base.rstrip('/ws')}/stream?streams={streams}"
 
     # ------------------------------------------------------------------ #
     # REST — kline history                                                 #

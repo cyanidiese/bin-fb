@@ -14,12 +14,21 @@ DEFAULT_CONFIG: dict = {
         {"min_balance_usdt": 5000, "max_deploy_pct": 60, "max_leverage_ceiling": 15},
     ],
     "base_leverage": 2,
-    "max_leverage": 10,
+    "max_leverage": 20,
     "min_profit_factor": 1.2,
     "drawdown_warning_pct": 10.0,
     "drawdown_hard_stop_pct": 20.0,
     "backtest_initial_balance_usdt": 1000.0,
     "symbol_weights": {},
+    # Telegram alerting
+    "telegram": {"token": "", "chat_id": ""},
+    # Emergency thresholds
+    "min_balance_usdt": 0.0,
+    "consecutive_failure_threshold": 3,
+    # Test mode
+    "test_starting_balance_usdt": 10000.0,
+    # Order execution
+    "price_stale_threshold_s": 15,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

@@ -38,3 +38,25 @@ def test_corrupt_file_returns_defaults(tmp_path):
     p.write_text("not json{{{")
     cfg = load_risk_config(p)
     assert cfg["base_leverage"] == 2
+
+
+def test_new_defaults_present(tmp_path):
+    path = tmp_path / "risk_config.json"
+    cfg = load_risk_config(path)
+    assert "telegram" in cfg
+    assert cfg["telegram"] == {"token": "", "chat_id": ""}
+    assert cfg["min_balance_usdt"] == 0.0
+    assert cfg["consecutive_failure_threshold"] == 3
+    assert cfg["test_starting_balance_usdt"] == 10000.0
+    assert cfg["max_leverage"] == 20
+    assert cfg["price_stale_threshold_s"] == 15
+
+
+def test_existing_file_missing_new_keys_gets_defaults(tmp_path):
+    path = tmp_path / "risk_config.json"
+    # Write file without new keys
+    path.write_text('{"drawdown_warning_pct": 10.0}')
+    cfg = load_risk_config(path)
+    assert cfg["drawdown_warning_pct"] == 10.0
+    assert cfg["telegram"] == {"token": "", "chat_id": ""}
+    assert cfg["consecutive_failure_threshold"] == 3

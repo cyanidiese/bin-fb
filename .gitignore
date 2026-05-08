@@ -37,6 +37,19 @@ data/
 # Bot runtime
 STOP
 
+# Runtime state files (generated at runtime, not committed)
+data/bot_pid.json
+data/bot_mode.json
+data/bot_command.json
+data/bot_command_result.json
+data/system_log.json
+data/preset_efficiency_test.json
+data/preset_efficiency_live.json
+data/virtual_orders_test.json
+data/virtual_orders_live.json
+dashboard/public/bot_state.json
+dashboard/public/alert_state.json
+
 # Dashboard
 dashboard/node_modules/
 dashboard/.next/

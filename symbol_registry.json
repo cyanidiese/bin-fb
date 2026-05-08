@@ -4,9 +4,19 @@
     "XAUUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "BNBUSDT"
+    "BNBUSDT",
+    "THETAUSDT",
+    "REZUSDT",
+    "DOGEUSDT",
+    "1000PEPEUSDT",
+    "WLDUSDT",
+    "MEMEUSDT",
+    "AVAXUSDT",
+    "ETHFIUSDT",
+    "TIAUSDT",
+    "EIGENUSDT"
   ],
-  "updated_at": "2026-05-06T22:51:30.717Z",
+  "updated_at": "2026-05-07T17:24:38.689Z",
   "status": {
     "BTCUSDT": {
       "backtest": "complete",
@@ -25,6 +35,46 @@
       "pid": null
     },
     "BNBUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "THETAUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "REZUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "DOGEUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "1000PEPEUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "WLDUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "MEMEUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "AVAXUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "ETHFIUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "TIAUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "EIGENUSDT": {
       "backtest": "complete",
       "pid": null
     }

@@ -145,6 +145,27 @@ See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
 - [x] `app/paper/page.tsx` — fetch `paper_results_{symbol}.json`
 - [x] `components/CrossSymbolComparison.tsx` — new: 3-tab cross-symbol preset comparison
 - [x] `lib/types.ts` — add `SymbolConfig` type for symbols.json
+- [x] `useSymbols.ts` — poll every 3s (was: single fetch on mount); newly added symbols reflect live
+- [x] `POST /api/symbols` — write placeholder `results_{symbol}.json` immediately on symbol add
+- [x] `app/page.tsx` — fix selectedLevel localStorage bug (reset when prev < min available level)
+- [x] `app/page.tsx` — "Waiting for bot analysis…" state when klines + trend_levels both empty
+- [x] `components/SymbolSwitcher.tsx` — selected symbol pinned left, rest scrollable, max 50% width
+- [x] `components/NavBar.tsx` — `max-w-[50%] min-w-0` wrapper for SymbolSwitcher
+
+## Phase 3.7 — Symbol Discovery
+
+See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
+
+- [x] `bot/symbol_discovery.py` — SymbolDiscovery class: get_precandidates, get_fast_presets, compute_baseline, score_candidate
+- [x] `tests/test_symbol_discovery.py` — 10 tests all passing; uses _DASHBOARD_PUBLIC patch for fs isolation
+- [x] `discover.py` — project-root CLI: ThreadPoolExecutor, SIGTERM via threading.Event, atomic writes
+- [x] `dashboard/app/api/discovery/run/route.ts` — POST: spawn discover.py, track PID, update state on close
+- [x] `dashboard/app/api/discovery/cancel/route.ts` — POST: SIGTERM to running discover.py
+- [x] `dashboard/components/SymbolDiscovery.tsx` — controls + progress + sortable candidates table
+- [x] `dashboard/app/api/_utils.ts` — shared BOT_ROOT + isAlive utilities
+- [x] `dashboard/app/settings/page.tsx` — SymbolDiscovery section added
+- [x] `dashboard/lib/types.ts` — CandidateResult, DiscoveryState, DiscoveryCandidatesFile interfaces
+- [ ] End-to-end test: run discovery from UI, verify candidates appear, add one, verify it disappears
 
 ## Phase 4 — Order placement
 

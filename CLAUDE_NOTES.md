@@ -1,6 +1,6 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-07 (session 10)
+## Last updated: 2026-05-07 (session 11)
 
 ---
 
@@ -55,6 +55,13 @@
 | `dashboard/components/NavBar.tsx` — Risk nav link | **done** |
 | Risk management module | **done** |
 | Tests (risk module — 21 tests) | **done** |
+| `bot/symbol_discovery.py` — SymbolDiscovery class + CandidateResult | **done** |
+| `discover.py` — CLI entry point for discovery subprocess | **done** |
+| `dashboard/app/api/discovery/run/route.ts` — POST spawn discover.py | **done** |
+| `dashboard/app/api/discovery/cancel/route.ts` — POST SIGTERM | **done** |
+| `dashboard/components/SymbolDiscovery.tsx` — discovery UI on Settings page | **done** |
+| `dashboard/app/api/_utils.ts` — shared BOT_ROOT + isAlive | **done** |
+| Tests (symbol_discovery — 10 tests) | **done** |
 | Tests (other modules) | not started |
 | Deployment files | not started |
 
@@ -637,3 +644,69 @@ Settings page (`/settings`) allows adding and removing symbols. Registry stored 
 **Test results (21 tests total, all passing):**
 - 4 `test_risk_config.py`: file creation, key merging, save/reload, corrupt-file fallback
 - 17 `test_risk_manager.py`: tier selection, allocation, capital gate, drawdown guard, leverage formula, TTL cache, backtester compound balance
+
+---
+
+### Session 11 — 2026-05-07: Symbol Discovery + dashboard fixes
+
+#### Symbol Discovery — fully implemented
+
+**Plan**: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
+
+**New files:**
+- `bot/symbol_discovery.py` — `CandidateResult` dataclass + `SymbolDiscovery` class with 4 methods: `get_precandidates`, `get_fast_presets`, `compute_baseline`, `score_candidate`. Module-level `_DASHBOARD_PUBLIC = Path("dashboard") / "public"` (patchable in tests via `patch('bot.symbol_discovery._DASHBOARD_PUBLIC', tmp_path)`).
+- `tests/test_symbol_discovery.py` — 10 tests, all passing. Filesystem isolation via `_DASHBOARD_PUBLIC` patch.
+- `discover.py` — project-root CLI. Reads `data/discovery_config.json`, spawns `ThreadPoolExecutor`, writes `discovery_candidates.json` atomically. SIGTERM handled via `threading.Event`.
+- `dashboard/app/api/discovery/run/route.ts` — `POST`: validates body, writes initial state, spawns `discover.py`, stores PID, updates status on `close`.
+- `dashboard/app/api/discovery/cancel/route.ts` — `POST`: reads PID from state, sends SIGTERM.
+- `dashboard/components/SymbolDiscovery.tsx` — collapsible controls, progress bar + cancel button, sortable candidates table with "Add" per row. Filters out candidates already in `availableSymbols`.
+- `dashboard/app/api/_utils.ts` — shared `BOT_ROOT` and `isAlive(pid)` used by both symbols and discovery routes.
+
+**Modified files:**
+- `dashboard/app/api/symbols/_registry.ts` — removed inline `BOT_ROOT`/`isAlive`, now imports + re-exports from `../_utils`.
+- `dashboard/lib/types.ts` — added `CandidateResult`, `DiscoveryState`, `DiscoveryCandidatesFile` interfaces.
+- `dashboard/app/settings/page.tsx` — added `<SymbolDiscovery />` section after "Add Symbol".
+
+**Key design decisions:**
+- Discovery runs as a subprocess (same pattern as `backtest.py`) so Next.js stays responsive.
+- Candidates disappear from the UI once added: `visibleCandidates` filters against `availableSymbols` (polled every 3s from `useSymbolContext`) — works both immediately and after page reload.
+- `_DASHBOARD_PUBLIC` as module-level constant (not inside class) so tests can patch it without touching class internals.
+- `build_from_klines` does NOT set `_current_price` — must pass `float(klines[-1][4])` explicitly as `current_price` argument to `export()`.
+
+#### Strategy page fixes
+
+**Problem 1 — Newly added symbols showed "No data" forever.**
+Root cause: `useSymbols.ts` fetched `symbols.json` only once on mount. New symbols added via POST /api/symbols were never reflected.
+Fix: Changed to poll every 3000ms with `?t=${Date.now()}` cache-buster.
+
+**Problem 2 — "No data for THETAUSDT yet" even after polling fix.**
+Root cause: No `results_{symbol}.json` existed for newly added symbols, and fetching a 404 kept the page in "no data" state permanently.
+Fix: Added `writePlaceholderResults(symbol)` (fire-and-forget `void`) in `POST /api/symbols` immediately after registry write. It inherits mode/timeframe from any existing results file, fetches live price from `fapi.binance.com/fapi/v1/ticker/price`, and writes the placeholder only if file doesn't already exist.
+
+**Problem 3 — Existing symbols (7 of them) had no results files; trend data blank.**
+Root cause: `Analyzer.build_from_klines()` processes klines but never sets `_current_price` — only `add_candle()` does. Placeholder's `current_price=0` caused display issues. Results files for non-BTCUSDT symbols were never generated.
+Fix: Generated strategy data for all 7 symbols by running `backtest.py`. Also fixed exporter to pass `float(klines[-1][4])` as explicit `current_price`.
+
+**Problem 4 — Trend table and chart showed no data despite results file existing.**
+Root cause: `selectedLevel` in localStorage was `0` (set during placeholder era when `trend_levels` was empty and `Math.max(...[])` returned `-Infinity`, then stored as `0`). With real data (levels 1–3), the filter `t.level <= 0` excluded everything.
+Fix in `app/page.tsx`:
+```javascript
+setSelectedLevel(prev => {
+  if (d.trend_levels.length === 0) return 0
+  const max = Math.max(...d.trend_levels.map(t => t.level))
+  const min = Math.min(...d.trend_levels.map(t => t.level))
+  if (prev === null || prev < min) return max
+  return prev
+})
+```
+Also added "Waiting for bot analysis…" intermediate state when `klines.length === 0 && trend_levels.length === 0`.
+
+#### Symbol switcher improvements
+
+- **NavBar wrapper**: `<div className="ml-auto max-w-[50%] min-w-0">` — caps switcher to half the nav width.
+- **Selected symbol pinned left**: Rendered as a `Btn` outside the scroll container; thin gray divider separates it from the rest.
+- **Remaining symbols scroll horizontally**: wrapped in `overflow-x-auto scrollbar-none` div.
+- `scrollbar-none` utility added via Tailwind; `scrollbarWidth: 'none'` inline style as cross-browser fallback.
+
+#### Bug fixed: wrong import path in `_registry.ts`
+`_registry.ts` is at `dashboard/app/api/symbols/` → `_utils.ts` is one level up at `dashboard/app/api/`. Used `../_utils` (not `../../_utils`).

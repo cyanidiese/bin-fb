@@ -103,7 +103,8 @@
       "Bash(.venv/bin/python3 *)",
       "Bash(git add *)",
       "Bash(git checkout *)",
-      "Bash(pytest tests/test_risk_config.py -v)"
+      "Bash(pytest tests/test_risk_config.py -v)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

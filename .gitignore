@@ -41,3 +41,6 @@ STOP
 dashboard/node_modules/
 dashboard/.next/
 dashboard/.env*.local
+
+# Bot-generated dashboard data
+dashboard/public/backtest_results_*.json

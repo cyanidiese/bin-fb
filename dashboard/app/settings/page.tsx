@@ -58,6 +58,37 @@ export default function SettingsPage() {
   const [botState, setBotState] = useState<BotState | null>(null)
   const [botActionLoading, setBotActionLoading] = useState(false)
   const [botActionError, setBotActionError] = useState('')
+  const [mode, setMode] = useState<string>('test')
+  const [modeSwitching, setModeSwitching] = useState(false)
+  const [modeError, setModeError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/mode').then(r => r.json()).then(d => setMode(d.mode)).catch(() => {})
+  }, [])
+
+  const handleSwitchMode = async () => {
+    const target = mode === 'test' ? 'live' : 'test'
+    const msg = target === 'live'
+      ? 'Switch to LIVE mode? Real orders will be placed with real money.'
+      : 'Switch to TEST mode? All open orders will be closed at market price.'
+    if (!confirm(msg)) return
+    setModeSwitching(true)
+    setModeError('')
+    try {
+      const r = await fetch('/api/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_mode: target }),
+      })
+      const data = await r.json()
+      if (data.ok) setMode(target)
+      else setModeError(data.error || 'Mode switch failed')
+    } catch (e) {
+      setModeError(String(e))
+    } finally {
+      setModeSwitching(false)
+    }
+  }
 
   const fetchRegistry = useCallback(async () => {
     try {
@@ -206,6 +237,31 @@ export default function SettingsPage() {
           {botActionError && (
             <p className="mt-3 text-sm text-red-400">{botActionError}</p>
           )}
+        </div>
+      </section>
+
+      {/* ── Trading Mode ─────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+          Trading Mode
+        </h2>
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+          <div className="flex items-center gap-4">
+            <span className={`px-3 py-1 rounded text-sm font-mono font-bold ${mode === 'live' ? 'bg-amber-500 text-black' : 'bg-slate-600 text-white'}`}>
+              {mode.toUpperCase()}
+            </span>
+            <button
+              onClick={handleSwitchMode}
+              disabled={modeSwitching || !botState?.running}
+              className="px-4 py-2 bg-slate-700 text-white text-sm rounded hover:bg-slate-600 disabled:opacity-50 transition-colors"
+            >
+              {modeSwitching ? 'Switching…' : `Switch to ${mode === 'test' ? 'LIVE' : 'TEST'}`}
+            </button>
+            {!botState?.running && (
+              <span className="text-xs text-gray-500">Start bot to switch modes</span>
+            )}
+          </div>
+          {modeError && <p className="mt-3 text-sm text-red-400">{modeError}</p>}
         </div>
       </section>
 

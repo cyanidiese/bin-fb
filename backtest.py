@@ -861,7 +861,7 @@ def run_for_symbol(symbol: str, args) -> None:
     if args.klines:
         klines_path = Path(args.klines)
     else:
-        suffix = 'test' if settings.trading_mode == 'testnet' else 'live'
+        suffix = 'test' if settings.trading_mode == 'test' else 'live'
         klines_path = Path('data') / f'{symbol}_{settings.timeframe}_{suffix}.json'
 
     if not args.no_fetch and not args.klines:
@@ -986,7 +986,15 @@ def main() -> None:
         metavar='SYMBOL',
         help='Symbols to backtest. Overrides SYMBOLS from .env.',
     )
+    parser.add_argument(
+        '--mode', choices=['test', 'live'], default=None,
+        help="Override TRADING_MODE for this backtest run ('test' uses testnet klines, 'live' uses fapi)",
+    )
     args = parser.parse_args()
+
+    import os
+    if args.mode:
+        os.environ['TRADING_MODE'] = args.mode
 
     symbols = [s.upper() for s in args.symbols] if args.symbols else load_symbols()
     for symbol in symbols:

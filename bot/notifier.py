@@ -52,7 +52,7 @@ class Notifier:
             try:
                 self._send_telegram(level, title, body)
             except Exception as exc:
-                logger.error(f"Telegram send failed: {exc}")
+                logger.error("Telegram send failed (HTTP error)")
                 try:
                     append_entry(
                         self._log_path, "warning",
@@ -100,17 +100,20 @@ class Notifier:
             json={"chat_id": self._chat_id, "text": text, "parse_mode": "Markdown"},
             timeout=10,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            raise requests.HTTPError(f"HTTP {resp.status_code}") from None
 
-    def _read_alert_state(self) -> dict:
+    def _read_alert_state(self) -> dict[str, list]:
         if self._alert_path.exists():
             try:
                 return json.loads(self._alert_path.read_text())
-            except Exception:
-                pass
+            except (json.JSONDecodeError, ValueError, OSError) as exc:
+                logger.warning(f"alert_state corrupt at {self._alert_path}, resetting: {exc}")
         return {"alerts": [], "dismissed_ids": []}
 
-    def _write_alert_state(self, state: dict) -> None:
+    def _write_alert_state(self, state: dict[str, list]) -> None:
         self._alert_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._alert_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2))

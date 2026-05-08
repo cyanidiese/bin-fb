@@ -60,3 +60,35 @@ def test_dismiss_removes_id(tmp_path):
     n.dismiss(alert_id)
     state2 = json.loads((tmp_path / "alert_state.json").read_text())
     assert alert_id in state2["dismissed_ids"]
+
+
+def test_dismiss_is_idempotent(tmp_path):
+    n = _make_notifier(tmp_path)
+    n.notify("emergency", "Alert", "body", "src")
+    state = json.loads((tmp_path / "alert_state.json").read_text())
+    alert_id = state["alerts"][0]["id"]
+    n.dismiss(alert_id)
+    n.dismiss(alert_id)  # second dismiss
+    state2 = json.loads((tmp_path / "alert_state.json").read_text())
+    assert state2["dismissed_ids"].count(alert_id) == 1
+
+
+def test_corrupt_alert_state_is_reset(tmp_path):
+    alert_path = tmp_path / "alert_state.json"
+    alert_path.write_text("{{broken json")
+    n = Notifier(
+        log_path=tmp_path / "system_log.json",
+        alert_path=alert_path,
+        telegram_token="",
+        telegram_chat_id="",
+    )
+    n.notify("warning", "After corrupt", "detail", "test")
+    state = json.loads(alert_path.read_text())
+    assert len(state["alerts"]) == 1
+
+
+def test_send_test_no_credentials(tmp_path):
+    n = _make_notifier(tmp_path)
+    ok, msg = n.send_test()
+    assert ok is False
+    assert "not configured" in msg

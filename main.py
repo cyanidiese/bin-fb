@@ -78,8 +78,11 @@ async def run() -> None:
     trades_logger = logging.getLogger('trades')
     settings = load_settings()
     started_at = datetime.now(timezone.utc).isoformat()
-    _write_pid()
-    _write_bot_state(running=True, mode=settings.trading_mode, started_at=started_at)
+    try:
+        _write_pid()
+        _write_bot_state(running=True, mode=settings.trading_mode, started_at=started_at)
+    except Exception as exc:
+        logger.warning(f"Failed to write bot state files: {exc}")
     write_symbols_json([settings.symbol])
     logger.info(
         f"Bot starting | mode={settings.trading_mode} | "
@@ -144,14 +147,20 @@ async def run() -> None:
             logger.info(f"First WebSocket tick received | price={price:.2f}")
             _first_tick = False
 
-    asyncio.create_task(_heartbeat_loop(settings.trading_mode, started_at))
-
-    await feed.stream_klines(
-        settings.symbol,
-        settings.timeframe,
-        on_candle_close,
-        on_price_update,
-    )
+    _hb_task = asyncio.create_task(_heartbeat_loop(settings.trading_mode, started_at))
+    try:
+        await feed.stream_klines(
+            settings.symbol,
+            settings.timeframe,
+            on_candle_close,
+            on_price_update,
+        )
+    finally:
+        _hb_task.cancel()
+        try:
+            await _hb_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == '__main__':
@@ -169,5 +178,5 @@ if __name__ == '__main__':
                 mode=state.get('mode', 'test'),
                 started_at=state.get('started_at', ''),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger('main').warning(f"Failed to write shutdown state: {exc}")

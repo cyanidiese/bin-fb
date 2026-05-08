@@ -36,7 +36,7 @@ export async function GET() {
   return NextResponse.json({ config, state })
 }
 
-/** POST /api/risk — save full config object to disk */
+/** POST /api/risk — save full config object to disk, or merge a partial update (e.g. { telegram }) */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try {
@@ -45,19 +45,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Validate required top-level keys exist
+  // Allow partial updates (e.g. { telegram }) — merge into existing config
   const required = ['balance_tiers', 'base_leverage', 'max_leverage',
                     'min_profit_factor', 'drawdown_warning_pct',
                     'drawdown_hard_stop_pct', 'symbol_weights']
-  for (const key of required) {
-    if (!(key in body)) {
-      return NextResponse.json({ error: `Missing field: ${key}` }, { status: 400 })
+  const isPartialUpdate = required.every(k => !(k in body))
+
+  let merged: Record<string, unknown>
+  if (isPartialUpdate) {
+    merged = { ...DEFAULT_CONFIG, ...readJson(CONFIG_PATH, {}), ...body }
+  } else {
+    for (const key of required) {
+      if (!(key in body)) {
+        return NextResponse.json({ error: `Missing field: ${key}` }, { status: 400 })
+      }
     }
+    merged = body
   }
 
   try {
     const tmp = CONFIG_PATH + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(body, null, 2))
+    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2))
     fs.renameSync(tmp, CONFIG_PATH)
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })

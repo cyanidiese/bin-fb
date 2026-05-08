@@ -61,9 +61,19 @@ export default function SettingsPage() {
   const [mode, setMode] = useState<string>('test')
   const [modeSwitching, setModeSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
+  const [telegram, setTelegram] = useState({ token: '', chat_id: '' })
+  const [telegramStatus, setTelegramStatus] = useState<'idle'|'testing'|'ok'|'error'>('idle')
+  const [telegramError, setTelegramError] = useState('')
+  const [preview, setPreview] = useState({ liveRunning: false, testRunning: false, emergency: false })
 
   useEffect(() => {
     fetch('/api/mode').then(r => r.json()).then(d => setMode(d.mode)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/risk').then(r => r.json()).then(d => {
+      if (d.config?.telegram) setTelegram(d.config.telegram)
+    }).catch(() => {})
   }, [])
 
   const handleSwitchMode = async () => {
@@ -87,6 +97,30 @@ export default function SettingsPage() {
       setModeError(String(e))
     } finally {
       setModeSwitching(false)
+    }
+  }
+
+  const saveTelegram = async () => {
+    try {
+      await fetch('/api/risk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram }),
+      })
+    } catch {}
+  }
+
+  const testTelegram = async () => {
+    setTelegramStatus('testing')
+    setTelegramError('')
+    try {
+      const r = await fetch('/api/telegram/test', { method: 'POST' })
+      const d = await r.json()
+      setTelegramStatus(d.ok ? 'ok' : 'error')
+      if (!d.ok) setTelegramError(d.error || 'Unknown error')
+    } catch (e) {
+      setTelegramStatus('error')
+      setTelegramError(String(e))
     }
   }
 
@@ -383,6 +417,92 @@ export default function SettingsPage() {
 
         {/* Symbol Discovery */}
         <SymbolDiscovery />
+      </section>
+
+      {/* ── Telegram Alerts ──────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+          Telegram Alerts
+        </h2>
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-3 max-w-md">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Bot Token</label>
+            <input value={telegram.token}
+              onChange={e => setTelegram(t => ({ ...t, token: e.target.value }))}
+              onBlur={saveTelegram}
+              type="password"
+              placeholder="123456:ABCdef…"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Chat ID</label>
+            <input value={telegram.chat_id}
+              onChange={e => setTelegram(t => ({ ...t, chat_id: e.target.value }))}
+              onBlur={saveTelegram}
+              placeholder="123456789"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={testTelegram}
+              disabled={telegramStatus === 'testing' || !telegram.token || !telegram.chat_id}
+              className="px-3 py-1.5 bg-gray-700 rounded text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50 transition-colors"
+            >
+              {telegramStatus === 'testing' ? 'Sending…' : 'Send test notification'}
+            </button>
+            {telegramStatus === 'ok' && <span className="text-green-400 text-sm">✓ Sent</span>}
+            {telegramStatus === 'error' && <span className="text-red-400 text-sm">✗ {telegramError}</span>}
+          </div>
+          <p className="text-xs text-gray-600">
+            See <code className="text-gray-500">TELEGRAM_SETUP.md</code> for setup instructions.
+          </p>
+        </div>
+      </section>
+
+      {/* ── UI Preview ────────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+          UI Preview
+        </h2>
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-3">
+          <div className="space-y-2">
+            {([
+              ['liveRunning', 'Imitate live mode running'],
+              ['testRunning', 'Imitate test mode running'],
+              ['emergency', 'Imitate emergency notice'],
+            ] as [keyof typeof preview, string][]).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={preview[key]}
+                  onChange={e => setPreview(p => ({ ...p, [key]: e.target.checked }))}
+                  className="rounded"
+                />
+                <span className="text-sm text-gray-300">{label}</span>
+              </label>
+            ))}
+          </div>
+          {(preview.liveRunning || preview.testRunning || preview.emergency) && (
+            <div className="mt-2 p-3 border border-gray-700 rounded space-y-2">
+              {(preview.liveRunning || preview.testRunning) && (
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-semibold border
+                    ${preview.liveRunning ? 'border-amber-500 text-amber-400' : 'border-slate-600 text-slate-400'}`}>
+                    {preview.liveRunning && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+                    {preview.liveRunning ? 'LIVE' : 'TEST'} · RUNNING
+                  </span>
+                  <span className="text-xs text-gray-500">Badge preview</span>
+                </div>
+              )}
+              {preview.emergency && (
+                <div className="flex items-start gap-3 px-3 py-2 bg-red-950 border border-red-800 rounded text-sm">
+                  <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-red-600 shrink-0">EMERGENCY</span>
+                  <span className="text-red-200">Sample emergency alert · main · {new Date().toLocaleTimeString()}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </section>
     </main>
   )

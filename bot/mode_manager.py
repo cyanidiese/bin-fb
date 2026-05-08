@@ -6,7 +6,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Awaitable
+from typing import TYPE_CHECKING, Callable, Awaitable
+
+if TYPE_CHECKING:
+    from bot.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +27,12 @@ class ModeManager:
         mode_path: Path = _DEFAULT_MODE_PATH,
         command_path: Path = _DEFAULT_COMMAND_PATH,
         result_path: Path = _DEFAULT_RESULT_PATH,
+        notifier: Notifier | None = None,
     ) -> None:
         self._mode_path = mode_path
         self._command_path = command_path
         self._result_path = result_path
+        self._notifier = notifier
         self._lock = asyncio.Lock()
         self.current_mode: str = self._read_mode()
 
@@ -99,6 +104,12 @@ class ModeManager:
                     elif cmd_type == "stop_bot":
                         await on_stop_bot()
                         self._write_result(cmd_id, ok=True)
+                    elif cmd_type == "test_telegram":
+                        if self._notifier is not None:
+                            ok, error = self._notifier.send_test()
+                            self._write_result(cmd_id, ok=ok, error=error)
+                        else:
+                            self._write_result(cmd_id, ok=False, error="Notifier not configured")
                     else:
                         logger.warning(f"Unknown command type: {cmd_type}")
                         self._write_result(cmd_id, ok=False, error=f"Unknown type: {cmd_type}")

@@ -3,9 +3,11 @@ import dataclasses
 import json
 import logging
 import logging.handlers
+import math
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,11 +16,11 @@ from config.settings import load_settings
 from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
-from bot import display
 from bot.exporter import export, write_symbols_json
 from bot.mode_manager import ModeManager
 from bot.notifier import Notifier
 from bot.order_executor import OrderExecutor, OrderState
+from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
 from bot.risk_manager import RiskManager
 from config.risk_config import load_risk_config
@@ -27,6 +29,18 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
 _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
+
+_last_balance_poll: float = 0.0
+_BALANCE_POLL_INTERVAL = 30.0
+
+
+def _should_poll_balance() -> bool:
+    global _last_balance_poll
+    now = time.monotonic()
+    if now - _last_balance_poll >= _BALANCE_POLL_INTERVAL:
+        _last_balance_poll = now
+        return True
+    return False
 
 
 def _write_pid() -> None:
@@ -52,9 +66,13 @@ def _write_bot_state(running: bool, mode: str, started_at: str,
     tmp.replace(_BOT_STATE_PATH)
 
 
-async def _heartbeat_loop(mode_manager: ModeManager, started_at: str) -> None:
+async def _heartbeat_loop(mode_manager: ModeManager, started_at: str,
+                          symbol_registry: SymbolRegistry) -> None:
     while True:
-        _write_bot_state(True, mode_manager.current_mode, started_at)
+        active = len(symbol_registry.get_symbols())
+        disabled = len(symbol_registry.get_disabled())
+        _write_bot_state(True, mode_manager.current_mode, started_at,
+                         symbols_active=active, symbols_disabled=disabled)
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
 
@@ -71,7 +89,6 @@ def setup_logging() -> None:
     root.setLevel(logging.INFO)
     root.addHandler(general)
 
-    # Separate trades log — signals only, one line per event
     trades_fmt = logging.Formatter('%(asctime)s %(message)s')
     trades_handler = logging.handlers.RotatingFileHandler(
         'logs/trades.log', maxBytes=10 * 1024 * 1024, backupCount=5
@@ -80,14 +97,22 @@ def setup_logging() -> None:
     trades_logger = logging.getLogger('trades')
     trades_logger.setLevel(logging.INFO)
     trades_logger.addHandler(trades_handler)
-    trades_logger.propagate = False  # keep trades out of bot.log
+    trades_logger.propagate = False
 
 
 async def run() -> None:
     logger = logging.getLogger('main')
     trades_logger = logging.getLogger('trades')
-    settings = load_settings()
     risk_cfg = load_risk_config()
+
+    # Load symbol registry — source of truth for active symbols
+    seed_symbols = [s.strip().upper() for s in os.getenv('SYMBOL', '').split(',') if s.strip()]
+    symbol_registry = SymbolRegistry(seed_symbols=seed_symbols)
+    symbols = symbol_registry.get_symbols()
+    if not symbols:
+        logger.error("No active symbols in registry — cannot start")
+        sys.exit(1)
+
     notifier = Notifier(
         log_path=_PROJECT_ROOT / "data" / "system_log.json",
         alert_path=_PROJECT_ROOT / "dashboard" / "public" / "alert_state.json",
@@ -102,28 +127,45 @@ async def run() -> None:
         initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
         notifier=notifier,
     )
+
+    # Load settings and build per-symbol state
+    sym_settings: dict = {}
+    analyzers: dict = {}
+    for symbol in symbols:
+        s = load_settings(symbol)
+        sym_settings[symbol] = s
+        engine = RecommendationEngine(s)
+        analyzers[symbol] = Analyzer(s.swing_neighbours, engine)
+
+    timeframe = sym_settings[symbols[0]].timeframe
+    first_settings = sym_settings[symbols[0]]
+
     order_executor = OrderExecutor(
         mode=current_mode,
-        settings=settings,
+        settings=first_settings,
         risk_manager=risk_manager,
         notifier=notifier,
+        symbol_registry=symbol_registry,
     )
+
     virtual_tracker = VirtualTracker(
         mode=current_mode,
         orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{current_mode}.json",
         efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{current_mode}.json",
     )
+
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         _write_pid()
-        _write_bot_state(running=True, mode=current_mode, started_at=started_at)
+        _write_bot_state(running=True, mode=current_mode, started_at=started_at,
+                         symbols_active=len(symbols))
     except Exception as exc:
         logger.warning(f"Failed to write bot state files: {exc}")
-    symbols = [settings.symbol]
+
     write_symbols_json(symbols)
     logger.info(
-        f"Bot starting | mode={settings.trading_mode} | "
-        f"symbol={settings.symbol} | timeframe={settings.timeframe}"
+        f"Bot starting | mode={current_mode} | "
+        f"symbols={','.join(symbols)} | timeframe={timeframe}"
     )
 
     # Run obligatory startup backtest
@@ -138,23 +180,139 @@ async def run() -> None:
                         bt_result.stderr.decode()[:500], "main")
         sys.exit(1)
 
-    # Seed virtual tracker from backtest results
     for sym in symbols:
         bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
-    notifier.notify("info", "Startup sequence complete", f"{len(symbols)} symbol(s) active", "main")
-
-    feed = DataFeed(settings)
+    feed = DataFeed(first_settings)
     order_executor._feed = feed
+
+    # Proactive exchange check + leverage brackets
+    await order_executor.check_symbols_on_exchange(symbols)
+    await order_executor.fetch_leverage_brackets(symbols)
+
+    # Kline bootstrap + initial export
+    for symbol in symbols:
+        klines = feed.load_klines(symbol, timeframe, limit=1500)
+        analyzers[symbol].build_from_klines(klines)
+        recs = analyzers[symbol].get_recommendations()
+        best = analyzers[symbol].get_best_recommendation()
+        export(
+            symbol, timeframe, current_mode,
+            analyzers[symbol].get_current_price(), analyzers[symbol].get_trend(),
+            analyzers[symbol].get_klines(), recs,
+            analyzers[symbol].get_all_points(), best,
+        )
+
     await order_executor.reconcile_with_exchange()
+    notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
+
+    # ── Callbacks ──────────────────────────────────────────────────────── #
+
+    async def _try_place_order(symbol: str, best, settings) -> None:
+        preset_name = virtual_tracker.best_preset(symbol)
+        all_presets = {**LOCKED_PRESETS, **PRESETS}
+        overrides = all_presets.get(preset_name or 'default', {})
+        preset_settings = dataclasses.replace(settings, **overrides)
+
+        balance = risk_manager.get_balance()
+        allocation = min(risk_manager.get_allocation(symbol), balance)
+        entry = best.getEntryPrice()
+        if entry <= 0 or allocation <= 0:
+            return
+
+        min_notional = await order_executor.get_min_notional(symbol)
+        bracket_max = order_executor.get_bracket_max(symbol)
+        target_lev = risk_manager.get_leverage(symbol)
+
+        min_viable_lev = math.ceil(min_notional / allocation) if allocation > 0 else 999
+        if min_viable_lev > bracket_max:
+            logger.info(f"[{symbol}] Cannot meet min_notional at any leverage, skipping")
+            return
+
+        actual_lev = max(min_viable_lev, min(target_lev, bracket_max))
+        quantity = allocation * actual_lev / entry
+
+        allowed, reason = risk_manager.can_open_sync(symbol, allocation)
+        if not allowed:
+            logger.info(f"[{symbol}] Order skipped: {reason}")
+            return
+        if quantity <= 0:
+            return
+
+        await order_executor.place_order(
+            symbol=symbol,
+            preset_name=preset_name or 'default',
+            side=best.getSide(),
+            entry=entry,
+            tp=best.getTarget(),
+            sl=best.getStop() or 0.0,
+            quantity=quantity,
+            leverage=actual_lev,
+            partial_take_pct=preset_settings.partial_take_pct,
+            trailing_stop_pct=preset_settings.trailing_stop_pct,
+            level=best.getLevel(),
+            signal_type=best.getType().value,
+        )
+
+    async def on_candle_close(symbol: str, kline: list) -> None:
+        if os.path.exists('STOP'):
+            logger.info("STOP file detected — halting.")
+            raise SystemExit(0)
+
+        if symbol_registry.is_disabled(symbol):
+            return
+
+        if symbol not in sym_settings or symbol not in analyzers:
+            return
+
+        settings = sym_settings[symbol]
+        analyzer = analyzers[symbol]
+
+        recs = analyzer.add_candle(kline)
+        best = analyzer.get_best_recommendation()
+
+        try:
+            feed.refresh_klines(symbol, timeframe, fetch_count=10)
+        except Exception as e:
+            logger.warning(f"[{symbol}] Kline refresh failed: {e}")
+
+        if _should_poll_balance():
+            try:
+                balance = await order_executor.fetch_account_balance()
+                if balance > 0:
+                    risk_manager.update_balance(balance)
+            except Exception as exc:
+                logger.warning(f"Balance fetch failed: {exc}")
+
+        if best is not None and order_executor.get_state(symbol) == OrderState.IDLE:
+            await _try_place_order(symbol, best, settings)
+
+        export(
+            symbol, timeframe, settings.trading_mode,
+            analyzer.get_current_price(), analyzer.get_trend(),
+            analyzer.get_klines(), recs, analyzer.get_all_points(), best,
+        )
+
+        if best:
+            trades_logger.info(f"BEST | symbol={symbol} | {best}")
+        for rec in recs:
+            trades_logger.info(f"CANDIDATE | symbol={symbol} | {rec}")
+
+    async def on_price_update(symbol: str, price: float) -> None:
+        if symbol in analyzers:
+            analyzers[symbol].update_price(price)
+
+        closed = await order_executor.check_symbol_price(symbol, price)
+        for c in closed:
+            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
 
     async def on_switch_mode(target_mode: str) -> None:
         nonlocal virtual_tracker
         await order_executor.close_all_orders_at_market()
         order_executor.reset_for_mode_switch(target_mode)
         risk_manager.reset_for_mode_switch(target_mode)
-        settings_new = load_settings()
+        settings_new = load_settings(symbols[0])
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
         bt_result = await asyncio.to_thread(
             subprocess.run,
@@ -170,6 +328,9 @@ async def run() -> None:
                 "main",
             )
             return
+        await order_executor.fetch_leverage_brackets(symbols)
+        for symbol in symbols:
+            feed.refresh_klines(symbol, timeframe, fetch_count=1500)
         virtual_tracker = VirtualTracker(
             mode=target_mode,
             orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",
@@ -185,121 +346,34 @@ async def run() -> None:
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
 
-    engine = RecommendationEngine(settings)
-    analyzer = Analyzer(settings.swing_neighbours, engine)
-
-    klines = feed.load_klines(settings.symbol, settings.timeframe, settings.kline_limit)
-    analyzer.build_from_klines(klines)
-    logger.info("Initial trend state built")
-
-    recs = analyzer.get_recommendations()
-    best = analyzer.get_best_recommendation()
-    display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs)
-    export(
-        settings.symbol, settings.timeframe, settings.trading_mode,
-        analyzer.get_current_price(), analyzer.get_trend(),
-        analyzer.get_klines(), recs,
-        analyzer.get_all_points(),
-        best,
-    )
-
-    async def on_candle_close(kline: list) -> None:
-        if os.path.exists('STOP'):
-            logger.info("STOP file detected — halting.")
-            raise SystemExit(0)
-
-        recs = analyzer.add_candle(kline)
-        try:
-            feed.refresh_klines(settings.symbol, settings.timeframe, fetch_count=10)
-        except Exception as e:
-            logger.warning(f"Kline refresh failed — cache not updated: {e}")
-        best = analyzer.get_best_recommendation()
-
-        # Update risk manager balance from exchange
-        try:
-            balance = await order_executor.fetch_account_balance()
-            if balance > 0:
-                risk_manager.update_balance(balance)
-        except Exception as exc:
-            logger.warning(f"Balance fetch failed: {exc}")
-
-        # Signal → order placement
-        if best is not None and order_executor.get_state(settings.symbol) == OrderState.IDLE:
-            preset_name = virtual_tracker.best_preset(settings.symbol)
-            all_presets = {**LOCKED_PRESETS, **PRESETS}
-            overrides = all_presets.get(preset_name or 'default', {})
-            preset_settings = dataclasses.replace(settings, **overrides)
-
-            allocation = risk_manager.get_allocation(settings.symbol)
-            leverage = risk_manager.get_leverage(settings.symbol)
-            entry = best.getEntryPrice()
-            quantity = (allocation * leverage / entry) if entry > 0 else 0.0
-
-            allowed, reason = risk_manager.can_open_sync(settings.symbol, allocation)
-            if allowed and quantity > 0:
-                await order_executor.place_order(
-                    symbol=settings.symbol,
-                    preset_name=preset_name or 'default',
-                    side=best.getSide(),
-                    entry=entry,
-                    tp=best.getTarget(),
-                    sl=best.getStop() or 0.0,
-                    quantity=quantity,
-                    leverage=leverage,
-                    partial_take_pct=preset_settings.partial_take_pct,
-                    trailing_stop_pct=preset_settings.trailing_stop_pct,
-                    level=best.getLevel(),
-                    signal_type=best.getType().value,
-                )
-            elif not allowed:
-                logger.info(f"Order skipped: {reason}")
-
-        candle_close_time = int(kline[6]) // 1000
-        display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs, candle_close_time)
-        export(
-            settings.symbol, settings.timeframe, settings.trading_mode,
-            analyzer.get_current_price(), analyzer.get_trend(),
-            analyzer.get_klines(), recs,
-            analyzer.get_all_points(),
-            best,
-        )
-
-        if best is not None:
-            logger.info(f"Best signal: {best}")
-            trades_logger.info(f"BEST | symbol={settings.symbol} | {best}")
-
-        if recs:
-            for rec in recs:
-                trades_logger.info(f"CANDIDATE | symbol={settings.symbol} | {rec}")
-
-    _first_tick = True
-
-    async def on_price_update(price: float) -> None:
-        nonlocal _first_tick
-        analyzer.update_price(price)
-        if _first_tick:
-            logger.info(f"First WebSocket tick received | price={price:.2f}")
-            _first_tick = False
-
-        closed_orders = await order_executor.check_symbol_price(settings.symbol, price)
-        for c in closed_orders:
-            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+    # ── Task setup ─────────────────────────────────────────────────────── #
 
     _poll_task = asyncio.create_task(
         mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
     )
-    _hb_task = asyncio.create_task(_heartbeat_loop(mode_manager, started_at))
+    _hb_task = asyncio.create_task(
+        _heartbeat_loop(mode_manager, started_at, symbol_registry)
+    )
+    _watchdog_task = asyncio.create_task(
+        feed.start_watchdog(
+            get_symbols=symbol_registry.get_symbols,
+            timeframe=timeframe,
+            on_candle_close=on_candle_close,
+            on_price_update=on_price_update,
+        )
+    )
+
     try:
-        await feed.stream_klines(
-            settings.symbol,
-            settings.timeframe,
-            on_candle_close,
-            on_price_update,
+        await feed.stream_combined(
+            get_symbols=symbol_registry.get_symbols,
+            timeframe=timeframe,
+            on_candle_close=on_candle_close,
+            on_price_update=on_price_update,
         )
     finally:
-        _poll_task.cancel()
-        _hb_task.cancel()
-        for t in [_poll_task, _hb_task]:
+        for t in [_poll_task, _hb_task, _watchdog_task]:
+            t.cancel()
+        for t in [_poll_task, _hb_task, _watchdog_task]:
             try:
                 await t
             except asyncio.CancelledError:

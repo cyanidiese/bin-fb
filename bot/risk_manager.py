@@ -60,7 +60,6 @@ class RiskManager:
 
         # {symbol: (score: float, timestamp: float, true_pf: float)}
         self._perf_cache: dict[str, tuple[float, float, float]] = {}
-        self._pending_min_balance_notify: tuple | None = None
 
         logger.info(
             f"RiskManager({mode}) — balance={initial_balance:.2f} USDT "

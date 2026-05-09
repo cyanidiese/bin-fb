@@ -23,15 +23,21 @@ class VirtualTracker:
         self._efficiency: dict = self._load_efficiency()
 
     def seed_from_backtest(self, symbol: str, backtest_path: Path) -> None:
+        if symbol in self._efficiency:
+            return
         if not backtest_path.exists():
             logger.warning(f"No backtest file for {symbol}: {backtest_path}")
             return
         try:
             data = json.loads(backtest_path.read_text())
-            for preset_data in data.get("presets", []):
-                name = preset_data.get("name", "")
+            for name, preset_data in data.get("presets", {}).items():
                 trades = preset_data.get("trades", [])
-                winning_usdt = sum(t.get("profit_usdt", 0.0) for t in trades if t.get("profit_usdt", 0.0) > 0)
+                balance_start = preset_data.get("balance_start", 0.0)
+                winning_usdt = sum(
+                    t.get("profit_pct", 0.0) / 100.0 * balance_start
+                    for t in trades
+                    if t.get("profit_pct", 0.0) > 0
+                )
                 self._set_efficiency(symbol, name, total_winning=winning_usdt, count=len(trades))
         except Exception as exc:
             logger.error(f"Failed to seed efficiency for {symbol}: {exc}")

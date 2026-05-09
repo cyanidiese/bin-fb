@@ -1,4 +1,5 @@
 import json
+import pytest
 from pathlib import Path
 from bot.virtual_tracker import VirtualTracker
 
@@ -13,20 +14,25 @@ def _make_tracker(tmp_path, mode='test'):
 
 def test_seed_from_backtest(tmp_path):
     bt = tmp_path / "backtest_results_BTCUSDT.json"
+    # presets is a dict keyed by preset name; profit is calculated as profit_pct/100 * balance_start
+    # balance_start=1000: winning trades are 1.0% (10), 2.0% (20), 0.8% (8) → total = 38.0
     bt.write_text(json.dumps({
-        "presets": [
-            {"name": "preset_a", "trades": [
-                {"profit_pct": 1.0, "profit_usdt": 50.0},
-                {"profit_pct": -0.5, "profit_usdt": -25.0},
-                {"profit_pct": 2.0, "profit_usdt": 100.0},
-                {"profit_pct": 0.8, "profit_usdt": 40.0},
-            ]}
-        ]
+        "presets": {
+            "preset_a": {
+                "balance_start": 1000.0,
+                "trades": [
+                    {"profit_pct": 1.0},
+                    {"profit_pct": -0.5},
+                    {"profit_pct": 2.0},
+                    {"profit_pct": 0.8},
+                ],
+            }
+        }
     }))
     tracker = _make_tracker(tmp_path)
     tracker.seed_from_backtest("BTCUSDT", tmp_path / "backtest_results_BTCUSDT.json")
     eff = tracker.get_efficiency("BTCUSDT", "preset_a")
-    assert eff["total_winning_usdt"] == 190.0
+    assert eff["total_winning_usdt"] == pytest.approx(38.0)  # (1.0 + 2.0 + 0.8) / 100 * 1000
     assert eff["trade_count"] == 4
 
 

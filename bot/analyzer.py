@@ -127,6 +127,15 @@ class Analyzer:
         """The single winner selected by the engine, or None."""
         return self._best_recommendation
 
+    def get_recommendation_for_preset(self, overrides: dict):
+        """Run the recommendation engine with preset-overridden settings. Returns None if no signal."""
+        if self._trend is None or self._engine is None:
+            return None
+        import dataclasses
+        from bot.recommendation_engine import RecommendationEngine
+        s = dataclasses.replace(self._engine._s, **overrides)
+        return RecommendationEngine(s).generate(self._trend, self._current_price)
+
     def get_all_points(self) -> list:
         # Determine which historical points are currently "active" (still present
         # in the live trend). Points wiped by removePointsUpTo() after a BoS

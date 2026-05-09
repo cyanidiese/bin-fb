@@ -1,6 +1,6 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-07 (session 11)
+## Last updated: 2026-05-09 (session 12)
 
 ---
 
@@ -710,6 +710,61 @@ Also added "Waiting for bot analysis…" intermediate state when `klines.length 
 
 #### Bug fixed: wrong import path in `_registry.ts`
 `_registry.ts` is at `dashboard/app/api/symbols/` → `_utils.ts` is one level up at `dashboard/app/api/`. Used `../_utils` (not `../../_utils`).
+
+---
+
+## Session 12 — 2026-05-09: Trades Page & Virtual Order Simulation (feature/risk-module)
+
+**Branch**: `feature/risk-module` (continued from session 11; multi-symbol infra tasks 1–9 delivered in prior sessions on `feature/test-live-preparation`, now merged to main)
+
+**Spec**: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-design.md`
+
+### Preset cleanup — done
+22 presets removed from `backtest.py` (threshold: Total% < −10 across all symbols). 100 presets remain in `PRESETS` + 4 in `LOCKED_PRESETS`.
+
+Removed: `structure_sensitive`, `tp_90pct_high_rr`, `very_high_rr`, `rr_4x`, `high_rr`, `high_rr_tight`, `tight_entry`, `conservative`, `tp_90pct`, `sl_adjust_rr`, `medium_entry`, `sl_filter_medium`, `lh_sell_prox20`, `medium_rr_trail_30`, `lh_sell_prox15`, `lh_sell_prox10`, `tp_95pct`, `high_rr_trail_30`, `sl_filter_tight`, `max_profit_3pct`, `tp_85pct`, `trail_40_from_50`.
+
+### Key design decisions for trades page
+
+#### Virtual order simulation model
+- Virtual orders are INDEPENDENT from real orders — each preset independently monitors the market and generates its own signals via `RecommendationEngine`.
+- Best preset signal → real order. All other preset signals → virtual order for that preset (if no open virtual for it).
+- One `RecommendationEngine` per preset call (not one stored per preset): use `RecommendationEngine(dataclasses.replace(base_settings, **overrides)).generate(analyzer.get_trend(), price)`.
+- `Analyzer.get_recommendation_for_preset(overrides: dict)` helper added.
+- On price update: check ALL open orders (real + virtual) for ALL symbols for TP/SL.
+- Virtual orders closed on bot stop / mode switch at current REST price (result = "closed_early"). NOT on restart (they were closed on previous stop).
+- File: `virtual_orders_{symbol}_{mode}.json` — per symbol, per mode. Max 500 closed orders kept.
+
+#### Data separation
+- `backtest_results_{symbol}.json` → backtest only (never touched by runtime)
+- `preset_efficiency_{mode}.json` → runtime efficiency, seeded once per symbol+mode from backtest, then evolves independently
+- `real_orders_{symbol}_{mode}.json` → individual real trade records (new)
+- `virtual_orders_{symbol}_{mode}.json` → virtual positions (new)
+
+#### `seed_from_backtest` fix
+Add early return if `symbol` already exists in `preset_efficiency_{mode}.json`. Prevents backtest reruns from overwriting accumulated runtime data.
+
+#### Real order opening guard
+`OrderExecutor` stores `_last_opened_preset[symbol]`. If best preset changed since last order AND state is IDLE → verify via exchange API before placing new order. Prevents double-open on best-preset rotation.
+
+#### `/trades` page layout
+1. Preset efficiency table (Real label for best preset, Virtual for others; sorted by Total PnL%)
+2. Candlestick chart with real trade entry/exit overlays (▲/▼ markers + connecting colored line)
+3. Real orders table (most recent first, color-coded win/loss)
+
+API route: `GET /api/trades?symbol=BTCUSDT` → returns real_orders + virtual_summary + best_preset.
+
+### Next steps for this feature
+Implementation plan to be written. Tasks:
+1. Fix `seed_from_backtest` (conditional)
+2. Add `Analyzer.get_recommendation_for_preset()`
+3. Build `VirtualOrderSimulator` with persistence
+4. Add real order recording to `OrderExecutor`
+5. Add real order opening guard
+6. Wire both into `main.py` (candle close + price update + stop/mode switch)
+7. API route `/api/trades`
+8. `/trades` Next.js page with chart + table + efficiency table
+9. Tests
 
 ---
 

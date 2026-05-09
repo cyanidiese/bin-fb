@@ -42,14 +42,6 @@ PRESETS: dict = {
     'default': {},
 
     # ── Entry zone variants ───────────────────────────────────────────────────
-    'tight_entry': {
-        'proximity_zone_pct': 5.0,
-        'min_profit_loss_ratio': 2.0,
-    },
-    'medium_entry': {
-        'proximity_zone_pct': 12.0,
-        'min_profit_loss_ratio': 1.8,
-    },
     'loose_entry': {
         'proximity_zone_pct': 20.0,
         'min_profit_pct': 0.3,
@@ -61,30 +53,17 @@ PRESETS: dict = {
     },
 
     # ── RR variants ───────────────────────────────────────────────────────────
-    'high_rr': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-    },
     'low_rr': {
         'min_profit_loss_ratio': 1.2,
         'min_profit_pct': 0.3,
     },
 
     # ── Structure sensitivity ─────────────────────────────────────────────────
-    'conservative': {
-        'min_profit_loss_ratio': 2.0,
-        'min_swing_points': 4,
-        'proximity_zone_pct': 8.0,
-    },
     'aggressive': {
         'min_profit_loss_ratio': 1.2,
         'min_swing_points': 2,
         'proximity_zone_pct': 20.0,
         'min_profit_pct': 0.3,
-    },
-    'structure_sensitive': {
-        'min_swing_points': 5,
-        'swing_neighbours': 3,
     },
 
     # ── Partial take — standalone ─────────────────────────────────────────────
@@ -138,10 +117,6 @@ PRESETS: dict = {
     },
 
     # ── New: push RR selectivity further ─────────────────────────────────────
-    'very_high_rr': {
-        'min_profit_loss_ratio': 3.0,
-        'min_profit_pct': 1.5,
-    },
     'very_high_rr_partial_50': {
         'min_profit_loss_ratio': 3.0,
         'min_profit_pct': 1.5,
@@ -149,11 +124,6 @@ PRESETS: dict = {
     },
 
     # ── New: high_rr + tight entry zone (double selectivity filter) ───────────
-    'high_rr_tight': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'proximity_zone_pct': 5.0,
-    },
     'high_rr_tight_partial_50': {
         'min_profit_loss_ratio': 2.5,
         'min_profit_pct': 1.0,
@@ -192,10 +162,6 @@ PRESETS: dict = {
         'partial_take_pct': 0.50,
         'trailing_stop_pct': 0.20,
     },
-    'trail_40_from_50': {
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.40,
-    },
 
     # ── Trailing stop — arm earlier (30%), tighter trail ─────────────────────
     'trail_20_from_30': {
@@ -223,25 +189,11 @@ PRESETS: dict = {
     },
 
     # ── Trailing stop × high RR filter ───────────────────────────────────────
-    'high_rr_trail_30': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.30,
-    },
     'high_rr_trail_20': {
         'min_profit_loss_ratio': 2.5,
         'min_profit_pct': 1.0,
         'partial_take_pct': 0.50,
         'trailing_stop_pct': 0.20,
-    },
-
-    # ── Trailing stop × medium RR (more trades, dynamic trail) ───────────────
-    'medium_rr_trail_30': {
-        'min_profit_loss_ratio': 2.0,
-        'min_profit_pct': 0.7,
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.30,
     },
 
     # ── Old layer configs (from btcbt/db/trends.db) ───────────────────────────
@@ -268,10 +220,6 @@ PRESETS: dict = {
     },
 
     # ── RR=4x standalone (DB used 4x as primary filter, we only tested up to 3x) ─
-    'rr_4x': {
-        'min_profit_loss_ratio': 4.0,
-        'min_profit_pct': 1.0,
-    },
     'rr_4x_trail_20': {
         'min_profit_loss_ratio': 4.0,
         'min_profit_pct': 1.0,
@@ -285,38 +233,13 @@ PRESETS: dict = {
     },
 
     # ── Conservative TP multiplier (DB: take_profit_multiplier 0.85–0.95) ─────
-    # Reduces TP target to make it easier to hit; trades win size for win rate.
-    'tp_95pct': {
-        'tp_multiplier': 0.95,
-    },
-    'tp_90pct': {
-        'tp_multiplier': 0.90,
-    },
-    'tp_85pct': {
-        'tp_multiplier': 0.85,
-    },
     'tp_90pct_trail_20': {
         'tp_multiplier': 0.90,
         'partial_take_pct': 0.50,
         'trailing_stop_pct': 0.20,
     },
-    'tp_90pct_high_rr': {
-        'tp_multiplier': 0.90,
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-    },
 
     # ── SL distance filters (DB: min_loss=15pts, max_loss=30pts) ─────────────
-    # Translated to % of entry: old bot ~0.05–0.12% at BTC 25k prices.
-    # At current testnet ~85k, equivalent is ~0.15–0.35%. Test wider range.
-    'sl_filter_tight': {
-        'min_sl_pct': 0.10,
-        'max_sl_pct': 0.80,
-    },
-    'sl_filter_medium': {
-        'min_sl_pct': 0.05,
-        'max_sl_pct': 1.50,
-    },
     'sl_filter_trail': {
         'min_sl_pct': 0.05,
         'max_sl_pct': 1.50,
@@ -517,12 +440,6 @@ PRESETS: dict = {
     },
 
     # ── SL tightening to meet RR (sl_adjust_to_rr=True) ──────────────────────
-    # Instead of skipping a trade with insufficient R:R, move SL closer so it
-    # just meets the ratio. Trades more often but with tighter stops.
-    'sl_adjust_rr': {
-        'sl_adjust_to_rr': True,
-        'min_profit_loss_ratio': 2.5,
-    },
     'sl_adjust_rr_trail': {
         'sl_adjust_to_rr': True,
         'min_profit_loss_ratio': 2.5,
@@ -538,11 +455,6 @@ PRESETS: dict = {
     },
 
     # ── Max TP distance filter (max_profit_pct) ───────────────────────────────
-    # Skip overly wide TP targets — they rarely hit and inflate avg TP reach.
-    # At BTC ~85k: 3% TP = 2550 pts, 5% = 4250 pts.
-    'max_profit_3pct': {
-        'max_profit_pct': 3.0,
-    },
     'max_profit_2pct': {
         'max_profit_pct': 2.0,
     },
@@ -742,13 +654,6 @@ PRESETS: dict = {
     },
 
     # ── lower_high_sell: SELL at projected lower high before confirmation ─────
-    # Fires a SELL when price is within proximity_zone_pct of supposed_next_high
-    # in a descending trend (last confirmed swing = LOW).  SL = last confirmed
-    # HIGH, TP = supposed_next_low.  Default presets are unaffected (flag=False).
-    'lh_sell_prox10': {'lower_high_sell': True},
-    'lh_sell_prox15': {'lower_high_sell': True, 'proximity_zone_pct': 15.0},
-    'lh_sell_prox20': {'lower_high_sell': True, 'proximity_zone_pct': 20.0},
-    # Combined with trailing stop (proven profitable mechanism)
     'lh_sell_trail15': {
         'lower_high_sell': True,
         'partial_take_pct': 0.30,

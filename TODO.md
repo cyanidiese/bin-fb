@@ -194,6 +194,29 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [ ] Leverage bracket fetch from Binance API
 - [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
 
+## Phase 3.9 — Trades Page & Virtual Order Simulation
+
+See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-design.md`
+
+**Preset cleanup** (done):
+- [x] Remove 22 presets with Total% < −10 from `backtest.py` (100 remain + 4 locked)
+
+**Python backend:**
+- [ ] Fix `VirtualTracker.seed_from_backtest` — skip if symbol already in `preset_efficiency_{mode}.json`
+- [ ] Add `Analyzer.get_recommendation_for_preset(overrides: dict) -> Optional[Recommendation]`
+- [ ] Build `bot/virtual_order_simulator.py` — open/close/persist lifecycle, TP/SL checks, early-close on stop/mode-switch
+- [ ] Add real order recording to `OrderExecutor` — write `real_orders_{symbol}_{mode}.json` on each close
+- [ ] Add real order opening guard in `OrderExecutor` — API verify when best preset changed
+- [ ] Wire `VirtualOrderSimulator` into `main.py` — candle close, price update, stop, mode switch
+
+**Dashboard:**
+- [ ] `GET /api/trades?symbol=BTCUSDT` — serve real_orders + virtual_summary + best_preset
+- [ ] `/trades` page — preset efficiency table + candlestick chart with trade overlays + real orders table
+
+**Tests:**
+- [ ] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
+- [ ] `tests/test_real_order_recording.py` — append, first-write, file creation
+
 ## Phase 4 — Order placement
 
 - [ ] Design order placement logic based on Recommendation

@@ -150,11 +150,20 @@ async def run() -> None:
         await order_executor.close_all_orders_at_market()
         settings_new = load_settings()
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
-        subprocess.run(
+        bt_result = await asyncio.to_thread(
+            subprocess.run,
             ["python", "backtest.py", "--mode", target_mode],
-            check=True,
+            capture_output=True,
             cwd=str(_PROJECT_ROOT),
         )
+        if bt_result.returncode != 0:
+            notifier.notify(
+                "emergency",
+                f"Backtest failed during mode switch to {target_mode}",
+                bt_result.stderr.decode()[:500],
+                "main",
+            )
+            return
         virtual_tracker = VirtualTracker(
             mode=target_mode,
             orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",

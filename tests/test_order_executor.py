@@ -241,3 +241,30 @@ async def test_consecutive_failures_trigger_notify():
     for _ in range(3):
         await ex.place_order('BTCUSDT', 'p', 'BUY', 50000, 55000, 48000, 0.005, 5)
     ex._notifier.notify.assert_called()
+
+
+# --- get_min_notional ---
+
+@pytest.mark.asyncio
+async def test_get_min_notional_from_exchange_info():
+    ex = make_executor(with_feed=True)
+    ex._feed.client.futures_exchange_info = MagicMock(return_value={
+        'symbols': [{
+            'symbol': 'BTCUSDT',
+            'filters': [
+                {'filterType': 'LOT_SIZE', 'stepSize': '0.001', 'minQty': '0.001'},
+                {'filterType': 'MIN_NOTIONAL', 'notional': '5'},
+            ]
+        }]
+    })
+    notional = await ex.get_min_notional('BTCUSDT')
+    assert notional == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_get_min_notional_defaults_zero_when_missing():
+    ex = make_executor()
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001}
+    # no min_notional key in cache
+    notional = await ex.get_min_notional('BTCUSDT')
+    assert notional == pytest.approx(0.0)

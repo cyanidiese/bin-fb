@@ -65,7 +65,7 @@ class OrderExecutor:
         self._fake_orders: dict[str, FakeOrder] = {}  # software TP/SL/trailing tracking
         self._placing_locks: dict[str, asyncio.Lock] = {}
         self._failure_counts: dict[str, int] = {}
-        self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty}}
+        self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty, min_notional}}
         self._candle_index: int = 0  # incremented on each check_all_orders call
 
         cfg = load_risk_config()
@@ -422,6 +422,11 @@ class OrderExecutor:
     # LOT_SIZE helpers                                                     #
     # ------------------------------------------------------------------ #
 
+    async def get_min_notional(self, symbol: str) -> float:
+        """Get the minimum notional value (price × quantity) for a symbol."""
+        lot = await self._ensure_lot_size(symbol)
+        return lot.get('min_notional', 0.0)
+
     async def round_quantity(self, symbol: str, quantity: float) -> float:
         """Round quantity DOWN to the symbol's LOT_SIZE step, respecting minQty."""
         lot = await self._ensure_lot_size(symbol)
@@ -436,20 +441,26 @@ class OrderExecutor:
     async def _ensure_lot_size(self, symbol: str) -> dict:
         if symbol in self._lot_cache:
             return self._lot_cache[symbol]
-        default = {'step_size': 0.001, 'min_qty': 0.001}
+        default = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
         if self._feed is None:
             return default
         try:
             info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
             for sym_info in info.get('symbols', []):
                 sym = sym_info['symbol']
+                entry: dict = {}
                 for f in sym_info.get('filters', []):
-                    if f.get('filterType') == 'LOT_SIZE':
-                        self._lot_cache[sym] = {
-                            'step_size': float(f['stepSize']),
-                            'min_qty': float(f['minQty']),
-                        }
-                        break
+                    ft = f.get('filterType')
+                    if ft == 'LOT_SIZE':
+                        entry['step_size'] = float(f['stepSize'])
+                        entry['min_qty'] = float(f['minQty'])
+                    elif ft == 'MIN_NOTIONAL':
+                        entry['min_notional'] = float(f.get('notional') or f.get('minNotional') or 0)
+                self._lot_cache[sym] = {
+                    'step_size': entry.get('step_size', 0.001),
+                    'min_qty': entry.get('min_qty', 0.001),
+                    'min_notional': entry.get('min_notional', 0.0),
+                }
         except Exception as exc:
             logger.warning(f"Failed to fetch exchange info: {exc}")
         return self._lot_cache.get(symbol, default)

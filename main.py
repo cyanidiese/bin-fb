@@ -144,10 +144,10 @@ async def run() -> None:
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
     notifier.notify("info", "Startup sequence complete", f"{len(symbols)} symbol(s) active", "main")
-    await order_executor.reconcile_with_exchange()
 
     feed = DataFeed(settings)
     order_executor._feed = feed
+    await order_executor.reconcile_with_exchange()
 
     async def on_switch_mode(target_mode: str) -> None:
         nonlocal virtual_tracker

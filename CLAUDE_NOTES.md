@@ -710,3 +710,67 @@ Also added "Waiting for bot analysis…" intermediate state when `klines.length 
 
 #### Bug fixed: wrong import path in `_registry.ts`
 `_registry.ts` is at `dashboard/app/api/symbols/` → `_utils.ts` is one level up at `dashboard/app/api/`. Used `../_utils` (not `../../_utils`).
+
+---
+
+## Session: 2026-05-08 — Order Execution & Infrastructure (feature/test-live-preparation)
+
+**Branch**: `feature/test-live-preparation`
+**Plan**: `docs/superpowers/plans/2026-05-08-order-execution-and-infrastructure.md`
+**Spec**: `docs/superpowers/specs/2026-05-08-order-execution-and-infrastructure-design.md`
+
+### New modules
+
+- **`bot/system_log.py`** — Rolling 100-entry JSON log writer. Atomic tmp→rename writes. `SystemLog(path)` with `write(level, title, body, source)`.
+- **`bot/notifier.py`** — `Notifier(log_path, alert_path, telegram_token, telegram_chat_id)`. Routes warning/emergency alerts to `alert_state.json`, logs all events to system log, sends Telegram if configured. Never raises. `send_test() -> (bool, str)`.
+- **`bot/mode_manager.py`** — `ModeManager(notifier=None)`. Persists mode to `data/bot_mode.json`. 2s command poll loop reads `data/bot_command.json`, dispatches `switch_mode`/`stop_bot`/`test_telegram` commands. `current_mode` attribute.
+- **`bot/order_executor.py`** — `OrderExecutor(mode, settings, risk_manager, notifier)`. Per-symbol asyncio.Lock. State machine: IDLE/PLACING/OPEN/PARTIAL_EXIT/CLOSED. `place_order()` and `close_all_orders_at_market()`. Exchange calls are stubs — must be wired to real Binance API.
+- **`bot/virtual_tracker.py`** — `VirtualTracker(mode, orders_path, efficiency_path)`. Seeds from backtest results. Tracks `total_winning_usdt` and `trade_count` per (symbol, preset). `best_preset(symbol)` requires ≥4 trades.
+- **`config/risk_config.py`** — Extended with new fields: `telegram`, `min_balance_usdt`, `consecutive_failure_threshold`, `test_starting_balance_usdt`, `max_leverage`, `price_stale_threshold_s`.
+
+### Modified modules
+
+- **`bot/risk_manager.py`** — Renamed `"paper"` → `"test"` throughout. Added optional `Notifier` param. Added `min_balance_usdt` floor check in `update_balance()`.
+- **`bot/data_feed.py`** — Fixed `== 'testnet'` → `== 'test'`. Added `reinit(mode, api_key, api_secret)` for runtime mode switching.
+- **`config/settings.py`** — Default mode `'testnet'` → `'test'`. Legacy alias `testnet` → `test` with warning. Removed `LIVE_MODE_CONFIRMED` guard.
+- **`backtest.py`** — Added `--mode` CLI arg. Fixed `== 'testnet'` → `== 'test'` in cache path.
+- **`main.py`** — Wired Notifier, ModeManager, RiskManager, OrderExecutor, VirtualTracker. Obligatory startup backtest gate (exits on failure). Mode switch and stop callbacks. poll_loop runs as asyncio task alongside heartbeat.
+
+### Deleted
+
+- `bot/paper_trader.py`, `paper_trade.py` — replaced by OrderExecutor
+- `dashboard/app/paper/` — replaced by new dashboard sections
+
+### Dashboard additions
+
+- **`dashboard/app/settings/page.tsx`** — Start/Stop Bot controls, Trading Mode switcher, Telegram Alerts section (test button), UI Preview section.
+- **`dashboard/components/ModeBadge.tsx`** — Shows current mode + RUNNING/STOPPED, polls `bot_state.json` every 10s. Renders in NavBar left side.
+- **`dashboard/components/AlertBanner.tsx`** — Shows undismissed warning/emergency alerts above NavBar. Dismissible. Polls `alert_state.json`.
+- **`dashboard/app/log/page.tsx`** — System log page with level filter. NavBar shows unread badge count.
+- **`dashboard/app/api/bot/start/route.ts`** — POST: spawns `main.py` detached.
+- **`dashboard/app/api/bot/stop/route.ts`** — POST: writes stop command, polls 10s, SIGTERM fallback.
+- **`dashboard/app/api/mode/route.ts`** — GET/POST mode switching with 60s poll.
+- **`dashboard/app/api/alerts/dismiss/route.ts`** — POST: adds alert ID to dismissed list.
+- **`dashboard/app/api/log/route.ts`** — GET: serves system log reversed.
+- **`dashboard/app/api/telegram/test/route.ts`** — POST: writes test_telegram command, polls 15s.
+
+### File-based command channel
+
+Bot polls `data/bot_command.json` every 2s. Dashboard writes command with UUID. Bot writes result to `data/bot_command_result.json`. Dashboard polls for matching UUID. SIGTERM fallback after timeout.
+
+### Mode model
+
+- **`test`** → `testnet.binancefuture.com` (paper money, real-ish market data)
+- **`live`** → `fapi.binance.com` (real money, real orders)
+- Mode is runtime-switchable via dashboard. Switching closes all orders and reruns backtest before accepting new orders.
+
+### Obligatory backtest gate
+
+Every bot start and every mode switch runs `backtest.py --mode {mode}` as a subprocess before any orders can be placed. If it fails, the bot exits (startup) or aborts the switch (mode change) with an emergency alert.
+
+### Key decisions
+
+- `subprocess.run` for startup backtest (blocking before event loop hot path) — acceptable.
+- `asyncio.to_thread(subprocess.run, ...)` for mode-switch backtest — non-blocking.
+- OrderExecutor exchange calls left as stubs until testnet API wiring is separately scoped.
+- VirtualTracker `_MIN_TRADES = 4` guard — prevents best_preset() from picking noisy results.

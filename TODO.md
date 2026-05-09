@@ -30,7 +30,7 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] `bot/chart.py` — ASCII rank-based swing point chart
 - [x] `bot/display.py` — full console UI (chart + trend table + all-points table + signals)
 - [x] Timezone support — TIMEZONE env var wired through all display functions
-- [ ] Order state reconciliation on startup
+- [x] Order state reconciliation on startup
 
 ## Phase 1 — Risk management
 
@@ -121,7 +121,7 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [ ] Re-evaluate all presets now that both BUY and SELL signals fire correctly
 - [ ] Run backtest with lh_sell presets and evaluate results
 - [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
-- [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
+- [x] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
 
 ## Phase 3.6 — Multi-symbol support (design approved 2026-05-04)
 
@@ -136,7 +136,7 @@ See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
 - [x] `backtest.py` — loop over symbols, write `backtest_results_{symbol}.json` per symbol
 - [x] `backtest_api.py` — accept `symbol` param; default to first symbol
 - [x] `main.py` — write `symbols.json` at startup (stays single-symbol for display)
-- [ ] Migrate existing `paper_state.json` → `paper_state_BTCUSDT.json`
+- [x] Migrate existing `paper_state.json` → `paper_state_BTCUSDT.json`
 
 ### Dashboard
 - [x] Fetch `symbols.json` in all pages; wire `useSymbol` + `SymbolSwitcher` into header
@@ -166,6 +166,33 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] `dashboard/app/settings/page.tsx` — SymbolDiscovery section added
 - [x] `dashboard/lib/types.ts` — CandidateResult, DiscoveryState, DiscoveryCandidatesFile interfaces
 - [ ] End-to-end test: run discovery from UI, verify candidates appear, add one, verify it disappears
+
+## Phase 3.8 — Order Execution & Infrastructure
+
+- [x] `bot/system_log.py` — rolling 100-entry log
+- [x] `bot/notifier.py` — Telegram + alert state + log wrapper
+- [x] `bot/mode_manager.py` — mode state and command poll loop
+- [x] `bot/order_executor.py` — state machine, close_all_orders_at_market (stubs)
+- [x] `bot/virtual_tracker.py` — virtual order efficiency tracking
+- [x] `config/risk_config.py` — extended with Telegram, min_balance, failure threshold fields
+- [x] `bot/risk_manager.py` — renamed paper→test, added min_balance check, Notifier wired
+- [x] `bot/data_feed.py` — reinit() for runtime mode switching
+- [x] `config/settings.py` — test/live mode model (testnet→test rename)
+- [x] `main.py` — Notifier, ModeManager, RiskManager, OrderExecutor, VirtualTracker wired
+- [x] Dashboard: Start/Stop Bot controls (settings page)
+- [x] Dashboard: Trading Mode switcher with obligatory backtest gate
+- [x] Dashboard: Telegram Alerts section + test button
+- [x] Dashboard: ModeBadge in NavBar
+- [x] Dashboard: AlertBanner (warning/emergency alerts, dismissible)
+- [x] Dashboard: System log page (/log) with level filter + NavBar unread badge
+- [x] `TELEGRAM_SETUP.md` — step-by-step Telegram bot creation guide
+- [ ] Wire real Binance API calls into `order_executor._submit_to_exchange()` and `_market_close()`
+- [ ] Combined WebSocket stream (all symbols on one WS connection)
+- [ ] Price feed fallback (REST polling when WS silent >15s)
+- [ ] Kline gap detection and re-fetch
+- [ ] Allocation weight step 0.01 + initial rebalance on symbol add
+- [ ] Leverage bracket fetch from Binance API
+- [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
 
 ## Phase 4 — Order placement
 

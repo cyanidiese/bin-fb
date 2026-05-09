@@ -225,7 +225,7 @@ async def run() -> None:
         bracket_max = order_executor.get_bracket_max(symbol)
         target_lev = risk_manager.get_leverage(symbol)
 
-        min_viable_lev = math.ceil(min_notional / allocation) if allocation > 0 else 999
+        min_viable_lev = math.ceil(min_notional / allocation)
         if min_viable_lev > bracket_max:
             logger.info(f"[{symbol}] Cannot meet min_notional at any leverage, skipping")
             return
@@ -273,7 +273,7 @@ async def run() -> None:
         best = analyzer.get_best_recommendation()
 
         try:
-            feed.refresh_klines(symbol, timeframe, fetch_count=10)
+            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 10)
         except Exception as e:
             logger.warning(f"[{symbol}] Kline refresh failed: {e}")
 
@@ -289,7 +289,7 @@ async def run() -> None:
             await _try_place_order(symbol, best, settings)
 
         export(
-            symbol, timeframe, settings.trading_mode,
+            symbol, timeframe, mode_manager.current_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
             analyzer.get_klines(), recs, analyzer.get_all_points(), best,
         )
@@ -309,10 +309,11 @@ async def run() -> None:
 
     async def on_switch_mode(target_mode: str) -> None:
         nonlocal virtual_tracker
+        current_symbols = symbol_registry.get_symbols()
         await order_executor.close_all_orders_at_market()
         order_executor.reset_for_mode_switch(target_mode)
         risk_manager.reset_for_mode_switch(target_mode)
-        settings_new = load_settings(symbols[0])
+        settings_new = load_settings(current_symbols[0])
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
         bt_result = await asyncio.to_thread(
             subprocess.run,
@@ -328,15 +329,15 @@ async def run() -> None:
                 "main",
             )
             return
-        await order_executor.fetch_leverage_brackets(symbols)
-        for symbol in symbols:
-            feed.refresh_klines(symbol, timeframe, fetch_count=1500)
+        await order_executor.fetch_leverage_brackets(current_symbols)
+        for symbol in current_symbols:
+            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 1500)
         virtual_tracker = VirtualTracker(
             mode=target_mode,
             orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",
             efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{target_mode}.json",
         )
-        for sym in symbols:
+        for sym in current_symbols:
             bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
             virtual_tracker.seed_from_backtest(sym, bt_path)
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")

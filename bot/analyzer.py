@@ -132,7 +132,6 @@ class Analyzer:
         if self._trend is None or self._engine is None:
             return None
         import dataclasses
-        from bot.recommendation_engine import RecommendationEngine
         s = dataclasses.replace(self._engine._s, **overrides)
         return RecommendationEngine(s).generate(self._trend, self._current_price)
 

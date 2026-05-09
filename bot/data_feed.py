@@ -202,13 +202,21 @@ class DataFeed:
                     logger.info(f"Combined stream connected ({len(symbols)} symbols): {', '.join(symbols)}")
                     backoff = 1
                     async for raw in ws:
-                        msg = json.loads(raw)
+                        try:
+                            msg = json.loads(raw)
+                        except Exception as exc:
+                            logger.warning(f"Failed to parse WebSocket message: {exc}")
+                            continue
                         stream = msg.get("stream", "")
                         k = msg.get("data", {}).get("k", {})
-                        if not k or not stream:
+                        if not stream or "@kline_" not in stream or not k:
                             continue
                         symbol = stream.split("@")[0].upper()
-                        price = float(k["c"])
+                        try:
+                            price = float(k["c"])
+                        except (ValueError, KeyError) as exc:
+                            logger.warning(f"[{symbol}] Invalid price in message: {exc}")
+                            continue
                         now = time.monotonic()
                         self._last_price_ts[symbol] = now
 

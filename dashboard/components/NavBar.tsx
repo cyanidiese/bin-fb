@@ -9,7 +9,6 @@ import ModeBadge from './ModeBadge'
 const NAV_LINKS = [
   { href: '/',          label: 'Strategy' },
   { href: '/backtest',  label: 'Backtest' },
-  { href: '/paper',     label: 'Paper'    },
   { href: '/create',    label: 'Create'   },
   { href: '/risk',      label: 'Risk'     },
   { href: '/settings',  label: 'Settings' },

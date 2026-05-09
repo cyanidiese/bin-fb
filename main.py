@@ -331,7 +331,8 @@ async def run() -> None:
             return
         await order_executor.fetch_leverage_brackets(current_symbols)
         for symbol in current_symbols:
-            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 1500)
+            klines_new = await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 1500)
+            analyzers[symbol].build_from_klines(klines_new)
         virtual_tracker = VirtualTracker(
             mode=target_mode,
             orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",

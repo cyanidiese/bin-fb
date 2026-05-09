@@ -37,6 +37,7 @@ class DataFeed:
         self._last_candle_open: dict[str, int] = {}   # symbol → open_time_ms of last dispatched candle
         self._last_price_ts: dict[str, float] = {}    # symbol → monotonic time of last price tick
         self._last_candle_ts: dict[str, float] = {}   # symbol → monotonic time of last candle close
+        self._reconnect_requested: bool = False
 
     def reinit(self, mode: str, api_key: str, api_secret: str) -> None:
         """Re-initialise client and endpoints for a new mode without creating a new DataFeed."""
@@ -46,6 +47,7 @@ class DataFeed:
         if self._is_testnet:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
+        self._reconnect_requested = True
         self._last_candle_open.clear()
         self._last_price_ts.clear()
         self._last_candle_ts.clear()
@@ -58,7 +60,7 @@ class DataFeed:
     def combined_stream_url(symbols: list[str], timeframe: str, testnet: bool) -> str:
         streams = '/'.join(f"{s.lower()}@kline_{timeframe}" for s in symbols)
         base = _WS_TESTNET if testnet else _WS_LIVE
-        return f"{base.rstrip('/ws')}/stream?streams={streams}"
+        return f"{base.removesuffix('/ws')}/stream?streams={streams}"
 
     # ------------------------------------------------------------------ #
     # REST — kline history                                                 #
@@ -202,6 +204,9 @@ class DataFeed:
                     logger.info(f"Combined stream connected ({len(symbols)} symbols): {', '.join(symbols)}")
                     backoff = 1
                     async for raw in ws:
+                        if self._reconnect_requested:
+                            self._reconnect_requested = False
+                            break
                         try:
                             msg = json.loads(raw)
                         except Exception as exc:

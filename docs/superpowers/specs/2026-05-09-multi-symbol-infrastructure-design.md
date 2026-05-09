@@ -42,7 +42,7 @@ async def stream_combined(
 ) -> None:
 ```
 
-`get_symbols` is a callable (not a captured list) so that reconnects after symbol add/remove use the current active symbol set from `SymbolRegistry`.
+`get_symbols` is a callable (not a captured list) so that reconnects after a runtime symbol **disable** use the current active symbol set from `SymbolRegistry`, automatically excluding any disabled symbol from the reconnected stream URL. Newly added symbols are not supported at runtime — they require a bot restart (see §7.2).
 
 Combined stream message format from Binance:
 ```json
@@ -75,7 +75,7 @@ Runs every 5 seconds. For each active symbol: if `monotonic_time - last_price_ts
 
 ### 3.2 Candle watchdog
 
-Runs every 30 seconds. For each active symbol: if `monotonic_time - last_candle_ts[symbol] > 1.5 × timeframe_ms`, fetch the latest closed kline via `futures_klines(symbol, limit=2)` and call `on_candle_close(symbol, kline)` if the kline is closed and its open time is newer than `_last_candle_open[symbol]` (dedup guard applies).
+Runs every 30 seconds. For each active symbol: if `monotonic_time - last_candle_ts[symbol] > 1.5 × timeframe_ms`, fetch the 3 most recent klines via `futures_klines(symbol, limit=3)`. Iterate newest-to-oldest; take the first kline whose `close_time_ms < now_ms` as the candidate. Call `on_candle_close(symbol, kline)` only if the candidate's open time is newer than `_last_candle_open[symbol]` (dedup guard applies). Fetching 3 candles handles the edge case where the most recent kline is still forming.
 
 ### 3.3 Method signature
 
@@ -91,6 +91,8 @@ async def start_watchdog(
 ```
 
 Started as an `asyncio.create_task` alongside `stream_combined`. Cancelled in the same `finally` block.
+
+On watchdog start, both `last_price_ts[symbol]` and `last_candle_ts[symbol]` are initialised to `time.monotonic()` for every active symbol. This gives the combined stream a grace period equal to the stale threshold before the watchdog makes its first REST call, preventing a flood of fallback REST requests immediately after startup.
 
 `last_price_ts` and `last_candle_ts` are updated by `stream_combined` on every message received, so the watchdog only activates during true silence.
 
@@ -151,14 +153,18 @@ async def fetch_leverage_brackets(self, symbols: list[str]) -> None:
 
 ### 5.3 Optimal leverage computation (in `main.py` before `place_order`)
 
+`import math` is a module-level import in `main.py`.
+
+`risk_manager.get_balance()` is a new public method on `RiskManager` returning `self._balance` (see §9).
+
 ```python
-allocation    = min(risk_manager.get_allocation(symbol), last_known_balance)
+balance       = risk_manager.get_balance()
+allocation    = min(risk_manager.get_allocation(symbol), balance)
 min_notional  = await order_executor.get_min_notional(symbol)
 bracket_max   = order_executor.get_bracket_max(symbol)
 target_lev    = risk_manager.get_leverage(symbol)
 
 # Minimum leverage to meet min_notional
-import math
 min_viable_lev = math.ceil(min_notional / allocation) if allocation > 0 else 999
 
 if min_viable_lev > bracket_max:
@@ -207,10 +213,14 @@ In `_submit_to_exchange`, catch `BinanceAPIException`. Classify the error:
 | `-1013` insufficient balance | Do not disable — funds issue |
 | Other codes ≥ 3 consecutive failures | Disable symbol |
 
+Funds errors (`-2019`, `-1013`) do **not** call `_record_failure()` and do **not** advance the consecutive-failure counter. Only non-funds errors count toward the threshold.
+
 On disable:
 1. `symbol_registry.disable(symbol, reason)` — redistribution handled inside `SymbolRegistry`
 2. `await order_executor.close_order(symbol)` — close any open real order
 3. `notifier.notify("emergency", f"Symbol {symbol} disabled: {reason}", ..., "order_executor")`
+
+After every disable, check `symbol_registry.all_disabled()`. If all symbols are disabled, send an additional emergency notification and call `sys.exit(1)` — the bot cannot trade with no symbols active.
 
 ### 6.4 `main.py` disable gate
 
@@ -237,13 +247,16 @@ sym_settings: dict[str, Settings]       # symbol → Settings (cached)
 ### 7.2 Startup sequence
 
 1. Load `SymbolRegistry` — source of truth for active symbols
-2. For each symbol: `load_settings(symbol)`, construct `Analyzer`
-3. Proactive exchange check: `order_executor.check_symbols_on_exchange(symbols)`
-4. Fetch leverage brackets: `order_executor.fetch_leverage_brackets(symbols)`
-5. For each symbol: `feed.load_klines(symbol, timeframe, limit=1500)`, `analyzer.build_from_klines(klines)`
-6. For each symbol: `export(symbol, ...)` — write initial results
-7. `order_executor.reconcile_with_exchange()`
-8. Start `feed.stream_combined(...)` and `feed.start_watchdog(...)` as tasks
+2. **Fail fast** if `symbol_registry.get_symbols()` is empty: log an error, send an emergency notification, and `sys.exit(1)`. There is nothing to trade.
+3. For each symbol: `load_settings(symbol)`, construct `Analyzer`
+4. Proactive exchange check: `order_executor.check_symbols_on_exchange(symbols)`
+5. Fetch leverage brackets: `order_executor.fetch_leverage_brackets(symbols)`
+6. For each symbol: `feed.load_klines(symbol, timeframe, limit=1500)`, `analyzer.build_from_klines(klines)`
+7. For each symbol: `export(symbol, ...)` — write initial results
+8. `order_executor.reconcile_with_exchange()`
+9. Start `feed.stream_combined(...)` and `feed.start_watchdog(...)` as tasks
+
+**Runtime symbol changes:** Symbols added via the dashboard during a live session are not picked up until the next bot restart — adding a symbol requires constructing a new `Analyzer` and loading kline history, which cannot happen safely mid-stream. The `get_symbols()` callable passed to `stream_combined` and `start_watchdog` handles **runtime disables only** — on reconnect it excludes disabled symbols so the combined stream URL is rebuilt correctly.
 
 ### 7.3 on_candle_close(symbol, kline)
 
@@ -341,9 +354,10 @@ def _should_poll_balance() -> bool:
 | `bot/data_feed.py` | Add `stream_combined()`, `start_watchdog()`, candle dedup guard |
 | `bot/order_executor.py` | Rename `check_all_orders_price` → `check_symbol_price`; add `get_min_notional()`, `get_bracket_max()`, `fetch_leverage_brackets()`, `check_symbols_on_exchange()`; extend lot cache with `min_notional`; add `symbol_registry` param |
 | `main.py` | Full refactor: per-symbol dicts, combined stream, watchdog, leverage computation, debounced balance, SymbolRegistry wired |
+| `bot/risk_manager.py` | Add `get_balance() -> float` public method returning `self._balance` |
 | `tests/test_order_executor.py` | Update `check_all_orders_price` calls to `check_symbol_price` |
 
-**Unchanged:** `RiskManager`, `Analyzer`, `VirtualTracker`, `FakeOrder`, `Backtester`, `SymbolRegistry`, all dashboard files.
+**Unchanged:** `Analyzer`, `VirtualTracker`, `FakeOrder`, `Backtester`, `SymbolRegistry`, all dashboard files.
 
 ---
 

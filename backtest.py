@@ -21,8 +21,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.settings import load_settings, load_symbols
+from bot.analyzer import Analyzer
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
+from bot.exporter import export
+from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config, _CONFIG_PATH as RISK_CONFIG_PATH
 
 logging.basicConfig(
@@ -882,6 +885,26 @@ def run_for_symbol(symbol: str, args) -> None:
     if args.klines_count and len(klines) > args.klines_count:
         klines = klines[-args.klines_count:]
     logger.info(f"[{symbol}] Loaded {len(klines)} klines from {klines_path}")
+
+    # Write strategy page data for the dashboard
+    try:
+        _engine = RecommendationEngine(settings)
+        _analyzer = Analyzer(settings.swing_neighbours, _engine)
+        _analyzer.build_from_klines(klines)
+        export(
+            symbol=symbol,
+            timeframe=settings.timeframe,
+            mode=settings.trading_mode,
+            current_price=float(klines[-1][4]),
+            trend=_analyzer.get_trend(),
+            klines=klines,
+            recommendations=_analyzer.get_recommendations(),
+            all_points_history=_analyzer.get_all_points(),
+            best_recommendation=_analyzer.get_best_recommendation(),
+        )
+        logger.info(f"[{symbol}] Strategy results written to dashboard/public/results_{symbol}.json")
+    except Exception as _e:
+        logger.warning(f"[{symbol}] Failed to write strategy results: {_e}")
 
     all_presets = {**LOCKED_PRESETS, **PRESETS}
     risk_cfg = load_risk_config(RISK_CONFIG_PATH)

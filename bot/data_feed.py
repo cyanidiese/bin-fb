@@ -274,6 +274,12 @@ class DataFeed:
                 now_ms = int(time.time() * 1000)
                 symbols = get_symbols()
 
+                # Initialize state for any symbols added since watchdog start
+                for symbol in symbols:
+                    if symbol not in self._last_price_ts:
+                        self._last_price_ts[symbol] = now
+                        self._last_candle_ts[symbol] = now
+
                 # Price watchdog: check every 5s
                 for symbol in symbols:
                     if now - self._last_price_ts.get(symbol, now) > stale_threshold_s:

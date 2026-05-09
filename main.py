@@ -281,7 +281,7 @@ async def run() -> None:
             logger.info(f"First WebSocket tick received | price={price:.2f}")
             _first_tick = False
 
-        closed_orders = await order_executor.check_all_orders_price(price)
+        closed_orders = await order_executor.check_symbol_price(settings.symbol, price)
         for c in closed_orders:
             virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
 

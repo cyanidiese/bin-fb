@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
 import type { TradesData, RealOrder } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
+import TradesChart from '@/components/TradesChart'
 
 function winRate(trades: RealOrder[]): string {
   if (trades.length === 0) return '—'
@@ -77,6 +78,7 @@ export default function TradesPage() {
   const { symbol } = useSymbolContext()
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [klines, setKlines] = useState<Array<{ time: number; close: number }>>([])
 
   useEffect(() => {
     if (!symbol) return
@@ -86,6 +88,16 @@ export default function TradesPage() {
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(setData)
       .catch(e => setError(String(e)))
+  }, [symbol])
+
+  useEffect(() => {
+    if (!symbol) return
+    fetch(`/results_${symbol}.json?t=${Date.now()}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.klines) setKlines(d.klines)
+      })
+      .catch(() => {})
   }, [symbol])
 
   if (error) return <div className="pt-16 p-4 text-red-400">{error}</div>
@@ -150,6 +162,12 @@ export default function TradesPage() {
           </table>
         </div>
       </CollapsibleSection>
+
+      {klines.length > 0 && (
+        <CollapsibleSection title="Price Chart + Trade Markers" storageKey="trades-chart" defaultOpen>
+          <TradesChart klines={klines} realOrders={data.real_orders} />
+        </CollapsibleSection>
+      )}
 
       <CollapsibleSection
         title={`Real Orders (${data.real_orders.length})`}

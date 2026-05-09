@@ -191,6 +191,27 @@ def test_perf_cache_ttl(tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_get_balance_returns_current_balance(tmp_path):
+    cfg_path = tmp_path / "risk_config.json"
+    cfg = {
+        "balance_tiers": [
+            {"min_balance_usdt": 0, "max_deploy_pct": 40, "max_leverage_ceiling": 5},
+        ],
+        "base_leverage": 2,
+        "max_leverage": 10,
+        "min_profit_factor": 1.2,
+        "drawdown_warning_pct": 10.0,
+        "drawdown_hard_stop_pct": 20.0,
+        "backtest_initial_balance_usdt": 1000.0,
+        "symbol_weights": {"BTCUSDT": 1},
+    }
+    cfg_path.write_text(json.dumps(cfg))
+    rm = RiskManager('test', initial_balance=500.0, config_path=cfg_path, state_path=tmp_path / 's.json')
+    assert rm.get_balance() == pytest.approx(500.0)
+    rm.update_balance(750.0)
+    assert rm.get_balance() == pytest.approx(750.0)
+
+
 from bot.backtester import Backtester
 from config.settings import load_settings
 

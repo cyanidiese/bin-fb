@@ -149,6 +149,11 @@ class RiskManager:
             cfg = self._load_config()
             return self._calc_allocation(symbol, cfg)
 
+    def get_balance(self) -> float:
+        """Current wallet balance in USDT."""
+        with self._lock:
+            return self._balance
+
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
             self._last_notify_event = event

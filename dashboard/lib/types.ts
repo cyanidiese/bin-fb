@@ -201,3 +201,50 @@ export interface DiscoveryCandidatesFile {
   generated_at: string
   candidates: CandidateResult[]
 }
+
+// ── Trades page types ──────────────────────────────────────────────────────
+
+export interface RealOrder {
+  preset_name: string;
+  side: 'BUY' | 'SELL';
+  entry_price: number;
+  close_price: number;
+  tp: number;
+  sl: number;
+  quantity: number;
+  leverage: number;
+  open_time: string | null;
+  close_time: string;
+  pnl_usdt: number;
+  result: 'win' | 'loss' | 'partial' | 'trail' | 'closed_early';
+}
+
+export interface VirtualOrder {
+  preset_name: string;
+  side: 'BUY' | 'SELL';
+  entry_price: number;
+  tp: number;
+  sl: number;
+  quantity: number;
+  leverage: number;
+  open_time: string;
+  status: 'open' | 'closed';
+  close_price: number | null;
+  close_time: string | null;
+  pnl_usdt: number | null;
+  result: 'win' | 'loss' | 'partial' | 'trail' | 'closed_early' | null;
+}
+
+export interface VirtualSummaryEntry {
+  total_winning_usdt: number;
+  trade_count: number;
+}
+
+export interface TradesData {
+  symbol: string;
+  mode: string;
+  best_preset: string | null;
+  real_orders: RealOrder[];
+  virtual_summary: Record<string, VirtualSummaryEntry>;
+  virtual_orders: VirtualOrder[];
+}

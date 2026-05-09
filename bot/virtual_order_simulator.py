@@ -45,6 +45,8 @@ class VirtualOrderSimulator:
         self._open: dict[str, dict[str, dict]] = {}
         # symbol -> {preset_name: FakeOrder}
         self._fake_orders: dict[str, dict[str, FakeOrder]] = {}
+        # per-symbol write locks to prevent concurrent _append_closed races
+        self._write_locks: dict[str, asyncio.Lock] = {}
 
     async def on_candle_close(
         self,
@@ -145,7 +147,7 @@ class VirtualOrderSimulator:
                 'pnl_usdt': pnl,
                 'result': result,
             })
-            self._append_closed(symbol, record)
+            await self._append_closed(symbol, record)
             closed.append({
                 'preset_name': preset_name,
                 'pnl_usdt': pnl,
@@ -173,19 +175,16 @@ class VirtualOrderSimulator:
                 close_price = 0.0
 
             for preset_name, record in list(open_for_symbol.items()):
-                if close_price > 0:
-                    pnl = self._calc_pnl(record, close_price)
-                else:
-                    pnl = 0.0
-                    close_price = record['entry_price']
+                row_close = close_price if close_price > 0 else record['entry_price']
+                pnl = self._calc_pnl(record, row_close) if close_price > 0 else 0.0
                 record.update({
                     'status': 'closed',
-                    'close_price': close_price,
+                    'close_price': row_close,
                     'close_time': datetime.now(timezone.utc).isoformat(),
                     'pnl_usdt': pnl,
                     'result': 'closed_early',
                 })
-                self._append_closed(symbol, record)
+                await self._append_closed(symbol, record)
 
             open_for_symbol.clear()
             self._fake_orders.get(symbol, {}).clear()
@@ -201,21 +200,27 @@ class VirtualOrderSimulator:
     def _path(self, symbol: str) -> Path:
         return self._project_root / 'data' / f'virtual_orders_{symbol}_{self._mode}.json'
 
-    def _append_closed(self, symbol: str, record: dict) -> None:
-        path = self._path(symbol)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        existing: list = []
-        if path.exists():
-            try:
-                existing = json.loads(path.read_text())
-            except Exception:
-                existing = []
-        # Keep open orders + append new closed record, trim old closed to _MAX_CLOSED
-        open_records = [r for r in existing if r.get('status') == 'open']
-        closed_records = [r for r in existing if r.get('status') != 'open']
-        closed_records.append(record)
-        if len(closed_records) > _MAX_CLOSED:
-            closed_records = closed_records[-_MAX_CLOSED:]
-        tmp = path.with_suffix('.json.tmp')
-        tmp.write_text(json.dumps(open_records + closed_records))
-        tmp.replace(path)
+    def _get_write_lock(self, symbol: str) -> asyncio.Lock:
+        if symbol not in self._write_locks:
+            self._write_locks[symbol] = asyncio.Lock()
+        return self._write_locks[symbol]
+
+    async def _append_closed(self, symbol: str, record: dict) -> None:
+        async with self._get_write_lock(symbol):
+            path = self._path(symbol)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing: list = []
+            if path.exists():
+                try:
+                    existing = json.loads(path.read_text())
+                except Exception:
+                    existing = []
+            # Keep open orders + append new closed record, trim old closed to _MAX_CLOSED
+            open_records = [r for r in existing if r.get('status') == 'open']
+            closed_records = [r for r in existing if r.get('status') != 'open']
+            closed_records.append(record)
+            if len(closed_records) > _MAX_CLOSED:
+                closed_records = closed_records[-_MAX_CLOSED:]
+            tmp = path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(open_records + closed_records))
+            tmp.replace(path)

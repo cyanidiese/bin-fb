@@ -1,5 +1,6 @@
 # tests/test_virtual_order_simulator.py
 import json
+import json as _json
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -73,9 +74,6 @@ def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
 # ---------------------------------------------------------------------------
 # VirtualOrderSimulator tests
 # ---------------------------------------------------------------------------
-import asyncio
-import json as _json
-import pytest
 from bot.virtual_order_simulator import VirtualOrderSimulator
 
 
@@ -155,6 +153,7 @@ async def test_virtual_order_dedup_no_double_open(tmp_path):
             await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
             count_after_second = len(sim._open.get('BTCUSDT', {}))
 
+    assert count_after_first == 2
     assert count_after_first == count_after_second  # no double-open
 
 

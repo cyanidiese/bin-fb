@@ -289,3 +289,34 @@ async def test_fetch_leverage_brackets_caches_max():
 def test_get_bracket_max_defaults_to_20_when_unknown():
     ex = make_executor()
     assert ex.get_bracket_max('UNKNOWNUSDT') == 20
+
+
+@pytest.mark.asyncio
+async def test_funds_error_does_not_increment_failure_counter():
+    ex = make_executor()
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+
+    from bot.order_executor import FundsError
+
+    async def funds_failing_submit(*a, **kw):
+        raise FundsError("insufficient margin")
+
+    ex._submit_to_exchange = funds_failing_submit
+    await ex.place_order('BTCUSDT', 'p', 'BUY', 50000, 55000, 48000, 0.005, 5)
+    assert ex._failure_counts.get('BTCUSDT', 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_symbol_error_calls_auto_disable():
+    from bot.order_executor import SymbolError
+
+    ex = make_executor()
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._auto_disable = AsyncMock()
+
+    async def symbol_failing_submit(symbol, *a, **kw):
+        raise SymbolError(symbol, "invalid symbol")
+
+    ex._submit_to_exchange = symbol_failing_submit
+    await ex.place_order('BTCUSDT', 'p', 'BUY', 50000, 55000, 48000, 0.005, 5)
+    ex._auto_disable.assert_awaited_once_with('BTCUSDT', 'invalid symbol')

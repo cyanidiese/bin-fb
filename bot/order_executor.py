@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import sys
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from enum import Enum, auto
@@ -16,6 +17,7 @@ from bot.fake_order import FakeOrder
 
 if TYPE_CHECKING:
     from bot.data_feed import DataFeed
+    from bot.symbol_registry import SymbolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,18 @@ class OrderState(Enum):
     OPEN = auto()
     PARTIAL_EXIT = auto()
     CLOSED = auto()
+
+
+class FundsError(Exception):
+    """Wraps exchange errors due to insufficient margin/balance. Does not count as a failure."""
+
+
+class SymbolError(Exception):
+    """Wraps exchange errors that mean the symbol should be disabled."""
+    def __init__(self, symbol: str, reason: str) -> None:
+        super().__init__(reason)
+        self.symbol = symbol
+        self.reason = reason
 
 
 @dataclass
@@ -53,12 +67,14 @@ class OrderExecutor:
         risk_manager: RiskManager,
         notifier: Notifier,
         data_feed: 'DataFeed | None' = None,
+        symbol_registry: 'SymbolRegistry | None' = None,
     ) -> None:
         self._mode = mode
         self._settings = settings
         self._risk_manager = risk_manager
         self._notifier = notifier
         self._feed = data_feed
+        self._symbol_registry = symbol_registry
 
         self._states: dict[str, OrderState] = {}
         self._open_orders: dict[str, OpenOrder] = {}
@@ -150,9 +166,19 @@ class OrderExecutor:
                     f"entry={entry} TP={tp} SL={sl} preset={preset_name}"
                 )
                 return True
+            except FundsError as exc:
+                self._states[symbol] = OrderState.IDLE
+                logger.warning(f"[{symbol}] Order skipped — insufficient funds: {exc}")
+                return False
+            except SymbolError as sym_exc:
+                self._states[symbol] = OrderState.IDLE
+                await self._auto_disable(sym_exc.symbol, sym_exc.reason)
+                return False
             except Exception as exc:
                 self._states[symbol] = OrderState.IDLE
-                self._record_failure(symbol)
+                threshold_hit = self._record_failure(symbol)
+                if threshold_hit:
+                    await self._auto_disable(symbol, f"consecutive_failures: {exc}")
                 logger.error(f"Order placement failed for {symbol}: {exc}")
                 return False
 
@@ -330,14 +356,32 @@ class OrderExecutor:
             )
         except Exception as exc:
             logger.warning(f"[{symbol}] Could not set leverage={leverage}: {exc}")
-        result = await asyncio.to_thread(
-            client.futures_create_order,
-            symbol=symbol,
-            side=side,
-            type='MARKET',
-            quantity=str(quantity),
-        )
-        return str(result.get('orderId'))
+
+        try:
+            result = await asyncio.to_thread(
+                client.futures_create_order,
+                symbol=symbol,
+                side=side,
+                type='MARKET',
+                quantity=str(quantity),
+            )
+            return str(result.get('orderId'))
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            exc_code = getattr(exc, 'code', None)
+
+            if exc_code in (-2019, -1013):
+                raise FundsError(str(exc)) from exc
+
+            is_symbol_error = (
+                exc_code == -1121
+                or (exc_code == -2010 and "perpetual" in exc_str)
+                or "is not available" in exc_str
+            )
+            if is_symbol_error:
+                raise SymbolError(symbol, str(exc)) from exc
+
+            raise  # other errors → caller records failure
 
     async def _market_close(self, symbol: str, order: OpenOrder) -> float:
         if self._feed is None:
@@ -418,6 +462,42 @@ class OrderExecutor:
         self._mode = new_mode
         self._lot_cache.clear()  # re-fetch lot sizes for the new endpoint
         logger.info(f"OrderExecutor mode reset to {new_mode}")
+
+    async def check_symbols_on_exchange(self, symbols: list[str]) -> None:
+        """Startup check: disable any symbol that is not TRADING/PERPETUAL on the exchange."""
+        if self._feed is None or self._symbol_registry is None:
+            return
+        try:
+            info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
+            exchange_map = {s['symbol']: s for s in info.get('symbols', [])}
+            for symbol in list(symbols):
+                sym_info = exchange_map.get(symbol)
+                if sym_info is None:
+                    await self._auto_disable(symbol, "symbol not found on exchange")
+                    continue
+                status = sym_info.get('status', '')
+                contract_type = sym_info.get('contractType', '')
+                if status != 'TRADING' or contract_type != 'PERPETUAL':
+                    reason = f"status={status} contractType={contract_type}"
+                    await self._auto_disable(symbol, reason)
+        except Exception as exc:
+            logger.warning(f"check_symbols_on_exchange failed: {exc}")
+
+    async def _auto_disable(self, symbol: str, reason: str) -> None:
+        """Disable symbol, close any open order, notify. Exit if all symbols are now disabled."""
+        logger.error(f"Auto-disabling {symbol}: {reason}")
+        if self._symbol_registry is not None:
+            self._symbol_registry.disable(symbol, reason)
+            if self._symbol_registry.all_disabled():
+                self._notifier.notify(
+                    "emergency",
+                    "All symbols disabled — bot cannot continue",
+                    reason,
+                    "order_executor",
+                )
+                sys.exit(1)
+        await self.close_order(symbol)
+        self._notifier.notify("emergency", f"Symbol {symbol} disabled", reason, "order_executor")
 
     # ------------------------------------------------------------------ #
     # LOT_SIZE helpers                                                     #
@@ -505,15 +585,18 @@ class OrderExecutor:
             return (close_price - order.entry_price) * order.quantity
         return (order.entry_price - close_price) * order.quantity
 
-    def _record_failure(self, symbol: str) -> None:
+    def _record_failure(self, symbol: str) -> bool:
+        """Increment failure counter. Returns True if consecutive threshold is reached."""
         self._failure_counts[symbol] = self._failure_counts.get(symbol, 0) + 1
-        if self._failure_counts[symbol] >= self._consecutive_failure_threshold:
+        reached = self._failure_counts[symbol] >= self._consecutive_failure_threshold
+        if reached:
             self._notifier.notify(
                 "emergency",
                 f"Order placement threshold reached: {symbol}",
                 f"{self._failure_counts[symbol]} consecutive failures",
                 "order_executor",
             )
+        return reached
 
     def _record_success(self, symbol: str) -> None:
         self._failure_counts[symbol] = 0

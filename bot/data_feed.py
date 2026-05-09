@@ -130,7 +130,7 @@ class DataFeed:
         symbol: str,
         timeframe: str,
         on_candle_close: Callable[[list], Awaitable[None]],
-        on_price_update: Optional[Callable[[float], None]] = None,
+        on_price_update: Optional[Callable[[float], Awaitable[None]]] = None,
     ) -> None:
         """
         Streams kline updates for `symbol`/`timeframe`.
@@ -151,7 +151,7 @@ class DataFeed:
                         k = msg['k']
 
                         if on_price_update is not None:
-                            on_price_update(float(k['c']))
+                            await on_price_update(float(k['c']))
 
                         if k['x']:
                             candle = [

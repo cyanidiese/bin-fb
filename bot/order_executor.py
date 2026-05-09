@@ -215,6 +215,48 @@ class OrderExecutor:
             )
         return closed
 
+    async def check_all_orders_price(self, current_price: float) -> list[dict]:
+        """Call on every price tick. Checks all open FakeOrders against current_price.
+        Returns list of closed order result dicts (same shape as check_all_orders)."""
+        closed = []
+        for symbol, fake_order in list(self._fake_orders.items()):
+            result = fake_order.check_price(current_price)
+            if result is None:
+                continue
+
+            open_order = self._open_orders.get(symbol)
+            if open_order is None:
+                del self._fake_orders[symbol]
+                continue
+
+            software_close_price = fake_order.close_price or open_order.entry_price
+            try:
+                actual_close_price = await self._market_close(symbol, open_order)
+            except Exception as exc:
+                logger.error(f"Market close failed for {symbol}: {exc}")
+                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
+                actual_close_price = software_close_price
+
+            pnl = self._calc_pnl(open_order, actual_close_price)
+            closed.append({
+                "symbol": symbol,
+                "preset_name": open_order.preset_name,
+                "result": result,
+                "pnl_usdt": pnl,
+                "side": open_order.side,
+                "entry_price": open_order.entry_price,
+                "close_price": actual_close_price,
+            })
+            del self._open_orders[symbol]
+            del self._fake_orders[symbol]
+            self._states[symbol] = OrderState.IDLE
+            self._record_success(symbol)
+            logger.info(
+                f"Order closed (price tick): {symbol} result={result} "
+                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
+            )
+        return closed
+
     # ------------------------------------------------------------------ #
     # Bulk close                                                           #
     # ------------------------------------------------------------------ #

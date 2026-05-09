@@ -151,6 +151,48 @@ async def test_close_all_clears_fake_orders():
     assert ex.get_state('BTCUSDT') == OrderState.IDLE
 
 
+# --- check_all_orders_price ---
+
+@pytest.mark.asyncio
+async def test_check_all_orders_price_sl_hit():
+    ex = make_executor()
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001}
+
+    async def fake_submit(symbol, side, quantity, leverage):
+        return 'id_sl'
+
+    ex._submit_to_exchange = fake_submit
+    await ex.place_order(
+        symbol='BTCUSDT', preset_name='default', side='BUY',
+        entry=50000, tp=55000, sl=48000, quantity=0.01, leverage=10,
+    )
+    # Price drops to SL
+    closed = await ex.check_all_orders_price(47500)
+    assert len(closed) == 1
+    assert closed[0]['result'] == 'loss'
+    assert ex.get_state('BTCUSDT') == OrderState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_check_all_orders_price_tp_hit():
+    ex = make_executor()
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001}
+
+    async def fake_submit(symbol, side, quantity, leverage):
+        return 'id_tp'
+
+    ex._submit_to_exchange = fake_submit
+    await ex.place_order(
+        symbol='BTCUSDT', preset_name='default', side='BUY',
+        entry=50000, tp=55000, sl=48000, quantity=0.01, leverage=10,
+    )
+    # Price rises to TP
+    closed = await ex.check_all_orders_price(55100)
+    assert len(closed) == 1
+    assert closed[0]['result'] == 'win'
+    assert ex.get_state('BTCUSDT') == OrderState.IDLE
+
+
 # --- consecutive failure counter ---
 
 @pytest.mark.asyncio

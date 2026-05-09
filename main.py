@@ -215,15 +215,6 @@ async def run() -> None:
             logger.warning(f"Kline refresh failed — cache not updated: {e}")
         best = analyzer.get_best_recommendation()
 
-        # Check software TP/SL/trailing on all open orders
-        high = float(kline[2])
-        low = float(kline[3])
-        candle_open = float(kline[1])
-        candle_close_price = float(kline[4])
-        closed_orders = await order_executor.check_all_orders(high, low, candle_open, candle_close_price)
-        for c in closed_orders:
-            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
-
         # Update risk manager balance from exchange
         try:
             balance = await order_executor.fetch_account_balance()
@@ -283,12 +274,16 @@ async def run() -> None:
 
     _first_tick = True
 
-    def on_price_update(price: float) -> None:
+    async def on_price_update(price: float) -> None:
         nonlocal _first_tick
         analyzer.update_price(price)
         if _first_tick:
             logger.info(f"First WebSocket tick received | price={price:.2f}")
             _first_tick = False
+
+        closed_orders = await order_executor.check_all_orders_price(price)
+        for c in closed_orders:
+            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
 
     _poll_task = asyncio.create_task(
         mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)

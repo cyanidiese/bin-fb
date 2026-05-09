@@ -9,7 +9,7 @@ from bot.data_feed import DataFeed
 
 def make_feed(testnet: bool = True) -> DataFeed:
     settings = MagicMock()
-    settings.trading_mode = 'test'
+    settings.trading_mode = 'test' if testnet else 'live'
     settings.api_key = 'k'
     settings.api_secret = 's'
     settings.kline_cache_limit = 5000
@@ -79,7 +79,7 @@ async def _run_feed(feed: DataFeed, msgs: list, on_candle_close, on_price_update
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
 
 

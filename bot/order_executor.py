@@ -382,11 +382,13 @@ class OrderExecutor:
             'sl': order.sl_price,
             'quantity': order.quantity,
             'leverage': order.leverage,
-            'open_time': getattr(order, 'open_time', None),
+            'open_time': order.open_time,
             'close_time': datetime.now(timezone.utc).isoformat(),
             'pnl_usdt': pnl_usdt,
             'result': result,
         })
+        if len(records) > 1000:
+            records = records[-1000:]
         tmp = path.with_suffix('.json.tmp')
         tmp.write_text(json.dumps(records))
         tmp.replace(path)

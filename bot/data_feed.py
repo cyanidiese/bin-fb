@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
@@ -32,6 +33,11 @@ class DataFeed:
 
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
 
+        # Combined stream / watchdog shared state
+        self._last_candle_open: dict[str, int] = {}   # symbol → open_time_ms of last dispatched candle
+        self._last_price_ts: dict[str, float] = {}    # symbol → monotonic time of last price tick
+        self._last_candle_ts: dict[str, float] = {}   # symbol → monotonic time of last candle close
+
     def reinit(self, mode: str, api_key: str, api_secret: str) -> None:
         """Re-initialise client and endpoints for a new mode without creating a new DataFeed."""
         self._is_testnet = (mode == 'test')
@@ -40,6 +46,9 @@ class DataFeed:
         if self._is_testnet:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
+        self._last_candle_open.clear()
+        self._last_price_ts.clear()
+        self._last_candle_ts.clear()
 
     @property
     def client(self):
@@ -170,6 +179,62 @@ class DataFeed:
                 return
             except Exception as e:
                 logger.warning(f"WebSocket error: {e}. Reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
+    async def stream_combined(
+        self,
+        get_symbols: Callable[[], list[str]],
+        timeframe: str,
+        on_candle_close: Callable[[str, list], Awaitable[None]],
+        on_price_update: Callable[[str, float], Awaitable[None]],
+    ) -> None:
+        """
+        Single combined WebSocket for all active symbols.
+        get_symbols() is called on each reconnect so disabled symbols are excluded.
+        """
+        backoff = 1
+        while True:
+            symbols = get_symbols()
+            url = self.combined_stream_url(symbols, timeframe, self._is_testnet)
+            try:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                    logger.info(f"Combined stream connected ({len(symbols)} symbols): {', '.join(symbols)}")
+                    backoff = 1
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        stream = msg.get("stream", "")
+                        k = msg.get("data", {}).get("k", {})
+                        if not k or not stream:
+                            continue
+                        symbol = stream.split("@")[0].upper()
+                        price = float(k["c"])
+                        now = time.monotonic()
+                        self._last_price_ts[symbol] = now
+
+                        try:
+                            await on_price_update(symbol, price)
+                        except Exception as exc:
+                            logger.warning(f"[{symbol}] on_price_update error: {exc}")
+
+                        if k.get("x"):
+                            open_time = int(k["t"])
+                            if open_time > self._last_candle_open.get(symbol, -1):
+                                self._last_candle_open[symbol] = open_time
+                                self._last_candle_ts[symbol] = now
+                                candle = [
+                                    int(k["t"]), k["o"], k["h"], k["l"], k["c"], k["v"],
+                                    int(k["T"]),
+                                ]
+                                try:
+                                    await on_candle_close(symbol, candle)
+                                except Exception as exc:
+                                    logger.warning(f"[{symbol}] on_candle_close error: {exc}")
+            except asyncio.CancelledError:
+                logger.info("Combined stream cancelled")
+                return
+            except Exception as exc:
+                logger.warning(f"Combined stream error: {exc}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
 

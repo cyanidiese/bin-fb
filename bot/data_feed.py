@@ -41,6 +41,10 @@ class DataFeed:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
 
+    @property
+    def client(self):
+        return self._client
+
     @staticmethod
     def combined_stream_url(symbols: list[str], timeframe: str, testnet: bool) -> str:
         streams = '/'.join(f"{s.lower()}@kline_{timeframe}" for s in symbols)

@@ -65,6 +65,46 @@ class SymbolRegistry:
     def subscribe(self, callback: Callable[[Event, str], None]) -> None:
         self._subscribers.append(callback)
 
+    def is_disabled(self, symbol: str) -> bool:
+        return symbol in self._disabled
+
+    def disable(self, symbol: str, reason: str) -> None:
+        with self._lock:
+            self._disabled[symbol] = {
+                "reason": reason,
+                "disabled_at": datetime.now(timezone.utc).isoformat(),
+            }
+            lost_weight = self._weights.get(symbol, 0.0)
+            self._weights[symbol] = 0.0
+            active = [
+                s for s in self._weights
+                if s != symbol and self._weights[s] > 0 and not self.is_disabled(s)
+            ]
+            if active:
+                per_symbol = lost_weight / len(active)
+                for s in active:
+                    self._weights[s] += per_symbol
+            self._persist()
+
+    def reenable(self, symbol: str) -> None:
+        with self._lock:
+            self._disabled.pop(symbol, None)
+            active = [s for s in self._symbols if not self.is_disabled(s)]
+            if active:
+                per = 1.0 / len(active)
+                for s in active:
+                    self._weights[s] = per
+            self._persist()
+
+    def get_weight(self, symbol: str) -> float:
+        return self._weights.get(symbol, 0.0)
+
+    def get_disabled(self) -> dict:
+        return dict(self._disabled)
+
+    def all_disabled(self) -> bool:
+        return len(self._symbols) > 0 and all(self.is_disabled(s) for s in self._symbols)
+
     # ── internal ────────────────────────────────────────────────────────
 
     def _load(self, seed: list[str]) -> None:
@@ -73,6 +113,8 @@ class SymbolRegistry:
                 data = json.loads(self._path.read_text())
                 self._symbols = [s.upper() for s in data.get('symbols', seed)]
                 self._status = data.get('status', {})
+                self._weights = data.get('weights', {})
+                self._disabled = data.get('disabled', {})
                 logger.info(
                     f"SymbolRegistry: loaded {len(self._symbols)} symbol(s) from {self._path}"
                 )
@@ -84,6 +126,8 @@ class SymbolRegistry:
                 )
         self._symbols = [s.upper() for s in seed]
         self._status = {s: {'backtest': 'none', 'pid': None} for s in self._symbols}
+        self._weights = {s: 1.0 / len(self._symbols) for s in self._symbols} if self._symbols else {}
+        self._disabled: dict[str, dict] = {}
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
@@ -92,6 +136,8 @@ class SymbolRegistry:
             'symbols': self._symbols,
             'updated_at': datetime.now(timezone.utc).isoformat(),
             'status': self._status,
+            'weights': self._weights,
+            'disabled': self._disabled,
         }
         self._path.write_text(json.dumps(data, indent=2))
 

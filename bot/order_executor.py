@@ -486,6 +486,8 @@ class OrderExecutor:
     async def _auto_disable(self, symbol: str, reason: str) -> None:
         """Disable symbol, close any open order, notify. Exit if all symbols are now disabled."""
         logger.error(f"Auto-disabling {symbol}: {reason}")
+        await self.close_order(symbol)
+        self._notifier.notify("emergency", f"Symbol {symbol} disabled", reason, "order_executor")
         if self._symbol_registry is not None:
             self._symbol_registry.disable(symbol, reason)
             if self._symbol_registry.all_disabled():
@@ -496,8 +498,6 @@ class OrderExecutor:
                     "order_executor",
                 )
                 sys.exit(1)
-        await self.close_order(symbol)
-        self._notifier.notify("emergency", f"Symbol {symbol} disabled", reason, "order_executor")
 
     # ------------------------------------------------------------------ #
     # LOT_SIZE helpers                                                     #
@@ -586,17 +586,17 @@ class OrderExecutor:
         return (order.entry_price - close_price) * order.quantity
 
     def _record_failure(self, symbol: str) -> bool:
-        """Increment failure counter. Returns True if consecutive threshold is reached."""
+        """Increment failure counter. Returns True when consecutive threshold is reached or exceeded."""
         self._failure_counts[symbol] = self._failure_counts.get(symbol, 0) + 1
-        reached = self._failure_counts[symbol] >= self._consecutive_failure_threshold
-        if reached:
+        count = self._failure_counts[symbol]
+        if count == self._consecutive_failure_threshold:
             self._notifier.notify(
                 "emergency",
                 f"Order placement threshold reached: {symbol}",
-                f"{self._failure_counts[symbol]} consecutive failures",
+                f"{count} consecutive failures",
                 "order_executor",
             )
-        return reached
+        return count >= self._consecutive_failure_threshold
 
     def _record_success(self, symbol: str) -> None:
         self._failure_counts[symbol] = 0

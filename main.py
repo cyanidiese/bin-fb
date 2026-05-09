@@ -52,9 +52,9 @@ def _write_bot_state(running: bool, mode: str, started_at: str,
     tmp.replace(_BOT_STATE_PATH)
 
 
-async def _heartbeat_loop(mode: str, started_at: str) -> None:
+async def _heartbeat_loop(mode_manager: ModeManager, started_at: str) -> None:
     while True:
-        _write_bot_state(True, mode, started_at)
+        _write_bot_state(True, mode_manager.current_mode, started_at)
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
 
@@ -153,6 +153,7 @@ async def run() -> None:
         nonlocal virtual_tracker
         await order_executor.close_all_orders_at_market()
         order_executor.reset_for_mode_switch(target_mode)
+        risk_manager.reset_for_mode_switch(target_mode)
         settings_new = load_settings()
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
         bt_result = await asyncio.to_thread(
@@ -292,7 +293,7 @@ async def run() -> None:
     _poll_task = asyncio.create_task(
         mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
     )
-    _hb_task = asyncio.create_task(_heartbeat_loop(current_mode, started_at))
+    _hb_task = asyncio.create_task(_heartbeat_loop(mode_manager, started_at))
     try:
         await feed.stream_klines(
             settings.symbol,

@@ -170,6 +170,13 @@ class RiskManager:
             logger.info("RiskManager: hard stop reset by user")
             self.notify("hard_stop_reset", {"balance": self._balance})
 
+    def reset_for_mode_switch(self, new_mode: str) -> None:
+        """Update mode after a live/test switch and refresh the state snapshot."""
+        with self._lock:
+            self._mode = new_mode
+            self._write_snapshot()
+        logger.info(f"RiskManager mode updated to {new_mode}")
+
     def snapshot(self) -> dict:
         """Full state dump written to risk_state.json."""
         with self._lock:

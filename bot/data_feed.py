@@ -134,10 +134,10 @@ class DataFeed:
         Calls `on_candle_close(kline)` when a candle closes (kline[x] == True).
         Reconnects with exponential backoff on failure.
         """
-        url = f"{self._ws_base}/{symbol.lower()}@kline_{timeframe}"
         backoff = 1
 
         while True:
+            url = f"{self._ws_base}/{symbol.lower()}@kline_{timeframe}"
             try:
                 async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
                     logger.info(f"WebSocket connected: {url}")

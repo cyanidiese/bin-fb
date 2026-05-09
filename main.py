@@ -114,7 +114,7 @@ async def run() -> None:
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         _write_pid()
-        _write_bot_state(running=True, mode=settings.trading_mode, started_at=started_at)
+        _write_bot_state(running=True, mode=current_mode, started_at=started_at)
     except Exception as exc:
         logger.warning(f"Failed to write bot state files: {exc}")
     symbols = [settings.symbol]
@@ -239,7 +239,7 @@ async def run() -> None:
     _poll_task = asyncio.create_task(
         mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
     )
-    _hb_task = asyncio.create_task(_heartbeat_loop(settings.trading_mode, started_at))
+    _hb_task = asyncio.create_task(_heartbeat_loop(current_mode, started_at))
     try:
         await feed.stream_klines(
             settings.symbol,

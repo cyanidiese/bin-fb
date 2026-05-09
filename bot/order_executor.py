@@ -68,9 +68,9 @@ class OrderExecutor:
         for symbol, order in self._open_orders.items():
             price = current_prices.get(symbol, order.entry_price)
             if order.side == 'BUY':
-                pnl = (price - order.entry_price) / order.entry_price * 100 * order.quantity * order.entry_price
+                pnl = (price - order.entry_price) * order.quantity
             else:
-                pnl = (order.entry_price - price) / order.entry_price * 100 * order.quantity * order.entry_price
+                pnl = (order.entry_price - price) * order.quantity
             total += pnl
         return total
 

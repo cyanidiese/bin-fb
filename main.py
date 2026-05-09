@@ -22,6 +22,7 @@ from bot.notifier import Notifier
 from bot.order_executor import OrderExecutor, OrderState
 from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
+from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
 from config.risk_config import load_risk_config
 
@@ -146,12 +147,21 @@ async def run() -> None:
         risk_manager=risk_manager,
         notifier=notifier,
         symbol_registry=symbol_registry,
+        project_root=_PROJECT_ROOT,
     )
 
     virtual_tracker = VirtualTracker(
         mode=current_mode,
         orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{current_mode}.json",
         efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{current_mode}.json",
+    )
+
+    all_presets = {**LOCKED_PRESETS, **PRESETS}
+    virtual_order_simulator = VirtualOrderSimulator(
+        mode=current_mode,
+        all_presets=all_presets,
+        project_root=_PROJECT_ROOT,
+        risk_manager=risk_manager,
     )
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -240,6 +250,12 @@ async def run() -> None:
         if quantity <= 0:
             return
 
+        # If best preset changed since last order, verify exchange has no open position
+        if order_executor._last_opened_preset.get(symbol) != preset_name:
+            await order_executor.check_symbols_on_exchange([symbol])
+            if order_executor.get_state(symbol) != OrderState.IDLE:
+                return
+
         await order_executor.place_order(
             symbol=symbol,
             preset_name=preset_name or 'default',
@@ -288,6 +304,13 @@ async def run() -> None:
         if best is not None and order_executor.get_state(symbol) == OrderState.IDLE:
             await _try_place_order(symbol, best, settings)
 
+        await virtual_order_simulator.on_candle_close(
+            symbol=symbol,
+            analyzer=analyzer,
+            best_preset_name=virtual_tracker.best_preset(symbol),
+            base_settings=settings,
+        )
+
         export(
             symbol, timeframe, mode_manager.current_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
@@ -307,9 +330,14 @@ async def run() -> None:
         for c in closed:
             virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
 
+        virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
+        for vc in virtual_closed:
+            virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
+
     async def on_switch_mode(target_mode: str) -> None:
-        nonlocal virtual_tracker
+        nonlocal virtual_tracker, virtual_order_simulator
         current_symbols = symbol_registry.get_symbols()
+        await virtual_order_simulator.close_all_open(current_symbols, feed)
         await order_executor.close_all_orders_at_market()
         order_executor.reset_for_mode_switch(target_mode)
         risk_manager.reset_for_mode_switch(target_mode)
@@ -341,9 +369,17 @@ async def run() -> None:
         for sym in current_symbols:
             bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
             virtual_tracker.seed_from_backtest(sym, bt_path)
+        virtual_order_simulator = VirtualOrderSimulator(
+            mode=target_mode,
+            all_presets=all_presets,
+            project_root=_PROJECT_ROOT,
+            risk_manager=risk_manager,
+        )
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 
     async def on_stop_bot() -> None:
+        current_symbols = symbol_registry.get_symbols()
+        await virtual_order_simulator.close_all_open(current_symbols, feed)
         await order_executor.close_all_orders_at_market()
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)

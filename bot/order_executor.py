@@ -66,6 +66,7 @@ class OrderExecutor:
         self._placing_locks: dict[str, asyncio.Lock] = {}
         self._failure_counts: dict[str, int] = {}
         self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty, min_notional}}
+        self._bracket_max: dict[str, int] = {}  # symbol → max leverage from first bracket
         self._candle_index: int = 0  # incremented on each check_all_orders call
 
         cfg = load_risk_config()
@@ -426,6 +427,30 @@ class OrderExecutor:
         """Get the minimum notional value (price × quantity) for a symbol."""
         lot = await self._ensure_lot_size(symbol)
         return lot.get('min_notional', 0.0)
+
+    def get_bracket_max(self, symbol: str) -> int:
+        """Get the maximum leverage allowed for a symbol from cached brackets. Defaults to 20."""
+        return self._bracket_max.get(symbol, 20)
+
+    async def fetch_leverage_brackets(self, symbols: list[str]) -> None:
+        """
+        Fetch leverage brackets for each symbol from the exchange and cache the max leverage.
+        Processes symbols individually to ensure one failure doesn't block the rest.
+        """
+        if self._feed is None:
+            return
+        for symbol in symbols:
+            try:
+                result = await asyncio.to_thread(
+                    self._feed.client.futures_leverage_bracket,
+                    symbol=symbol,
+                )
+                if result:
+                    brackets = result[0].get('brackets', [])
+                    if brackets:
+                        self._bracket_max[symbol] = int(brackets[0]['initialLeverage'])
+            except Exception as exc:
+                logger.warning(f"[{symbol}] Failed to fetch leverage bracket: {exc}")
 
     async def round_quantity(self, symbol: str, quantity: float) -> float:
         """Round quantity DOWN to the symbol's LOT_SIZE step, respecting minQty."""

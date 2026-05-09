@@ -268,3 +268,24 @@ async def test_get_min_notional_defaults_zero_when_missing():
     # no min_notional key in cache
     notional = await ex.get_min_notional('BTCUSDT')
     assert notional == pytest.approx(0.0)
+
+
+# --- leverage brackets ---
+
+@pytest.mark.asyncio
+async def test_fetch_leverage_brackets_caches_max():
+    ex = make_executor(with_feed=True)
+    ex._feed.client.futures_leverage_bracket = MagicMock(return_value=[{
+        'symbol': 'BTCUSDT',
+        'brackets': [
+            {'bracket': 1, 'initialLeverage': 125},
+            {'bracket': 2, 'initialLeverage': 100},
+        ]
+    }])
+    await ex.fetch_leverage_brackets(['BTCUSDT'])
+    assert ex.get_bracket_max('BTCUSDT') == 125
+
+
+def test_get_bracket_max_defaults_to_20_when_unknown():
+    ex = make_executor()
+    assert ex.get_bracket_max('UNKNOWNUSDT') == 20

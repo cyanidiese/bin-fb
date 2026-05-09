@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from enum import Enum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 from config.settings import Settings
@@ -55,6 +58,7 @@ class OpenOrder:
     partial_take_pct: float = 0.0
     trailing_stop_pct: float = 0.0
     exchange_order_id: str | None = None
+    open_time: str | None = None
 
 
 class OrderExecutor:
@@ -68,6 +72,7 @@ class OrderExecutor:
         notifier: Notifier,
         data_feed: 'DataFeed | None' = None,
         symbol_registry: 'SymbolRegistry | None' = None,
+        project_root: 'Path | None' = None,
     ) -> None:
         self._mode = mode
         self._settings = settings
@@ -75,6 +80,8 @@ class OrderExecutor:
         self._notifier = notifier
         self._feed = data_feed
         self._symbol_registry = symbol_registry
+        self._project_root = project_root
+        self._last_opened_preset: dict[str, str] = {}
 
         self._states: dict[str, OrderState] = {}
         self._open_orders: dict[str, OpenOrder] = {}
@@ -160,6 +167,8 @@ class OrderExecutor:
                     trailing_stop_pct=trailing_stop_pct,
                 )
                 self._states[symbol] = OrderState.OPEN
+                self._open_orders[symbol].open_time = datetime.now(timezone.utc).isoformat()
+                self._last_opened_preset[symbol] = preset_name
                 self._record_success(symbol)
                 logger.info(
                     f"Order placed: {symbol} {side} qty={rounded_qty} "
@@ -223,6 +232,7 @@ class OrderExecutor:
                 actual_close_price = software_close_price
 
             pnl = self._calc_pnl(open_order, actual_close_price)
+            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
             closed.append({
                 "symbol": symbol,
                 "preset_name": open_order.preset_name,
@@ -266,6 +276,7 @@ class OrderExecutor:
             actual_close_price = software_close_price
 
         pnl = self._calc_pnl(open_order, actual_close_price)
+        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
         del self._open_orders[symbol]
         del self._fake_orders[symbol]
         self._states[symbol] = OrderState.IDLE
@@ -339,6 +350,46 @@ class OrderExecutor:
             self._open_orders.pop(symbol, None)
             self._fake_orders.pop(symbol, None)
             self._states[symbol] = OrderState.IDLE
+
+    # ------------------------------------------------------------------ #
+    # Real order recording                                                 #
+    # ------------------------------------------------------------------ #
+
+    def _record_real_order_close(
+        self,
+        symbol: str,
+        order: OpenOrder,
+        close_price: float,
+        result: str,
+        pnl_usdt: float,
+    ) -> None:
+        if self._project_root is None:
+            return
+        path: Path = self._project_root / 'data' / f'real_orders_{symbol}_{self._mode}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        records: list = []
+        if path.exists():
+            try:
+                records = json.loads(path.read_text())
+            except Exception:
+                records = []
+        records.append({
+            'preset_name': order.preset_name,
+            'side': order.side,
+            'entry_price': order.entry_price,
+            'close_price': close_price,
+            'tp': order.tp_price,
+            'sl': order.sl_price,
+            'quantity': order.quantity,
+            'leverage': order.leverage,
+            'open_time': getattr(order, 'open_time', None),
+            'close_time': datetime.now(timezone.utc).isoformat(),
+            'pnl_usdt': pnl_usdt,
+            'result': result,
+        })
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(records))
+        tmp.replace(path)
 
     # ------------------------------------------------------------------ #
     # Exchange integration                                                 #

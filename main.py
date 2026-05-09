@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import logging
 import logging.handlers
@@ -8,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backtest import PRESETS, LOCKED_PRESETS
 from config.settings import load_settings
 from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
@@ -16,7 +18,7 @@ from bot import display
 from bot.exporter import export, write_symbols_json
 from bot.mode_manager import ModeManager
 from bot.notifier import Notifier
-from bot.order_executor import OrderExecutor
+from bot.order_executor import OrderExecutor, OrderState
 from bot.virtual_tracker import VirtualTracker
 from bot.risk_manager import RiskManager
 from config.risk_config import load_risk_config
@@ -142,12 +144,15 @@ async def run() -> None:
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
     notifier.notify("info", "Startup sequence complete", f"{len(symbols)} symbol(s) active", "main")
+    await order_executor.reconcile_with_exchange()
 
     feed = DataFeed(settings)
+    order_executor._feed = feed
 
     async def on_switch_mode(target_mode: str) -> None:
         nonlocal virtual_tracker
         await order_executor.close_all_orders_at_market()
+        order_executor.reset_for_mode_switch(target_mode)
         settings_new = load_settings()
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
         bt_result = await asyncio.to_thread(
@@ -208,6 +213,54 @@ async def run() -> None:
         except Exception as e:
             logger.warning(f"Kline refresh failed — cache not updated: {e}")
         best = analyzer.get_best_recommendation()
+
+        # Check software TP/SL/trailing on all open orders
+        high = float(kline[2])
+        low = float(kline[3])
+        candle_open = float(kline[1])
+        candle_close_price = float(kline[4])
+        closed_orders = await order_executor.check_all_orders(high, low, candle_open, candle_close_price)
+        for c in closed_orders:
+            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+
+        # Update risk manager balance from exchange
+        try:
+            balance = await order_executor.fetch_account_balance()
+            if balance > 0:
+                risk_manager.update_balance(balance)
+        except Exception as exc:
+            logger.warning(f"Balance fetch failed: {exc}")
+
+        # Signal → order placement
+        if best is not None and order_executor.get_state(settings.symbol) == OrderState.IDLE:
+            preset_name = virtual_tracker.best_preset(settings.symbol)
+            all_presets = {**LOCKED_PRESETS, **PRESETS}
+            overrides = all_presets.get(preset_name or 'default', {})
+            preset_settings = dataclasses.replace(settings, **overrides)
+
+            allocation = risk_manager.get_allocation(settings.symbol)
+            leverage = risk_manager.get_leverage(settings.symbol)
+            entry = best.getEntryPrice()
+            quantity = (allocation * leverage / entry) if entry > 0 else 0.0
+
+            allowed, reason = risk_manager.can_open_sync(settings.symbol, allocation)
+            if allowed and quantity > 0:
+                await order_executor.place_order(
+                    symbol=settings.symbol,
+                    preset_name=preset_name or 'default',
+                    side=best.getSide(),
+                    entry=entry,
+                    tp=best.getTarget(),
+                    sl=best.getStop() or 0.0,
+                    quantity=quantity,
+                    leverage=leverage,
+                    partial_take_pct=preset_settings.partial_take_pct,
+                    trailing_stop_pct=preset_settings.trailing_stop_pct,
+                    level=best.getLevel(),
+                    signal_type=best.getType().value,
+                )
+            elif not allowed:
+                logger.info(f"Order skipped: {reason}")
 
         candle_close_time = int(kline[6]) // 1000
         display.show(settings, analyzer.get_trend(), analyzer.get_current_price(), recs, candle_close_time)

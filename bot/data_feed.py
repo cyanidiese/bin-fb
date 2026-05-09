@@ -246,6 +246,86 @@ class DataFeed:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
 
+    async def start_watchdog(
+        self,
+        get_symbols: Callable[[], list[str]],
+        timeframe: str,
+        on_candle_close: Callable[[str, list], Awaitable[None]],
+        on_price_update: Callable[[str, float], Awaitable[None]],
+        stale_threshold_s: float = 15.0,
+    ) -> None:
+        """
+        Background REST fallback for stale price/candle data.
+        Initialises timestamps so the stream gets a grace period before any fallback fires.
+        """
+        now = time.monotonic()
+        for symbol in get_symbols():
+            self._last_price_ts.setdefault(symbol, now)
+            self._last_candle_ts.setdefault(symbol, now)
+
+        timeframe_s = self._timeframe_to_ms(timeframe) / 1000.0
+        candle_tick = 0
+        CANDLE_EVERY = 6  # 6 × 5s = 30s
+
+        while True:
+            try:
+                await asyncio.sleep(5)
+                now = time.monotonic()
+                now_ms = int(time.time() * 1000)
+                symbols = get_symbols()
+
+                # Price watchdog: check every 5s
+                for symbol in symbols:
+                    if now - self._last_price_ts.get(symbol, now) > stale_threshold_s:
+                        try:
+                            ticker = await asyncio.to_thread(
+                                self._client.futures_symbol_ticker, symbol=symbol
+                            )
+                            price = float(ticker.get("price", 0))
+                            if price > 0:
+                                self._last_price_ts[symbol] = now
+                                await on_price_update(symbol, price)
+                        except Exception as exc:
+                            logger.warning(f"[{symbol}] Price watchdog fetch failed: {exc}")
+
+                candle_tick += 1
+                if candle_tick < CANDLE_EVERY:
+                    continue
+                candle_tick = 0
+
+                # Candle watchdog: check every 30s
+                for symbol in symbols:
+                    if now - self._last_candle_ts.get(symbol, now) <= 1.5 * timeframe_s:
+                        continue
+                    try:
+                        klines = await asyncio.to_thread(
+                            self._client.futures_klines,
+                            symbol=symbol, interval=timeframe, limit=3,
+                        )
+                        for kline in reversed(klines):
+                            if int(kline[6]) < now_ms:
+                                open_time = int(kline[0])
+                                if open_time > self._last_candle_open.get(symbol, -1):
+                                    self._last_candle_open[symbol] = open_time
+                                    self._last_candle_ts[symbol] = now
+                                    candle = [
+                                        int(kline[0]), kline[1], kline[2], kline[3],
+                                        kline[4], kline[5], int(kline[6]),
+                                    ]
+                                    try:
+                                        await on_candle_close(symbol, candle)
+                                    except Exception as exc:
+                                        logger.warning(f"[{symbol}] Watchdog candle error: {exc}")
+                                break
+                    except Exception as exc:
+                        logger.warning(f"[{symbol}] Candle watchdog fetch failed: {exc}")
+
+            except asyncio.CancelledError:
+                logger.info("Watchdog cancelled")
+                return
+            except Exception as exc:
+                logger.warning(f"Watchdog outer error: {exc}")
+
     # ------------------------------------------------------------------ #
     # Cache helpers                                                        #
     # ------------------------------------------------------------------ #

@@ -8,7 +8,10 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from bot.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +34,18 @@ class RiskManager:
 
     def __init__(
         self,
-        mode: Literal["backtest", "paper", "live"],
+        mode: Literal["backtest", "test", "live"],
         initial_balance: float = 1000.0,
         config_path: Path = _DEFAULT_CONFIG_PATH,
         state_path: Path = _DEFAULT_STATE_PATH,
         backtest_results_dir: Path = _DEFAULT_RESULTS_DIR,
+        notifier: Notifier | None = None,
     ) -> None:
         self._mode = mode
         self._config_path = config_path
         self._state_path = state_path
         self._results_dir = backtest_results_dir
+        self._notifier = notifier
 
         self._lock = threading.RLock()
 
@@ -55,6 +60,7 @@ class RiskManager:
 
         # {symbol: (score: float, timestamp: float, true_pf: float)}
         self._perf_cache: dict[str, tuple[float, float, float]] = {}
+        self._pending_min_balance_notify: tuple | None = None
 
         logger.info(
             f"RiskManager({mode}) — balance={initial_balance:.2f} USDT "
@@ -68,14 +74,29 @@ class RiskManager:
     def update_balance(self, balance: float) -> None:
         """Record new balance and check drawdown thresholds."""
         pending: tuple | None = None
+        min_balance_notify: tuple | None = None
         with self._lock:
             self._balance = balance
             if balance > self._peak_balance:
                 self._peak_balance = balance
             pending = self._check_drawdown()
+
+            # Check minimum balance floor
+            cfg = self._load_config()
+            min_balance = cfg.get("min_balance_usdt", 0.0)
+            if min_balance > 0 and self._balance < min_balance:
+                min_balance_notify = (
+                    "emergency",
+                    f"Balance below floor: {self._balance:.2f} USDT (floor: {min_balance:.2f})",
+                    "risk_manager",
+                )
+
             self._write_snapshot()
         if pending:
             self.notify(*pending)
+        if min_balance_notify and self._notifier:
+            level, title, source = min_balance_notify
+            self._notifier.notify(level, title, "", source)
 
     def can_open_sync(
         self, symbol: str, estimated_size_usdt: float = 0.0

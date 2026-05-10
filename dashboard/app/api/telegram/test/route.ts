@@ -1,33 +1,42 @@
 import { NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
 import { BOT_ROOT } from '../../_utils'
 import path from 'path'
 import fs from 'fs'
 
-const COMMAND_PATH = path.join(BOT_ROOT, 'data', 'bot_command.json')
-const RESULT_PATH = path.join(BOT_ROOT, 'data', 'bot_command_result.json')
+const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
 
 export async function POST() {
-  const id = randomUUID()
+  // Read token + chat_id directly from saved config — no bot process needed
+  let token = ''
+  let chatId = ''
   try {
-    const tmp = COMMAND_PATH + '.tmp'
-    fs.mkdirSync(path.dirname(COMMAND_PATH), { recursive: true })
-    fs.writeFileSync(tmp, JSON.stringify({
-      id, type: 'test_telegram', payload: {}, issued_at: new Date().toISOString(),
-    }))
-    fs.renameSync(tmp, COMMAND_PATH)
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: `Failed to write command: ${err}` }, { status: 500 })
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    token = cfg?.telegram?.token ?? ''
+    chatId = String(cfg?.telegram?.chat_id ?? '')
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Could not read risk_config.json' }, { status: 500 })
   }
 
-  const deadline = Date.now() + 15_000
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 500))
-    if (!fs.existsSync(RESULT_PATH)) continue
-    try {
-      const result = JSON.parse(fs.readFileSync(RESULT_PATH, 'utf8'))
-      if (result.id === id) return NextResponse.json(result)
-    } catch {}
+  if (!token || !chatId) {
+    return NextResponse.json(
+      { ok: false, error: 'Telegram token or chat ID not configured. Save them in Settings first.' },
+      { status: 400 },
+    )
   }
-  return NextResponse.json({ ok: false, error: 'Bot not responding (is it running?)' }, { status: 504 })
+
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: '✅ Test notification from your trading bot dashboard.' }),
+    })
+    const data = await res.json()
+    if (!res.ok || !data.ok) {
+      return NextResponse.json({ ok: false, error: data.description ?? 'Telegram API error' }, { status: 502 })
+    }
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 502 })
+  }
 }

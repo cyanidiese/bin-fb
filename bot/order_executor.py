@@ -59,6 +59,9 @@ class OpenOrder:
     trailing_stop_pct: float = 0.0
     exchange_order_id: str | None = None
     open_time: str | None = None
+    balance_at_open: float = 0.0
+    signal_level: int = 0
+    precision_score: float = 0.0
 
 
 class OrderExecutor:
@@ -134,6 +137,9 @@ class OrderExecutor:
         trailing_stop_pct: float = 0.0,
         level: Optional[int] = None,
         signal_type: str = '',
+        balance_at_open: float = 0.0,
+        signal_level: int = 0,
+        precision_score: float = 0.0,
     ) -> bool:
         lock = self._get_placing_lock(symbol)
         async with lock:
@@ -153,6 +159,9 @@ class OrderExecutor:
                     partial_take_pct=partial_take_pct,
                     trailing_stop_pct=trailing_stop_pct,
                     exchange_order_id=order_id,
+                    balance_at_open=balance_at_open,
+                    signal_level=signal_level,
+                    precision_score=precision_score,
                 )
                 # Create software FakeOrder for trailing stop / TP / SL monitoring
                 self._fake_orders[symbol] = FakeOrder(
@@ -241,6 +250,7 @@ class OrderExecutor:
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
                 "close_price": actual_close_price,
+                "leverage": open_order.leverage,
             })
             del self._open_orders[symbol]
             del self._fake_orders[symbol]
@@ -293,6 +303,7 @@ class OrderExecutor:
             "side": open_order.side,
             "entry_price": open_order.entry_price,
             "close_price": actual_close_price,
+            "leverage": open_order.leverage,
         }]
 
     # ------------------------------------------------------------------ #
@@ -386,6 +397,9 @@ class OrderExecutor:
             'close_time': datetime.now(timezone.utc).isoformat(),
             'pnl_usdt': pnl_usdt,
             'result': result,
+            'balance_at_open': order.balance_at_open,
+            'signal_level': order.signal_level,
+            'precision_score': order.precision_score,
         })
         if len(records) > 1000:
             records = records[-1000:]

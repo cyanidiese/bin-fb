@@ -80,13 +80,15 @@ class RiskManager:
                 self._peak_balance = balance
             pending = self._check_drawdown()
 
-            # Check minimum balance floor
+            # Check absolute floor: alert if balance drops below min_balance_pct of peak
             cfg = self._load_config()
-            min_balance = cfg.get("min_balance_usdt", 0.0)
-            if min_balance > 0 and self._balance < min_balance:
+            min_pct = cfg.get("min_balance_pct", 0.0)
+            floor = self._peak_balance * (min_pct / 100.0) if min_pct > 0 else 0.0
+            if floor > 0 and self._balance < floor:
                 min_balance_notify = (
                     "emergency",
-                    f"Balance below floor: {self._balance:.2f} USDT (floor: {min_balance:.2f})",
+                    f"Balance below reserve floor: {self._balance:.2f} USDT "
+                    f"(floor: {floor:.2f} = {min_pct:.0f}% of peak {self._peak_balance:.2f})",
                     "risk_manager",
                 )
 
@@ -199,8 +201,11 @@ class RiskManager:
         if total_w == 0:
             total_w = 1.0
         tier = self._get_tier(cfg)
-        deployable = self._balance * tier["max_deploy_pct"] / 100.0
-        return deployable * (w_sym / total_w)
+        # Reserve min_balance_pct% of balance as untouchable capital
+        min_pct = cfg.get("min_balance_pct", 0.0)
+        reserve = self._balance * (min_pct / 100.0) if min_pct > 0 else 0.0
+        deployable_pool = max(0.0, self._balance - reserve) * tier["max_deploy_pct"] / 100.0
+        return deployable_pool * (w_sym / total_w)
 
     def _calc_leverage(self, symbol: str, cfg: dict) -> int:
         tier = self._get_tier(cfg)

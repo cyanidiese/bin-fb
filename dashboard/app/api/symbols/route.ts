@@ -4,6 +4,16 @@ import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from './_registry'
 
+const MODE_PATH = path.join(BOT_ROOT, 'data', 'bot_mode.json')
+
+function readCurrentMode(): string {
+  try {
+    return JSON.parse(fs.readFileSync(MODE_PATH, 'utf8')).mode ?? 'test'
+  } catch {
+    return 'test'
+  }
+}
+
 function getPython(): string {
   const venvPy = path.join(BOT_ROOT, '.venv', 'bin', 'python3')
   return fs.existsSync(venvPy) ? venvPy : 'python3'
@@ -18,7 +28,7 @@ const PUBLIC_DIR = path.join(BOT_ROOT, 'dashboard', 'public')
  */
 async function writePlaceholderResults(symbol: string): Promise<void> {
   // Inherit mode + timeframe from an existing results file if one is present.
-  let mode = 'testnet'
+  let mode = 'test'
   let timeframe = '15m'
   try {
     const existing = fs.readdirSync(PUBLIC_DIR).find(f => f.startsWith('results_') && f.endsWith('.json') && !f.includes(symbol))
@@ -113,9 +123,10 @@ export async function POST(req: NextRequest) {
 
   // Spawn backtest subprocess in the background — do NOT await it.
   const python = getPython()
+  const mode = readCurrentMode()
   const child = spawn(
     python,
-    ['backtest.py', '--symbols', symbol, '--klines-count', String(klinesCount)],
+    ['backtest.py', '--symbols', symbol, '--klines-count', String(klinesCount), '--mode', mode],
     { cwd: BOT_ROOT, detached: false, stdio: 'ignore' },
   )
 

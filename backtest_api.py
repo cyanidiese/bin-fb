@@ -52,7 +52,7 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         symbol = os.getenv('SYMBOL', 'BTCUSDT').upper()
     timeframe = os.getenv('TIMEFRAME', '15m')
     return Settings(
-        trading_mode='testnet',
+        trading_mode='test',
         api_key='',
         api_secret='',
         symbol=symbol,

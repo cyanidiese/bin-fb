@@ -19,14 +19,18 @@
   "base_leverage": 2,
   "max_leverage": 10,
   "min_profit_factor": 1.2,
-  "drawdown_warning_pct": 10.0,
-  "drawdown_hard_stop_pct": 20.0,
-  "backtest_initial_balance_usdt": 1000.0,
+  "drawdown_warning_pct": 10,
+  "drawdown_hard_stop_pct": 20,
+  "backtest_initial_balance_usdt": 1000,
   "symbol_weights": {
     "BTCUSDT": 1,
     "XAUUSDT": 1,
     "ETHUSDT": 1,
     "SOLUSDT": 1,
     "BNBUSDT": 1
+  },
+  "telegram": {
+    "token": "8679317265:AAEZL2fgWmbyjWe07ZgOWjckW_X3a0tTkAA",
+    "chat_id": "420138767"
   }
 }

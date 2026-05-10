@@ -79,6 +79,20 @@ class VirtualOrderSimulator:
         }))
         tmp.replace(self._balance_path)
 
+    def apply_real_balance_if_fresh(self, balance: float) -> None:
+        """Seed virtual balance from real account balance on first start for this mode."""
+        if not self._balance_path.exists() and balance > 0:
+            self._virtual_balance = balance
+            self._save_virtual_balance()
+            logger.info(f"Virtual balance seeded from real account: {balance:.2f} USDT")
+
+    def record_real_pnl(self, pnl: float) -> None:
+        """Apply a real order close P&L to the shared virtual balance pool."""
+        if pnl == 0.0:
+            return
+        self._virtual_balance += pnl
+        self._save_virtual_balance()
+
     async def on_candle_close(
         self,
         symbol: str,

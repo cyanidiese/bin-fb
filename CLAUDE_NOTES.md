@@ -4,27 +4,32 @@
 
 ---
 
-## ⟳ RESUME POINT — session 14 ended here (2026-05-10)
+## ⟳ RESUME POINT — session 15 ended here (2026-05-11)
 
-**Branch**: `feature/test-live-preparation` (not merged to main yet — kept as-is by user)
+**Branch**: `feature/test-live-preparation` (not merged to main yet — user deferred)
 
 **What was completed this session:**
-- Implemented Phase 3.10 — Balance & Leverage Progression (9 tasks via subagent-driven dev, all passing 127 tests)
+1. Virtual balance now seeds from real account balance at mode start (not hardcoded 10k)
+2. Real order P&L now flows into virtual balance on each close (`record_real_pnl`)
+3. Mode-switch also seeds new-mode virtual balance from current real balance
+4. SL stop-market order placed on exchange after every real order open (crash protection)
+5. SL order cancelled before any software-triggered market close (avoid double-close)
+6. ALL close paths now persist to `real_orders_{symbol}_{mode}.json` — bulk close and single close were missing before
+7. TODO and CLAUDE_NOTES updated: many items were marked pending but were already implemented
 
-**Phase 3.10 — all 9 tasks DONE:**
-1. `bot/virtual_tracker.py` — added `get_efficiency_score(symbol)` + `get_preset_efficiency(symbol, preset_name)`
-2. `bot/leverage_tracker.py` — new `LeverageTracker` class with graduated level advancement + persistence
-3. `bot/balance_history.py` + `bot/decision_log.py` — append-only event loggers (atomic write, cap at 10k/5k)
-4. `config/risk_config.py` + `bot/risk_manager.py` — added `max_leverage_level`/`use_allocation_weighting` defaults; simplified `can_open_sync(symbol)` — removed `estimated_size_usdt` and allocation checks
-5. `bot/order_executor.py` — added `balance_at_open`, `signal_level`, `precision_score` to `OpenOrder` + records; added `leverage` to close result dicts
-6. `bot/virtual_order_simulator.py` — rewrote: removed `risk_manager`, added virtual balance pool + `leverage_tracker` + preset-efficiency sorting; persists `virtual_balance_{mode}.json`
-7. `main.py` — efficiency-ranked cross-symbol order loop; `_get_fresh_balance()` 5s TTL; wired `LeverageTracker`, `bh_record`, `dl_record`; real min_notionals fetched from exchange at startup
-8. `dashboard/app/api/balance-history/route.ts` — new `GET /api/balance-history?mode=&limit=`
-9. `dashboard/app/api/risk/route.ts` + `dashboard/app/risk/page.tsx` — added `max_leverage_level` input + `use_allocation_weighting` checkbox
+**Key discovery: many "pending" items were already implemented:**
+- `_submit_to_exchange()` + `_market_close()` — fully wired to Binance Futures API (not stubs)
+- Combined WebSocket stream (`stream_combined`) — implemented and wired in main.py
+- Price feed fallback (`start_watchdog`) — implemented and wired in main.py
+- Kline gap detection — implemented in `refresh_klines` + `_merge`
+- Leverage bracket fetch — implemented in `fetch_leverage_brackets`
+- `seed_from_backtest` skip-if-exists — already present in virtual_tracker.py line 26
 
-**Immediate next action:** Merge `feature/test-live-preparation` into `main` (user deferred), then:
-- Re-evaluate all presets now that BUY/SELL signals fire correctly (session 10 bug fix)
-- Wire real Binance API calls into `order_executor._submit_to_exchange()` + `_market_close()`
+**Immediate next action:** Fix `.env` TRADING_MODE=testnet → TRADING_MODE=test, then attempt first testnet run
+
+**State for live mode:**
+- LIVE_API_KEY / LIVE_API_SECRET: MISSING from .env — cannot run live mode
+- Go-live checklist not yet completed
 
 **Key Phase 3.10 design decisions (all finalised, no open questions):**
 - Position size = `min_notional / current_leverage` (minimum viable margin, Option A)
@@ -911,7 +916,7 @@ Implementation plan to be written. Tasks:
 - **`bot/system_log.py`** — Rolling 100-entry JSON log writer. Atomic tmp→rename writes. `SystemLog(path)` with `write(level, title, body, source)`.
 - **`bot/notifier.py`** — `Notifier(log_path, alert_path, telegram_token, telegram_chat_id)`. Routes warning/emergency alerts to `alert_state.json`, logs all events to system log, sends Telegram if configured. Never raises. `send_test() -> (bool, str)`.
 - **`bot/mode_manager.py`** — `ModeManager(notifier=None)`. Persists mode to `data/bot_mode.json`. 2s command poll loop reads `data/bot_command.json`, dispatches `switch_mode`/`stop_bot`/`test_telegram` commands. `current_mode` attribute.
-- **`bot/order_executor.py`** — `OrderExecutor(mode, settings, risk_manager, notifier)`. Per-symbol asyncio.Lock. State machine: IDLE/PLACING/OPEN/PARTIAL_EXIT/CLOSED. `place_order()` and `close_all_orders_at_market()`. Exchange calls are stubs — must be wired to real Binance API.
+- **`bot/order_executor.py`** — `OrderExecutor(mode, settings, risk_manager, notifier)`. Per-symbol asyncio.Lock. State machine: IDLE/PLACING/OPEN/PARTIAL_EXIT/CLOSED. `place_order()`, `close_all_orders_at_market()`, `close_order()`. All exchange calls wired to real Binance Futures API. SL stop-market order placed after each open; cancelled before any software close.
 - **`bot/virtual_tracker.py`** — `VirtualTracker(mode, orders_path, efficiency_path)`. Seeds from backtest results. Tracks `total_winning_usdt` and `trade_count` per (symbol, preset). `best_preset(symbol)` requires ≥4 trades.
 - **`config/risk_config.py`** — Extended with new fields: `telegram`, `min_balance_usdt`, `consecutive_failure_threshold`, `test_starting_balance_usdt`, `max_leverage`, `price_stale_threshold_s`.
 

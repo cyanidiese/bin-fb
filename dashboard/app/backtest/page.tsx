@@ -18,9 +18,24 @@ import { useLocalStorage } from '@/lib/useLocalStorage'
 import CrossSymbolComparison from '@/components/CrossSymbolComparison'
 import { useSymbolContext } from '@/lib/SymbolContext'
 
+interface RiskConfig {
+  balance_tiers: Array<{ min_balance_usdt: number; max_deploy_pct: number; max_leverage_ceiling: number }>
+  base_leverage: number
+  max_leverage: number
+  min_balance_pct: number
+  symbol_weights: Record<string, number>
+}
+
+interface RiskStateSnapshot {
+  balance: number
+  per_symbol: Record<string, { allocation_usdt: number; leverage: number; performance_score: number }>
+}
+
 export default function BacktestPage() {
   const [data, setData] = useState<BacktestResults | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [riskConfig, setRiskConfig] = useState<RiskConfig | null>(null)
+  const [riskState, setRiskState] = useState<RiskStateSnapshot | null>(null)
   const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:backtest:selectedPreset', null)
   const [klinesCount, setKlinesCount] = useLocalStorage<number>('db:backtest:klinesCount', 1500)
   const [isRunning, setIsRunning] = useState(false)
@@ -40,6 +55,16 @@ export default function BacktestPage() {
   function patchSettingsFilter(key: string, patch: Partial<FilterState>) {
     setSettingsFilters(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
   }
+
+  useEffect(() => {
+    fetch('/api/risk')
+      .then(r => r.json())
+      .then(d => {
+        if (d.config) setRiskConfig(d.config)
+        if (d.state) setRiskState(d.state)
+      })
+      .catch(() => {})
+  }, [])
 
   async function handleToggleLock(name: string, action: 'lock' | 'unlock') {
     try {
@@ -344,7 +369,12 @@ export default function BacktestPage() {
 
       {availableSymbols.length > 1 && (
         <CollapsibleSection title="Cross-Symbol Comparison" storageKey="db:backtest:s:crosssymbol">
-          <CrossSymbolComparison symbols={availableSymbols} dataBySymbol={allSymbolData} />
+          <CrossSymbolComparison
+            symbols={availableSymbols}
+            dataBySymbol={allSymbolData}
+            riskConfig={riskConfig ?? undefined}
+            riskState={riskState ?? undefined}
+          />
         </CollapsibleSection>
       )}
     </main>

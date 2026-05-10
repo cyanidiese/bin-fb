@@ -4,10 +4,19 @@ import path from 'path'
 import fs from 'fs'
 
 const BOT_ROOT = path.resolve(process.cwd(), '..')
+const MODE_PATH = path.join(BOT_ROOT, 'data', 'bot_mode.json')
 
 function getPython(): string {
   const venvPy = path.join(BOT_ROOT, '.venv', 'bin', 'python3')
   return fs.existsSync(venvPy) ? venvPy : 'python3'
+}
+
+function readCurrentMode(): string {
+  try {
+    return JSON.parse(fs.readFileSync(MODE_PATH, 'utf8')).mode ?? 'test'
+  } catch {
+    return 'test'
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -26,9 +35,11 @@ export async function POST(req: NextRequest) {
   }
 
   const python = getPython()
+  const mode = readCurrentMode()
   const args = [
     'backtest.py',
     '--klines-count', String(klinesCount),
+    '--mode', mode,
     ...(symbol ? ['--symbols', symbol] : []),
   ]
 

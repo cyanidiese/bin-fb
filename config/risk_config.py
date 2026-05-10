@@ -22,8 +22,8 @@ DEFAULT_CONFIG: dict = {
     "symbol_weights": {},
     # Telegram alerting
     "telegram": {"token": "", "chat_id": ""},
-    # Emergency thresholds
-    "min_balance_usdt": 0.0,
+    # Emergency thresholds — keep 15% of balance untouched
+    "min_balance_pct": 15.0,
     "consecutive_failure_threshold": 3,
     # Test mode
     "test_starting_balance_usdt": 10000.0,

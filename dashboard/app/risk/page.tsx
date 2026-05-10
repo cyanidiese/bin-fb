@@ -22,6 +22,7 @@ interface RiskConfig {
   symbol_weights: Record<string, number>
   max_leverage_level: number
   use_allocation_weighting: boolean
+  min_balance_pct: number
 }
 
 interface PerSymbol {
@@ -424,6 +425,14 @@ export default function RiskPage() {
           D — Drawdown Guard
         </p>
         <div className={SECTION_BODY_CLS}>
+          <LabeledInput
+            label="Reserve floor %"
+            tooltip="Percentage of balance kept untouched at all times. The allocation engine subtracts this reserve before computing deployable capital. An emergency alert fires if balance drops below this % of the peak."
+            value={config.min_balance_pct ?? 15}
+            onChange={v => patchConfig({ min_balance_pct: Number(v) })}
+            min={0} max={50} step={1}
+          />
+
           <LabeledInput
             label="Warning threshold %"
             tooltip="When drawdown from peak balance exceeds this %, a warning banner appears and a risk event is logged. Resets automatically when balance recovers."

@@ -160,7 +160,7 @@ async def run() -> None:
         all_presets=all_presets,
         project_root=_PROJECT_ROOT,
         leverage_tracker=leverage_tracker,
-        initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
+        initial_balance=0.0,
         virtual_tracker=virtual_tracker,
         min_notionals=min_notionals,
     )
@@ -213,6 +213,7 @@ async def run() -> None:
     if startup_balance > 0:
         risk_manager.update_balance(startup_balance)
     bh_record(bh_path, balance=risk_manager.get_balance(), trigger='startup')
+    virtual_order_simulator.apply_real_balance_if_fresh(risk_manager.get_balance())
 
     # Kline bootstrap + initial export
     for symbol in symbols:
@@ -419,6 +420,7 @@ async def run() -> None:
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
+            virtual_order_simulator.record_real_pnl(c.get('pnl_usdt') or 0.0)
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         for vc in virtual_closed:
@@ -468,10 +470,14 @@ async def run() -> None:
             all_presets=all_presets,
             project_root=_PROJECT_ROOT,
             leverage_tracker=leverage_tracker,
-            initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
+            initial_balance=0.0,
             virtual_tracker=virtual_tracker,
             min_notionals=min_notionals,
         )
+        switch_balance = await order_executor.fetch_account_balance()
+        if switch_balance > 0:
+            risk_manager.update_balance(switch_balance)
+        virtual_order_simulator.apply_real_balance_if_fresh(risk_manager.get_balance())
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 
     async def on_stop_bot() -> None:

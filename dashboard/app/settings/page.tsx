@@ -61,6 +61,7 @@ export default function SettingsPage() {
   const [mode, setMode] = useState<string>('test')
   const [modeSwitching, setModeSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
+  const [backtestRefreshing, setBacktestRefreshing] = useState(false)
   const [telegram, setTelegram] = useState({ token: '', chat_id: '' })
   const [telegramStatus, setTelegramStatus] = useState<'idle'|'testing'|'ok'|'error'>('idle')
   const [telegramError, setTelegramError] = useState('')
@@ -78,9 +79,12 @@ export default function SettingsPage() {
 
   const handleSwitchMode = async () => {
     const target = mode === 'test' ? 'live' : 'test'
-    const msg = target === 'live'
-      ? 'Switch to LIVE mode? Real orders will be placed with real money.'
-      : 'Switch to TEST mode? All open orders will be closed at market price.'
+    const botRunning = botState?.running ?? false
+    const msg = botRunning
+      ? target === 'live'
+        ? 'Switch to LIVE mode? Real orders will be placed with real money.'
+        : 'Switch to TEST mode? All open orders will be closed at market price.'
+      : `Switch to ${target.toUpperCase()} mode?\n\nThe bot is not running — the mode preference will be saved and used on next start.\n\nRun "Refresh Backtests" afterward to load ${target}-mode kline data into the dashboard.`
     if (!confirm(msg)) return
     setModeSwitching(true)
     setModeError('')
@@ -97,6 +101,26 @@ export default function SettingsPage() {
       setModeError(String(e))
     } finally {
       setModeSwitching(false)
+    }
+  }
+
+  const handleRefreshBacktests = async () => {
+    if (!registry || registry.symbols.length === 0) return
+    if (!confirm(`Re-run backtests for all ${registry.symbols.length} symbols in ${mode.toUpperCase()} mode?\n\nThis fetches fresh klines from the exchange for the current mode.`)) return
+    setBacktestRefreshing(true)
+    try {
+      await Promise.allSettled(
+        registry.symbols.map(sym =>
+          fetch('/api/run-backtest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: sym, klines_count: 1500 }),
+          })
+        )
+      )
+      fetchRegistry()
+    } finally {
+      setBacktestRefreshing(false)
     }
   }
 
@@ -279,23 +303,34 @@ export default function SettingsPage() {
         <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
           Trading Mode
         </h2>
-        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+        <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-3">
           <div className="flex items-center gap-4">
             <span className={`px-3 py-1 rounded text-sm font-mono font-bold ${mode === 'live' ? 'bg-amber-500 text-black' : 'bg-slate-600 text-white'}`}>
               {mode.toUpperCase()}
             </span>
             <button
               onClick={handleSwitchMode}
-              disabled={modeSwitching || !botState?.running}
+              disabled={modeSwitching}
               className="px-4 py-2 bg-slate-700 text-white text-sm rounded hover:bg-slate-600 disabled:opacity-50 transition-colors"
             >
               {modeSwitching ? 'Switching…' : `Switch to ${mode === 'test' ? 'LIVE' : 'TEST'}`}
             </button>
-            {!botState?.running && (
-              <span className="text-xs text-gray-500">Start bot to switch modes</span>
-            )}
+            <button
+              onClick={handleRefreshBacktests}
+              disabled={backtestRefreshing || !registry || registry.symbols.length === 0}
+              title={`Re-run backtests for all symbols using ${mode.toUpperCase()}-mode klines. Use this after switching mode to load fresh data.`}
+              className="px-4 py-2 bg-indigo-900/60 border border-indigo-700 text-indigo-300 text-sm rounded hover:bg-indigo-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {backtestRefreshing ? 'Refreshing…' : 'Refresh Backtests'}
+            </button>
           </div>
-          {modeError && <p className="mt-3 text-sm text-red-400">{modeError}</p>}
+          {!botState?.running && (
+            <p className="text-xs text-gray-500">
+              Bot is stopped — switching mode saves the preference for next start.
+              Use <span className="text-indigo-400">Refresh Backtests</span> to pull {mode === 'live' ? 'live' : 'testnet'}-mode klines into the dashboard now.
+            </p>
+          )}
+          {modeError && <p className="text-sm text-red-400">{modeError}</p>}
         </div>
       </section>
 

@@ -21,6 +21,7 @@ const DEFAULT_CONFIG = {
   symbol_weights: {} as Record<string, number>,
   max_leverage_level: 5,
   use_allocation_weighting: false,
+  min_balance_pct: 15.0,
 }
 
 function readJson(filePath: string, fallback: unknown) {

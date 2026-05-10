@@ -58,6 +58,7 @@ class OpenOrder:
     partial_take_pct: float = 0.0
     trailing_stop_pct: float = 0.0
     exchange_order_id: str | None = None
+    sl_order_id: str | None = None
     open_time: str | None = None
     balance_at_open: float = 0.0
     signal_level: int = 0
@@ -178,6 +179,11 @@ class OrderExecutor:
                 self._states[symbol] = OrderState.OPEN
                 self._open_orders[symbol].open_time = datetime.now(timezone.utc).isoformat()
                 self._last_opened_preset[symbol] = preset_name
+                # Place SL stop-market order on exchange as crash protection.
+                # If the bot dies the position is protected; software FakeOrder still manages TP/trailing.
+                if sl > 0:
+                    sl_order_id = await self._place_sl_on_exchange(symbol, side, rounded_qty, sl)
+                    self._open_orders[symbol].sl_order_id = sl_order_id
                 self._record_success(symbol)
                 logger.info(
                     f"Order placed: {symbol} {side} qty={rounded_qty} "
@@ -316,12 +322,14 @@ class OrderExecutor:
             try:
                 close_price = await self._market_close(symbol, order)
                 pnl = self._calc_pnl(order, close_price)
+                self._record_real_order_close(symbol, order, close_price, 'market_close', pnl)
                 results.append({
                     "symbol": symbol,
                     "side": order.side,
                     "entry_price": order.entry_price,
                     "close_price": close_price,
                     "pnl_usdt": pnl,
+                    "leverage": order.leverage,
                 })
                 logger.info(
                     f"Bulk close: {symbol} entry={order.entry_price} "
@@ -344,12 +352,14 @@ class OrderExecutor:
         try:
             close_price = await self._market_close(symbol, order)
             pnl = self._calc_pnl(order, close_price)
+            self._record_real_order_close(symbol, order, close_price, 'market_close', pnl)
             result = {
                 "symbol": symbol,
                 "side": order.side,
                 "entry_price": order.entry_price,
                 "close_price": close_price,
                 "pnl_usdt": pnl,
+                "leverage": order.leverage,
             }
             logger.info(f"Closed {symbol}: entry={order.entry_price} close={close_price} pnl={pnl:.2f}")
             return result
@@ -411,6 +421,48 @@ class OrderExecutor:
     # Exchange integration                                                 #
     # ------------------------------------------------------------------ #
 
+    async def _place_sl_on_exchange(
+        self, symbol: str, side: str, quantity: float, sl_price: float
+    ) -> str | None:
+        """Place a STOP_MARKET order on the exchange as crash-safe SL protection.
+        Uses MARK_PRICE to avoid wick-triggered false SLs."""
+        if self._feed is None or sl_price <= 0:
+            return None
+        client = self._feed.client
+        close_side = 'SELL' if side == 'BUY' else 'BUY'
+        try:
+            result = await asyncio.to_thread(
+                client.futures_create_order,
+                symbol=symbol,
+                side=close_side,
+                type='STOP_MARKET',
+                stopPrice=str(sl_price),
+                quantity=str(quantity),
+                reduceOnly=True,
+                workingType='MARK_PRICE',
+            )
+            sl_id = str(result.get('orderId'))
+            logger.info(f"[{symbol}] SL order placed: id={sl_id} stopPrice={sl_price}")
+            return sl_id
+        except Exception as exc:
+            logger.warning(f"[{symbol}] Failed to place SL order (no crash protection): {exc}")
+            return None
+
+    async def _cancel_exchange_order(self, symbol: str, order_id: str | None) -> None:
+        """Cancel a specific exchange order by ID. No-op if order_id is None or not found."""
+        if self._feed is None or not order_id:
+            return
+        client = self._feed.client
+        try:
+            await asyncio.to_thread(
+                client.futures_cancel_order,
+                symbol=symbol,
+                orderId=int(order_id),
+            )
+            logger.info(f"[{symbol}] Exchange order cancelled: id={order_id}")
+        except Exception as exc:
+            logger.warning(f"[{symbol}] Failed to cancel order {order_id}: {exc}")
+
     async def _submit_to_exchange(self, symbol: str, side: str, quantity: float, leverage: int) -> str | None:
         if self._feed is None:
             return None
@@ -451,6 +503,8 @@ class OrderExecutor:
             raise  # other errors → caller records failure
 
     async def _market_close(self, symbol: str, order: OpenOrder) -> float:
+        # Cancel the exchange SL order first so it doesn't fight the market close
+        await self._cancel_exchange_order(symbol, order.sl_order_id)
         if self._feed is None:
             return order.entry_price
         client = self._feed.client

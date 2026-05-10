@@ -45,7 +45,7 @@ def test_new_defaults_present(tmp_path):
     cfg = load_risk_config(path)
     assert "telegram" in cfg
     assert cfg["telegram"] == {"token": "", "chat_id": ""}
-    assert cfg["min_balance_usdt"] == 0.0
+    assert cfg["min_balance_pct"] == 15.0
     assert cfg["consecutive_failure_threshold"] == 3
     assert cfg["test_starting_balance_usdt"] == 10000.0
     assert cfg["max_leverage"] == 20

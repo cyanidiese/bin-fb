@@ -21,6 +21,7 @@ def make_rm(tmp_path, balance=1000.0, symbol_weights=None) -> RiskManager:
         "drawdown_hard_stop_pct": 20.0,
         "backtest_initial_balance_usdt": 1000.0,
         "symbol_weights": symbol_weights or {"BTCUSDT": 1, "ETHUSDT": 1},
+        "min_balance_pct": 0,
     }
     cfg_path.write_text(json.dumps(cfg))
     return RiskManager(

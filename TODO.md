@@ -172,7 +172,7 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] `bot/system_log.py` — rolling 100-entry log
 - [x] `bot/notifier.py` — Telegram + alert state + log wrapper
 - [x] `bot/mode_manager.py` — mode state and command poll loop
-- [x] `bot/order_executor.py` — state machine, close_all_orders_at_market (stubs)
+- [x] `bot/order_executor.py` — state machine, SL/TP monitoring, exchange API wired
 - [x] `bot/virtual_tracker.py` — virtual order efficiency tracking
 - [x] `config/risk_config.py` — extended with Telegram, min_balance, failure threshold fields
 - [x] `bot/risk_manager.py` — renamed paper→test, added min_balance check, Notifier wired
@@ -186,13 +186,18 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] Dashboard: AlertBanner (warning/emergency alerts, dismissible)
 - [x] Dashboard: System log page (/log) with level filter + NavBar unread badge
 - [x] `TELEGRAM_SETUP.md` — step-by-step Telegram bot creation guide
-- [ ] Wire real Binance API calls into `order_executor._submit_to_exchange()` and `_market_close()`
-- [ ] Combined WebSocket stream (all symbols on one WS connection)
-- [ ] Price feed fallback (REST polling when WS silent >15s)
-- [ ] Kline gap detection and re-fetch
+- [x] `_submit_to_exchange()` + `_market_close()` wired to real Binance Futures API
+- [x] Combined WebSocket stream (`stream_combined`) — all symbols on one WS connection
+- [x] Price feed fallback (`start_watchdog`) — REST polling when WS silent >15s
+- [x] Kline gap detection and re-fetch — in `refresh_klines` + `_merge`
+- [x] Leverage bracket fetch from Binance API (`fetch_leverage_brackets`)
+- [x] SL stop-market order placed on exchange after each real order open (crash protection)
+- [x] SL order cancelled before any software-triggered market close
+- [x] All order closes (TP/SL, bulk-close, single-close) recorded to `real_orders_{symbol}_{mode}.json`
+- [x] `seed_from_backtest` skips symbol if already in efficiency file
 - [ ] Allocation weight step 0.01 + initial rebalance on symbol add
-- [ ] Leverage bracket fetch from Binance API
 - [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
+- [ ] Fix `.env` — change `TRADING_MODE=testnet` → `TRADING_MODE=test` (currently warns on startup)
 
 ## Phase 3.9 — Trades Page & Virtual Order Simulation
 
@@ -202,20 +207,19 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 - [x] Remove 22 presets with Total% < −10 from `backtest.py` (100 remain + 4 locked)
 
 **Python backend:**
-- [ ] Fix `VirtualTracker.seed_from_backtest` — skip if symbol already in `preset_efficiency_{mode}.json`
-- [ ] Add `Analyzer.get_recommendation_for_preset(overrides: dict) -> Optional[Recommendation]`
-- [ ] Build `bot/virtual_order_simulator.py` — open/close/persist lifecycle, TP/SL checks, early-close on stop/mode-switch
-- [ ] Add real order recording to `OrderExecutor` — write `real_orders_{symbol}_{mode}.json` on each close
-- [ ] Add real order opening guard in `OrderExecutor` — API verify when best preset changed
-- [ ] Wire `VirtualOrderSimulator` into `main.py` — candle close, price update, stop, mode switch
+- [x] Fix `VirtualTracker.seed_from_backtest` — skips if symbol already in efficiency file
+- [x] Build `bot/virtual_order_simulator.py` — open/close/persist lifecycle, TP/SL checks, early-close on stop/mode-switch
+- [x] Real order recording in `OrderExecutor` — `real_orders_{symbol}_{mode}.json` on ALL close types
+- [x] Real order opening guard — `_last_opened_preset[symbol]` + exchange verify on preset change
+- [x] Wire `VirtualOrderSimulator` into `main.py` — candle close, price update, stop, mode switch
+- [ ] Add `Analyzer.get_recommendation_for_preset(overrides: dict) -> Optional[Recommendation]` (deferred)
 
 **Dashboard:**
-- [ ] `GET /api/trades?symbol=BTCUSDT` — serve real_orders + virtual_summary + best_preset
-- [ ] `/trades` page — preset efficiency table + candlestick chart with trade overlays + real orders table
+- [x] `GET /api/trades?symbol=BTCUSDT` — implemented
+- [x] `/trades` page — preset efficiency table + trade chart + real orders table
 
 **Tests:**
-- [ ] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
-- [ ] `tests/test_real_order_recording.py` — append, first-write, file creation
+- [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
 
 ## Phase 3.10 — Balance & Leverage Progression ✅ COMPLETE (2026-05-10)
 

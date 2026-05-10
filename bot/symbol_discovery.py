@@ -151,7 +151,7 @@ class SymbolDiscovery:
     ) -> CandidateResult | None:
         """Backtest symbol against preset_subset, score it, return None if it fails filters."""
         settings = load_settings(symbol)
-        suffix = "test" if settings.trading_mode == "testnet" else "live"
+        suffix = "test" if settings.trading_mode == "test" else "live"
         cache_path = Path("data") / f"{symbol}_{settings.timeframe}_{suffix}.json"
 
         try:

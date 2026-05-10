@@ -255,8 +255,7 @@ async def run() -> None:
         symbol: str, best, settings, balance: float, candle_ts: int
     ) -> None:
         preset_name = virtual_tracker.best_preset(symbol)
-        _all_presets_local = {**LOCKED_PRESETS, **PRESETS}
-        overrides = _all_presets_local.get(preset_name or 'default', {})
+        overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
         entry = best.getEntryPrice()
@@ -265,7 +264,7 @@ async def run() -> None:
 
         current_lev = leverage_tracker.get_current_level()
         bracket_max = order_executor.get_bracket_max(symbol)
-        max_policy_lev = load_risk_config().get('max_leverage_level', 5)
+        max_policy_lev = risk_cfg.get('max_leverage_level', 5)
         actual_lev = min(current_lev, bracket_max, max_policy_lev)
         if actual_lev <= 0:
             actual_lev = 1

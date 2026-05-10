@@ -3,7 +3,6 @@ import dataclasses
 import json
 import logging
 import logging.handlers
-import math
 import os
 import subprocess
 import sys
@@ -26,23 +25,13 @@ from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
 from bot.leverage_tracker import LeverageTracker
 from config.risk_config import load_risk_config
+from bot.balance_history import record as bh_record
+from bot.decision_log import record as dl_record
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
 _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
-
-_last_balance_poll: float = 0.0
-_BALANCE_POLL_INTERVAL = 30.0
-
-
-def _should_poll_balance() -> bool:
-    global _last_balance_poll
-    now = time.monotonic()
-    if now - _last_balance_poll >= _BALANCE_POLL_INTERVAL:
-        _last_balance_poll = now
-        return True
-    return False
 
 
 def _write_pid() -> None:
@@ -213,6 +202,18 @@ async def run() -> None:
     await order_executor.check_symbols_on_exchange(symbols)
     await order_executor.fetch_leverage_brackets(symbols)
 
+    # Fetch real min_notionals and startup balance
+    for sym in symbols:
+        min_notionals[sym] = await order_executor.get_min_notional(sym)
+
+    bh_path = _PROJECT_ROOT / 'data' / f'balance_history_{current_mode}.json'
+    dl_path = _PROJECT_ROOT / 'data' / f'decision_log_{current_mode}.json'
+
+    startup_balance = await order_executor.fetch_account_balance()
+    if startup_balance > 0:
+        risk_manager.update_balance(startup_balance)
+    bh_record(bh_path, balance=risk_manager.get_balance(), trigger='startup')
+
     # Kline bootstrap + initial export
     for symbol in symbols:
         klines = feed.load_klines(symbol, timeframe, limit=1500)
@@ -231,35 +232,73 @@ async def run() -> None:
 
     # ── Callbacks ──────────────────────────────────────────────────────── #
 
-    async def _try_place_order(symbol: str, best, settings) -> None:
+    # Mutable container for balance TTL cache (allows mutation inside nested coroutine)
+    _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
+    _BALANCE_TTL = 5.0
+
+    async def _get_fresh_balance() -> float:
+        now = time.monotonic()
+        cached_val, cached_ts = _balance_cache_inner[0]
+        if now - cached_ts < _BALANCE_TTL:
+            return cached_val
+        try:
+            bal = await order_executor.fetch_account_balance()
+        except Exception as exc:
+            logger.warning(f"Balance fetch failed: {exc}")
+            bal = 0.0
+        if bal > 0:
+            _balance_cache_inner[0] = (bal, now)
+            return bal
+        return cached_val
+
+    async def _try_place_order(
+        symbol: str, best, settings, balance: float, candle_ts: int
+    ) -> None:
         preset_name = virtual_tracker.best_preset(symbol)
-        all_presets = {**LOCKED_PRESETS, **PRESETS}
-        overrides = all_presets.get(preset_name or 'default', {})
+        _all_presets_local = {**LOCKED_PRESETS, **PRESETS}
+        overrides = _all_presets_local.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
-        balance = risk_manager.get_balance()
-        allocation = min(risk_manager.get_allocation(symbol), balance)
         entry = best.getEntryPrice()
-        if entry <= 0 or allocation <= 0:
+        if entry <= 0:
             return
 
-        min_notional = await order_executor.get_min_notional(symbol)
+        current_lev = leverage_tracker.get_current_level()
         bracket_max = order_executor.get_bracket_max(symbol)
-        target_lev = risk_manager.get_leverage(symbol)
+        max_policy_lev = load_risk_config().get('max_leverage_level', 5)
+        actual_lev = min(current_lev, bracket_max, max_policy_lev)
+        if actual_lev <= 0:
+            actual_lev = 1
 
-        min_viable_lev = math.ceil(min_notional / allocation)
-        if min_viable_lev > bracket_max:
-            logger.info(f"[{symbol}] Cannot meet min_notional at any leverage, skipping")
+        min_notional = min_notionals.get(symbol)
+        if min_notional is None:
+            min_notional = await order_executor.get_min_notional(symbol)
+            min_notionals[symbol] = min_notional
+
+        margin = min_notional / actual_lev
+        eff_score = virtual_tracker.get_efficiency_score(symbol)
+
+        if balance < margin:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='skip_balance',
+                reason=f'balance={balance:.2f} < margin={margin:.2f}',
+                balance=balance, leverage=actual_lev, efficiency_score=eff_score,
+                preset_name=preset_name,
+            )
+            logger.info(f"[{symbol}] Insufficient balance: {balance:.2f} < margin={margin:.2f}")
             return
-
-        actual_lev = max(min_viable_lev, min(target_lev, bracket_max))
-        quantity = allocation * actual_lev / entry
 
         allowed, reason = risk_manager.can_open_sync(symbol)
         if not allowed:
+            decision = 'skip_hard_stop' if 'hard_stop' in reason else 'skip_profit_factor'
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision=decision, reason=reason,
+                balance=balance, leverage=actual_lev, efficiency_score=eff_score,
+                preset_name=preset_name,
+            )
             logger.info(f"[{symbol}] Order skipped: {reason}")
-            return
-        if quantity <= 0:
             return
 
         # If best preset changed since last order, verify exchange has no open position
@@ -268,7 +307,14 @@ async def run() -> None:
             if order_executor.get_state(symbol) != OrderState.IDLE:
                 return
 
-        await order_executor.place_order(
+        quantity = (margin * actual_lev) / entry
+
+        bh_record(bh_path, balance=balance, trigger='order_open',
+                  symbol=symbol, leverage=actual_lev)
+
+        precision = best.getPrecision() if hasattr(best, 'getPrecision') else 0.0
+
+        placed = await order_executor.place_order(
             symbol=symbol,
             preset_name=preset_name or 'default',
             side=best.getSide(),
@@ -281,7 +327,20 @@ async def run() -> None:
             trailing_stop_pct=preset_settings.trailing_stop_pct,
             level=best.getLevel(),
             signal_type=best.getType().value,
+            balance_at_open=balance,
+            signal_level=best.getLevel() or 0,
+            precision_score=precision or 0.0,
         )
+        if placed:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='placed', reason='',
+                balance=balance, leverage=actual_lev, efficiency_score=eff_score,
+                preset_name=preset_name,
+                signal_type=best.getType().value,
+                level=best.getLevel(),
+                precision_score=precision or 0.0,
+            )
 
     async def on_candle_close(symbol: str, kline: list) -> None:
         if os.path.exists('STOP'):
@@ -298,23 +357,36 @@ async def run() -> None:
         analyzer = analyzers[symbol]
 
         recs = analyzer.add_candle(kline)
-        best = analyzer.get_best_recommendation()
+        best_for_this = analyzer.get_best_recommendation()
 
         try:
             await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 10)
         except Exception as e:
             logger.warning(f"[{symbol}] Kline refresh failed: {e}")
 
-        if _should_poll_balance():
-            try:
-                balance = await order_executor.fetch_account_balance()
-                if balance > 0:
-                    risk_manager.update_balance(balance)
-            except Exception as exc:
-                logger.warning(f"Balance fetch failed: {exc}")
+        # Fetch balance once per candle batch (5s TTL shared across all symbols)
+        balance = await _get_fresh_balance()
+        if balance > 0:
+            risk_manager.update_balance(balance)
 
-        if best is not None and order_executor.get_state(symbol) == OrderState.IDLE:
-            await _try_place_order(symbol, best, settings)
+        # Efficiency-ranked cross-symbol placement loop
+        candle_ts = int(kline[0]) if kline else 0
+        candidates = []
+        for sym in symbol_registry.get_symbols():
+            if order_executor.get_state(sym) != OrderState.IDLE:
+                continue
+            best_sym = (
+                best_for_this if sym == symbol
+                else (analyzers[sym].get_best_recommendation() if sym in analyzers else None)
+            )
+            if best_sym is None:
+                continue
+            score = virtual_tracker.get_efficiency_score(sym)
+            candidates.append((sym, best_sym, sym_settings.get(sym, settings), score))
+
+        candidates.sort(key=lambda x: x[3], reverse=True)
+        for sym, best, sym_s, _ in candidates:
+            await _try_place_order(sym, best, sym_s, balance, candle_ts)
 
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
@@ -326,11 +398,11 @@ async def run() -> None:
         export(
             symbol, timeframe, mode_manager.current_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
-            analyzer.get_klines(), recs, analyzer.get_all_points(), best,
+            analyzer.get_klines(), recs, analyzer.get_all_points(), best_for_this,
         )
 
-        if best:
-            trades_logger.info(f"BEST | symbol={symbol} | {best}")
+        if best_for_this:
+            trades_logger.info(f"BEST | symbol={symbol} | {best_for_this}")
         for rec in recs:
             trades_logger.info(f"CANDIDATE | symbol={symbol} | {rec}")
 
@@ -341,6 +413,13 @@ async def run() -> None:
         closed = await order_executor.check_symbol_price(symbol, price)
         for c in closed:
             virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+            leverage_tracker.record_closed(c['symbol'], c.get('leverage', 1))
+            fresh_bal = await _get_fresh_balance()
+            bh_record(
+                bh_path, balance=fresh_bal, trigger='order_close',
+                symbol=c['symbol'], leverage=c.get('leverage', 1),
+                pnl_usdt=c.get('pnl_usdt'),
+            )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         for vc in virtual_closed:

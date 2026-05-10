@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-MAX_ENTRIES = 100
+MAX_ENTRIES = 1000
 
 
 def append_entry(
@@ -25,8 +25,18 @@ def append_entry(
         "source": source,
     })
     if len(entries) > MAX_ENTRIES:
-        entries = entries[len(entries) - MAX_ENTRIES:]
+        entries = entries[-MAX_ENTRIES:]
     _write(path, entries)
+
+
+def trim_to(path: Path, keep: int) -> int:
+    """Keep only the latest `keep` entries. Returns the new count."""
+    entries = _read(path)
+    if len(entries) <= keep:
+        return len(entries)
+    entries = entries[-keep:]
+    _write(path, entries)
+    return len(entries)
 
 
 def _read(path: Path) -> list[dict]:

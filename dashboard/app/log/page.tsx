@@ -15,10 +15,15 @@ export default function LogPage() {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [levels, setLevels] = useState<Set<string>>(new Set(LEVELS))
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [keepInput, setKeepInput] = useState('50')
+  const [trimming, setTrimming] = useState(false)
+
+  const reload = () =>
+    fetch('/api/log').then(r => r.json()).then(setEntries).catch(() => {})
 
   useEffect(() => {
     localStorage.setItem('log_last_read', new Date().toISOString())
-    fetch('/api/log').then(r => r.json()).then(setEntries).catch(() => {})
+    reload()
   }, [])
 
   const toggleLevel = (l: string) =>
@@ -27,18 +32,44 @@ export default function LogPage() {
   const toggleExpand = (id: string) =>
     setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
+  const handleTrim = async () => {
+    const keep = parseInt(keepInput, 10)
+    if (isNaN(keep) || keep < 0) return
+    setTrimming(true)
+    await fetch(`/api/log?keep=${keep}`, { method: 'DELETE' }).catch(() => {})
+    await reload()
+    setTrimming(false)
+  }
+
   const visible = entries.filter(e => levels.has(e.level))
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-6">
       <h1 className="text-xl font-semibold mb-4">System Log</h1>
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
         {LEVELS.map(l => (
           <button key={l} onClick={() => toggleLevel(l)}
             className={`px-3 py-1 rounded text-xs font-bold border ${levels.has(l) ? LEVEL_STYLE[l] : 'border-slate-700 text-slate-500'}`}>
             {l.toUpperCase()}
           </button>
         ))}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-slate-400">Keep latest</span>
+          <input
+            type="number"
+            min={0}
+            value={keepInput}
+            onChange={e => setKeepInput(e.target.value)}
+            className="w-20 px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-slate-200"
+          />
+          <button
+            onClick={handleTrim}
+            disabled={trimming}
+            className="px-3 py-1 text-xs rounded bg-red-900 hover:bg-red-800 text-red-200 disabled:opacity-50"
+          >
+            {trimming ? 'Trimming…' : 'Trim'}
+          </button>
+        </div>
       </div>
       <div className="space-y-0 border border-slate-800 rounded overflow-hidden">
         {visible.length === 0 && (

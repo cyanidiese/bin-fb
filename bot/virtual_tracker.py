@@ -55,6 +55,17 @@ class VirtualTracker:
     def get_efficiency(self, symbol: str, preset: str) -> dict:
         return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0})
 
+    def get_efficiency_score(self, symbol: str) -> float:
+        symbol_data = self._efficiency.get(symbol, {})
+        best = 0.0
+        for stats in symbol_data.values():
+            if stats.get('trade_count', 0) >= _MIN_TRADES:
+                best = max(best, stats.get('total_winning_usdt', 0.0))
+        return best
+
+    def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
+        return self._efficiency.get(symbol, {}).get(preset_name, {}).get('total_winning_usdt', 0.0)
+
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)
         new_winning = eff["total_winning_usdt"] + (profit_usdt if profit_usdt > 0 else 0.0)

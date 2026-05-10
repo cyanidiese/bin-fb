@@ -58,7 +58,8 @@ def _append(path: Path, entry: dict) -> None:
     if path.exists():
         try:
             existing = json.loads(path.read_text())
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"decision_log: failed to read {path}, starting fresh: {exc}")
             existing = []
     existing.append(entry)
     if len(existing) > MAX_ENTRIES:

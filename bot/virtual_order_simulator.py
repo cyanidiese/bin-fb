@@ -14,20 +14,22 @@ from bot.recommendation_engine import RecommendationEngine
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
     from bot.data_feed import DataFeed
-    from bot.risk_manager import RiskManager
+    from bot.leverage_tracker import LeverageTracker
+    from bot.virtual_tracker import VirtualTracker
     from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 _MAX_CLOSED = 500
+_DEFAULT_MIN_NOTIONAL = 5.0
 
 
 class VirtualOrderSimulator:
     """
-    Tracks virtual (paper) positions for all non-best presets.
-    Each preset independently signals and manages its own position.
-    Uses FakeOrder for TP/SL/trailing logic (same as real orders).
-    Persists to data/virtual_orders_{symbol}_{mode}.json.
+    Tracks virtual positions for all non-best presets.
+    Uses a shared virtual balance pool sized by Option A: min_notional / leverage.
+    Presets are sorted by efficiency before opening so capital goes to best performers first.
+    Persists virtual_orders_{symbol}_{mode}.json and virtual_balance_{mode}.json.
     """
 
     def __init__(
@@ -35,18 +37,47 @@ class VirtualOrderSimulator:
         mode: str,
         all_presets: dict,
         project_root: Path,
-        risk_manager: 'RiskManager',
+        leverage_tracker: 'LeverageTracker',
+        initial_balance: float,
+        virtual_tracker: 'VirtualTracker',
+        min_notionals: dict[str, float],
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
         self._project_root = project_root
-        self._risk_manager = risk_manager
+        self._leverage_tracker = leverage_tracker
+        self._virtual_tracker = virtual_tracker
+        self._min_notionals = min_notionals
         # symbol -> {preset_name: order_record_dict}
         self._open: dict[str, dict[str, dict]] = {}
         # symbol -> {preset_name: FakeOrder}
         self._fake_orders: dict[str, dict[str, FakeOrder]] = {}
         # per-symbol write locks to prevent concurrent _append_closed races
         self._write_locks: dict[str, asyncio.Lock] = {}
+
+        self._virtual_balance: float = initial_balance
+        self._virtual_committed: float = 0.0
+        self._balance_path = project_root / 'data' / f'virtual_balance_{mode}.json'
+        self._load_virtual_balance()
+
+    def _load_virtual_balance(self) -> None:
+        if not self._balance_path.exists():
+            return
+        try:
+            data = json.loads(self._balance_path.read_text())
+            self._virtual_balance = float(data.get('virtual_balance', self._virtual_balance))
+            self._virtual_committed = float(data.get('virtual_committed', 0.0))
+        except Exception as exc:
+            logger.warning(f"VirtualOrderSimulator: failed to load balance state: {exc}")
+
+    def _save_virtual_balance(self) -> None:
+        self._balance_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._balance_path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps({
+            'virtual_balance': self._virtual_balance,
+            'virtual_committed': self._virtual_committed,
+        }))
+        tmp.replace(self._balance_path)
 
     async def on_candle_close(
         self,
@@ -58,11 +89,30 @@ class VirtualOrderSimulator:
         open_for_symbol = self._open.setdefault(symbol, {})
         fake_for_symbol = self._fake_orders.setdefault(symbol, {})
 
-        for preset_name, overrides in self._all_presets.items():
+        lev = self._leverage_tracker.get_current_level()
+        min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
+        margin = min_notional / lev if lev > 0 else min_notional
+
+        # Sort presets by efficiency descending — best preset gets capital first
+        sorted_presets = sorted(
+            self._all_presets.items(),
+            key=lambda kv: self._virtual_tracker.get_preset_efficiency(symbol, kv[0]),
+            reverse=True,
+        )
+
+        for preset_name, overrides in sorted_presets:
             if preset_name == best_preset_name:
                 continue  # handled as real order
             if preset_name in open_for_symbol:
-                continue  # already open
+                continue  # already open for this preset
+
+            available = self._virtual_balance - self._virtual_committed
+            if available < margin:
+                logger.debug(
+                    f"[{symbol}][{preset_name}] Virtual skip: "
+                    f"available={available:.2f} < margin={margin:.2f}"
+                )
+                continue
 
             try:
                 preset_settings = dataclasses.replace(base_settings, **overrides)
@@ -81,12 +131,11 @@ class VirtualOrderSimulator:
             if entry <= 0 or tp <= 0:
                 continue
 
-            allocation = self._risk_manager.get_allocation(symbol)
-            leverage = self._risk_manager.get_leverage(symbol)
-            quantity = (allocation * leverage / entry) if entry > 0 else 0.0
+            quantity = min_notional / entry if entry > 0 else 0.0
             if quantity <= 0:
                 continue
 
+            self._virtual_committed += margin
             side = rec.getSide()
             partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
             trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
@@ -98,7 +147,9 @@ class VirtualOrderSimulator:
                 'tp': tp,
                 'sl': sl,
                 'quantity': quantity,
-                'leverage': leverage,
+                'leverage': lev,
+                'virtual_margin': margin,
+                'virtual_balance_at_open': self._virtual_balance,
                 'open_time': datetime.now(timezone.utc).isoformat(),
                 'status': 'open',
                 'close_price': None,
@@ -106,6 +157,7 @@ class VirtualOrderSimulator:
                 'pnl_usdt': None,
                 'result': None,
             }
+            self._save_virtual_balance()
             open_for_symbol[preset_name] = record
             fake_for_symbol[preset_name] = FakeOrder(
                 side=side,
@@ -140,12 +192,19 @@ class VirtualOrderSimulator:
 
             close_price = fake.close_price or price
             pnl = self._calc_pnl(record, close_price)
+
+            virtual_margin = record.get('virtual_margin', 0.0)
+            self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
+            self._virtual_balance += pnl
+            self._save_virtual_balance()
+
             record.update({
                 'status': 'closed',
                 'close_price': close_price,
                 'close_time': datetime.now(timezone.utc).isoformat(),
                 'pnl_usdt': pnl,
                 'result': result,
+                'virtual_balance_after_close': self._virtual_balance,
             })
             await self._append_closed(symbol, record)
             closed.append({
@@ -177,15 +236,20 @@ class VirtualOrderSimulator:
             for preset_name, record in list(open_for_symbol.items()):
                 row_close = close_price if close_price > 0 else record['entry_price']
                 pnl = self._calc_pnl(record, row_close) if close_price > 0 else 0.0
+                virtual_margin = record.get('virtual_margin', 0.0)
+                self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
+                self._virtual_balance += pnl
                 record.update({
                     'status': 'closed',
                     'close_price': row_close,
                     'close_time': datetime.now(timezone.utc).isoformat(),
                     'pnl_usdt': pnl,
                     'result': 'closed_early',
+                    'virtual_balance_after_close': self._virtual_balance,
                 })
                 await self._append_closed(symbol, record)
 
+            self._save_virtual_balance()
             open_for_symbol.clear()
             self._fake_orders.get(symbol, {}).clear()
             logger.info(f"[{symbol}] All virtual orders closed (bot stop/mode switch)")
@@ -215,7 +279,6 @@ class VirtualOrderSimulator:
                     existing = json.loads(path.read_text())
                 except Exception:
                     existing = []
-            # Keep open orders + append new closed record, trim old closed to _MAX_CLOSED
             open_records = [r for r in existing if r.get('status') == 'open']
             closed_records = [r for r in existing if r.get('status') != 'open']
             closed_records.append(record)

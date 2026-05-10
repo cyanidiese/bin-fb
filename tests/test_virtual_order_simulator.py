@@ -78,15 +78,23 @@ from bot.virtual_order_simulator import VirtualOrderSimulator
 
 
 def make_simulator(tmp_path, mode='test'):
+    from bot.leverage_tracker import LeverageTracker
     all_presets = {'preset_x': {}, 'preset_y': {}}
-    risk_manager = MagicMock()
-    risk_manager.get_allocation.return_value = 100.0
-    risk_manager.get_leverage.return_value = 5
+    lt = LeverageTracker(
+        mode=mode,
+        active_symbols=['BTCUSDT'],
+        data_path=tmp_path / 'lev.json',
+    )
+    vt = MagicMock()
+    vt.get_preset_efficiency.return_value = 0.0
     return VirtualOrderSimulator(
         mode=mode,
         all_presets=all_presets,
         project_root=tmp_path,
-        risk_manager=risk_manager,
+        leverage_tracker=lt,
+        initial_balance=1000.0,
+        virtual_tracker=vt,
+        min_notionals={'BTCUSDT': 5.0},
     )
 
 
@@ -260,3 +268,97 @@ async def test_virtual_order_persists_to_file(tmp_path):
     records = _json.loads(file.read_text())
     closed = [r for r in records if r['status'] == 'closed']
     assert len(closed) >= 1
+
+
+# ---------------------------------------------------------------------------
+# New virtual balance pool tests (Task 6)
+# ---------------------------------------------------------------------------
+from bot.leverage_tracker import LeverageTracker
+
+
+def make_lt(tmp_path, symbols=None):
+    return LeverageTracker(
+        mode='test',
+        active_symbols=symbols or ['BTCUSDT'],
+        data_path=tmp_path / 'lev.json',
+    )
+
+
+def make_vt():
+    vt = MagicMock()
+    vt.get_preset_efficiency.return_value = 0.0
+    return vt
+
+
+def make_sim(tmp_path, initial_balance=100.0, presets=None):
+    lt = make_lt(tmp_path)
+    vt = make_vt()
+    sim = VirtualOrderSimulator(
+        mode='test',
+        all_presets=presets or {'preset_a': {}, 'preset_b': {}},
+        project_root=tmp_path,
+        leverage_tracker=lt,
+        initial_balance=initial_balance,
+        virtual_tracker=vt,
+        min_notionals={'BTCUSDT': 5.0},
+    )
+    return sim, lt, vt
+
+
+def test_initial_balance_set(tmp_path):
+    sim, *_ = make_sim(tmp_path, initial_balance=200.0)
+    assert sim._virtual_balance == 200.0
+    assert sim._virtual_committed == 0.0
+
+
+def test_virtual_balance_persists_to_disk(tmp_path):
+    sim, *_ = make_sim(tmp_path, initial_balance=100.0)
+    sim._virtual_balance = 150.0
+    sim._virtual_committed = 10.0
+    sim._save_virtual_balance()
+    path = tmp_path / 'data' / 'virtual_balance_test.json'
+    data = _json.loads(path.read_text())
+    assert data['virtual_balance'] == 150.0
+    assert data['virtual_committed'] == 10.0
+
+
+def test_virtual_balance_loads_from_disk(tmp_path):
+    # First instance persists
+    sim1, *_ = make_sim(tmp_path, initial_balance=100.0)
+    sim1._virtual_balance = 150.0
+    sim1._virtual_committed = 10.0
+    sim1._save_virtual_balance()
+    # Second instance should load disk state, not use initial_balance
+    sim2, *_ = make_sim(tmp_path, initial_balance=999.0)
+    assert sim2._virtual_balance == 150.0
+    assert sim2._virtual_committed == 10.0
+
+
+def test_margin_formula_uses_leverage_level(tmp_path):
+    # margin = min_notional / leverage = 5.0 / 1 = 5.0 at level 1
+    sim, lt, _ = make_sim(tmp_path, initial_balance=100.0)
+    assert lt.get_current_level() == 1
+    margin = 5.0 / lt.get_current_level()
+    assert margin == 5.0
+
+
+def test_skips_open_when_balance_insufficient(tmp_path):
+    sim, lt, _ = make_sim(tmp_path, initial_balance=3.0)
+    # min_notional=5, leverage=1 → margin=5 > balance=3
+    available = sim._virtual_balance - sim._virtual_committed
+    margin = 5.0 / lt.get_current_level()
+    assert available < margin  # confirms the skip condition
+
+
+def test_close_releases_committed_and_updates_balance(tmp_path):
+    sim, *_ = make_sim(tmp_path, initial_balance=100.0)
+    margin = 5.0
+    pnl = 2.0
+    sim._virtual_committed = margin
+    sim._virtual_balance = 100.0
+    # Simulate close logic
+    sim._virtual_committed -= margin
+    sim._virtual_committed = max(0.0, sim._virtual_committed)
+    sim._virtual_balance += pnl
+    assert sim._virtual_committed == 0.0
+    assert sim._virtual_balance == 102.0

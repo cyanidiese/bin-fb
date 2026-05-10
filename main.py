@@ -24,6 +24,7 @@ from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
 from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
+from bot.leverage_tracker import LeverageTracker
 from config.risk_config import load_risk_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -156,12 +157,23 @@ async def run() -> None:
         efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{current_mode}.json",
     )
 
+    leverage_tracker = LeverageTracker(
+        mode=current_mode,
+        active_symbols=list(symbols),
+        data_path=_PROJECT_ROOT / "data" / f"leverage_state_{current_mode}.json",
+    )
+
     all_presets = {**LOCKED_PRESETS, **PRESETS}
+    # min_notionals populated later after exchange fetch; default to 5 USDT until then
+    min_notionals: dict[str, float] = {sym: 5.0 for sym in symbols}
     virtual_order_simulator = VirtualOrderSimulator(
         mode=current_mode,
         all_presets=all_presets,
         project_root=_PROJECT_ROOT,
-        risk_manager=risk_manager,
+        leverage_tracker=leverage_tracker,
+        initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
+        virtual_tracker=virtual_tracker,
+        min_notionals=min_notionals,
     )
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -369,11 +381,18 @@ async def run() -> None:
         for sym in current_symbols:
             bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
             virtual_tracker.seed_from_backtest(sym, bt_path)
+        leverage_tracker.reset_for_mode(
+            target_mode,
+            _PROJECT_ROOT / "data" / f"leverage_state_{target_mode}.json",
+        )
         virtual_order_simulator = VirtualOrderSimulator(
             mode=target_mode,
             all_presets=all_presets,
             project_root=_PROJECT_ROOT,
-            risk_manager=risk_manager,
+            leverage_tracker=leverage_tracker,
+            initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
+            virtual_tracker=virtual_tracker,
+            min_notionals=min_notionals,
         )
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 

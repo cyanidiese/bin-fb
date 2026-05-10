@@ -29,6 +29,10 @@ DEFAULT_CONFIG: dict = {
     "test_starting_balance_usdt": 10000.0,
     # Order execution
     "price_stale_threshold_s": 15,
+    # Leverage progression
+    "max_leverage_level": 5,
+    # Allocation weighting (archived — disabled by default)
+    "use_allocation_weighting": False,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

@@ -243,7 +243,7 @@ async def run() -> None:
         actual_lev = max(min_viable_lev, min(target_lev, bracket_max))
         quantity = allocation * actual_lev / entry
 
-        allowed, reason = risk_manager.can_open_sync(symbol, allocation)
+        allowed, reason = risk_manager.can_open_sync(symbol)
         if not allowed:
             logger.info(f"[{symbol}] Order skipped: {reason}")
             return

@@ -97,12 +97,12 @@ class RiskManager:
             level, title, source = min_balance_notify
             self._notifier.notify(level, title, "", source)
 
-    def can_open_sync(
-        self, symbol: str, estimated_size_usdt: float = 0.0
-    ) -> tuple[bool, str]:
+    def can_open_sync(self, symbol: str) -> tuple[bool, str]:
         """
-        Gate for all order placement. Returns (allowed, reason).
+        Gate for order placement. Returns (allowed, reason).
         reason is '' when allowed=True.
+        Checks: hard_stop_active gate and min_profit_factor gate only.
+        Sizing affordability is handled explicitly by the caller before invoking this.
         """
         with self._lock:
             cfg = self._load_config()
@@ -116,24 +116,6 @@ class RiskManager:
                     False,
                     f"profit_factor={pf:.2f} below threshold={cfg['min_profit_factor']}",
                 )
-
-            if estimated_size_usdt > 0:
-                tier = self._get_tier(cfg)
-                max_deploy = self._balance * tier["max_deploy_pct"] / 100.0
-                sym_alloc = self._calc_allocation(symbol, cfg)
-
-                if estimated_size_usdt > max_deploy:
-                    return (
-                        False,
-                        f"deployment cap reached "
-                        f"({estimated_size_usdt:.0f} > {max_deploy:.0f} USDT, "
-                        f"{tier['max_deploy_pct']}% of {self._balance:.0f})",
-                    )
-                if estimated_size_usdt > sym_alloc:
-                    return (
-                        False,
-                        f"symbol allocation cap: {estimated_size_usdt:.0f} > {sym_alloc:.0f} USDT",
-                    )
 
             return True, ""
 
@@ -191,10 +173,8 @@ class RiskManager:
     # Async thin wrapper                                                   #
     # ------------------------------------------------------------------ #
 
-    async def can_open(
-        self, symbol: str, estimated_size_usdt: float = 0.0
-    ) -> tuple[bool, str]:
-        return self.can_open_sync(symbol, estimated_size_usdt)
+    async def can_open(self, symbol: str) -> tuple[bool, str]:
+        return self.can_open_sync(symbol)
 
     # ------------------------------------------------------------------ #
     # Internal helpers (all called inside self._lock)                     #

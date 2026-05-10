@@ -1,6 +1,61 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-09 (session 12)
+## Last updated: 2026-05-10 (session 14)
+
+---
+
+## ⟳ RESUME POINT — session 14 ended here (2026-05-10)
+
+**Branch**: `feature/test-live-preparation` (not merged to main yet — kept as-is by user)
+
+**What was completed this session:**
+- Implemented Phase 3.10 — Balance & Leverage Progression (9 tasks via subagent-driven dev, all passing 127 tests)
+
+**Phase 3.10 — all 9 tasks DONE:**
+1. `bot/virtual_tracker.py` — added `get_efficiency_score(symbol)` + `get_preset_efficiency(symbol, preset_name)`
+2. `bot/leverage_tracker.py` — new `LeverageTracker` class with graduated level advancement + persistence
+3. `bot/balance_history.py` + `bot/decision_log.py` — append-only event loggers (atomic write, cap at 10k/5k)
+4. `config/risk_config.py` + `bot/risk_manager.py` — added `max_leverage_level`/`use_allocation_weighting` defaults; simplified `can_open_sync(symbol)` — removed `estimated_size_usdt` and allocation checks
+5. `bot/order_executor.py` — added `balance_at_open`, `signal_level`, `precision_score` to `OpenOrder` + records; added `leverage` to close result dicts
+6. `bot/virtual_order_simulator.py` — rewrote: removed `risk_manager`, added virtual balance pool + `leverage_tracker` + preset-efficiency sorting; persists `virtual_balance_{mode}.json`
+7. `main.py` — efficiency-ranked cross-symbol order loop; `_get_fresh_balance()` 5s TTL; wired `LeverageTracker`, `bh_record`, `dl_record`; real min_notionals fetched from exchange at startup
+8. `dashboard/app/api/balance-history/route.ts` — new `GET /api/balance-history?mode=&limit=`
+9. `dashboard/app/api/risk/route.ts` + `dashboard/app/risk/page.tsx` — added `max_leverage_level` input + `use_allocation_weighting` checkbox
+
+**Immediate next action:** Merge `feature/test-live-preparation` into `main` (user deferred), then:
+- Re-evaluate all presets now that BUY/SELL signals fire correctly (session 10 bug fix)
+- Wire real Binance API calls into `order_executor._submit_to_exchange()` + `_market_close()`
+
+**Key Phase 3.10 design decisions (all finalised, no open questions):**
+- Position size = `min_notional / current_leverage` (minimum viable margin, Option A)
+- Global `LeverageTracker`: starts at level 1, advances when ALL active symbols have ≥1 closed order at current level. New symbol only needs level 1 before it stops blocking the next advance.
+- Real order loop: efficiency-ranked across ALL symbols every `on_candle_close` (most efficient symbol gets capital first)
+- No allocation weighting — archived under Settings checkbox (default OFF)
+- Virtual balance: one shared pool for all presets + all symbols in `VirtualOrderSimulator`, initialized from real balance at mode start, persisted to disk
+- Virtual preset ordering: sorted by efficiency score descending (best preset gets virtual capital first)
+- Decision log: every signal (placed OR skipped) written to `data/decision_log_{mode}.json` — primary post-run analysis tool
+- Signal metadata stored in order records: `signal_level`, `precision_score`
+- `can_open_sync` keeps only: `hard_stop_active` + `min_profit_factor` gates (sizing checks moved to `_try_place_order`)
+
+**New files to create:**
+`bot/leverage_tracker.py`, `bot/balance_history.py`, `bot/decision_log.py`
+
+**Files to modify:**
+`bot/virtual_order_simulator.py`, `bot/virtual_tracker.py` (add 2 helpers), `bot/order_executor.py`, `bot/risk_manager.py`, `main.py`, `config/risk_config.py`, `dashboard/app/api/risk/route.ts`, `dashboard/app/risk/page.tsx`, `dashboard/app/api/balance-history/route.ts` (new)
+
+---
+
+## Bot purpose — read this before every design decision
+
+**The bot's goal is maximum profit from trading across multiple symbols.**
+
+Design consequences — apply these in every session without being asked:
+- Most efficient symbols (highest backtest profit factor + total%) get capital and placement priority first.
+- Most efficient presets (highest efficiency score) get virtual balance first and are preferred for real orders.
+- When capital is limited, serve the best performers first, let underperformers sit idle rather than diluting returns.
+- Leverage increases are a reward for proven performance, not a default starting point — start low, graduate up.
+- Allocation weighting (distributing capital by symbol weight) is a refinement for later; simplicity and proven efficiency rank beats complex formulas while the bot is still being validated.
+- Any design choice that trades profit for convenience should be flagged explicitly.
 
 ---
 
@@ -710,6 +765,83 @@ Also added "Waiting for bot analysis…" intermediate state when `klines.length 
 
 #### Bug fixed: wrong import path in `_registry.ts`
 `_registry.ts` is at `dashboard/app/api/symbols/` → `_utils.ts` is one level up at `dashboard/app/api/`. Used `../_utils` (not `../../_utils`).
+
+---
+
+## Session 13 — 2026-05-10: Balance & Leverage Progression Design
+
+**Spec**: `docs/superpowers/specs/2026-05-10-balance-and-leverage-progression-design.md`
+**Plan**: not yet written — pending implementation session
+
+### Decisions made
+
+#### Order sizing
+- Position size = `margin = min_notional / current_leverage` (Option A — minimum viable).
+- `min_notional` is the exchange minimum notional for that symbol (from lot-size cache).
+- No weighted allocation. `use_allocation_weighting: false` in config. Settings checkbox to re-enable (unchecked by default).
+
+#### Leverage progression (new `LeverageTracker`)
+- Global level starts at 1. Only advances when ALL active symbols have ≥1 closed real order at the current level.
+- New symbol added mid-run: needs only level 1 closed before it stops blocking the next advance (does not need to catch up through all intermediate levels).
+- Symbol removed: re-evaluate advancement immediately.
+- Ceiling: `max_leverage_level` config key (default 5).
+- Persists to `data/leverage_state_{mode}.json`.
+- Logs each advancement as a system_log `info` entry.
+
+#### Real order loop — efficiency-ranked across all symbols
+- Every `on_candle_close(symbol)` runs the full ranked loop across all active symbols (idempotent — OPEN symbols skipped, 5s balance TTL prevents burst REST calls).
+- Sort order: `VirtualTracker.get_efficiency_score(symbol)` descending — most profitable symbol gets capital first.
+- Reasoning: random WS fire order would give capital to whichever symbol happened to arrive first; efficiency rank guarantees best performers are served first when balance is limited.
+
+#### Virtual order sorting
+- Within `VirtualOrderSimulator`, presets are sorted by `VirtualTracker.get_preset_efficiency(symbol, preset_name)` descending before the open loop.
+- Most efficient presets get virtual capital first when the pool is tight.
+
+#### `can_open_sync` simplification
+- Keeps: `hard_stop_active` gate, `min_profit_factor` gate (poor performers don't get capital).
+- Removes: `estimated_size_usdt`, allocation cap, deployment cap — sizing check is now explicit in `_try_place_order`.
+
+#### Virtual balance
+- Shared pool across ALL presets and ALL symbols in `VirtualOrderSimulator`.
+- Initialized from real balance at mode start. Updated as virtual orders close (PnL applied).
+- Separate from real balance — never reads from exchange.
+- Persists to `data/virtual_balance_{mode}.json`.
+- On mode switch: re-created with current real balance.
+
+#### Balance history
+- New `bot/balance_history.py` — append-only, 10k cap.
+- Records on: startup, order open (before), order close (after), >0.5% balance change.
+- `balance_at_open` added to real order records.
+- New API route `GET /api/balance-history?mode=test`.
+
+#### Decision log (new `bot/decision_log.py`)
+Every signal — placed OR skipped — gets one entry in `data/decision_log_{mode}.json`. Fields: `candle_ts`, `symbol`, `decision` (placed/skip_balance/skip_profit_factor/skip_hard_stop/skip_already_open), `reason`, `balance`, `leverage`, `efficiency_score`, `preset_name`, `signal_type`, `precision_score`, `level`. Cap 5000 entries. This is the primary post-run analysis tool: "Which valid signals were skipped because of capital limits, and were they winners?"
+
+#### Signal metadata in real order records
+`signal_level` and `precision_score` added to real order records (passed from `Recommendation` through `place_order`). Enables correlation: do high-precision signals win more often?
+
+#### Virtual balance after close
+`virtual_balance_after_close` stored in each closed virtual order record (balance of the pool immediately after PnL is applied).
+
+#### New `VirtualTracker` helpers needed
+- `get_efficiency_score(symbol) -> float` — for real-order symbol ranking.
+- `get_preset_efficiency(symbol, preset_name) -> float` — for virtual preset ranking.
+
+### Files to create/modify (summary)
+| File | Change |
+|---|---|
+| `bot/leverage_tracker.py` | New |
+| `bot/balance_history.py` | New |
+| `bot/virtual_order_simulator.py` | Virtual balance, leverage_tracker, preset sorting, remove risk_manager dep |
+| `bot/virtual_tracker.py` | Add `get_efficiency_score`, `get_preset_efficiency` helpers |
+| `bot/order_executor.py` | `balance_at_open` in records; simplify `can_open_sync` |
+| `bot/risk_manager.py` | Remove sizing checks from `can_open_sync` |
+| `main.py` | Ranked loop, `_get_fresh_balance()`, balance_history calls, min_notionals dict |
+| `config/risk_config.py` | `use_allocation_weighting`, `max_leverage_level` defaults |
+| `dashboard/app/api/risk/route.ts` | New config fields |
+| `dashboard/app/risk/page.tsx` | Allocation checkbox, max/current leverage display |
+| `dashboard/app/api/balance-history/route.ts` | New |
+| `tests/test_leverage_tracker.py` | New |
 
 ---
 

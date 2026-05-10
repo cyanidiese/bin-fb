@@ -217,6 +217,24 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 - [ ] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
 - [ ] `tests/test_real_order_recording.py` — append, first-write, file creation
 
+## Phase 3.10 — Balance & Leverage Progression ✅ COMPLETE (2026-05-10)
+
+Design approved + implemented in session 14.
+
+- [x] `bot/leverage_tracker.py` — LeverageTracker: graduated level advancement, persistence, add/remove symbol, reset_for_mode
+- [x] `bot/balance_history.py` — append-only balance event logger (MAX 10k entries, atomic write)
+- [x] `bot/decision_log.py` — append-only placement decision logger (MAX 5k entries, atomic write)
+- [x] `bot/virtual_tracker.py` — added `get_efficiency_score(symbol)` + `get_preset_efficiency(symbol, preset_name)`
+- [x] `config/risk_config.py` + `bot/risk_manager.py` — `max_leverage_level`/`use_allocation_weighting` defaults; `can_open_sync(symbol)` simplified (removed `estimated_size_usdt` + allocation checks)
+- [x] `bot/order_executor.py` — `balance_at_open`, `signal_level`, `precision_score` in records; `leverage` in close result dicts
+- [x] `bot/virtual_order_simulator.py` — rewrote: virtual balance pool, leverage_tracker, preset-efficiency sorting, persistence
+- [x] `main.py` — efficiency-ranked cross-symbol loop, `_get_fresh_balance()` 5s TTL, LeverageTracker + bh_record + dl_record wired, real min_notionals fetched at startup
+- [x] `dashboard/app/api/balance-history/route.ts` — GET /api/balance-history?mode=&limit=
+- [x] `dashboard/app/api/risk/route.ts` + `dashboard/app/risk/page.tsx` — max_leverage_level input + use_allocation_weighting checkbox
+
+**Deferred (not in Phase 3.10 scope):**
+- [ ] Balance history chart on Risk page (time-series line + order event markers)
+
 ## Phase 4 — Order placement
 
 - [ ] Design order placement logic based on Recommendation

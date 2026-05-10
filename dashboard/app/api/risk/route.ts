@@ -19,6 +19,8 @@ const DEFAULT_CONFIG = {
   drawdown_hard_stop_pct: 20.0,
   backtest_initial_balance_usdt: 1000.0,
   symbol_weights: {} as Record<string, number>,
+  max_leverage_level: 5,
+  use_allocation_weighting: false,
 }
 
 function readJson(filePath: string, fallback: unknown) {

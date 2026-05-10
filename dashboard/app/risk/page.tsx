@@ -20,6 +20,8 @@ interface RiskConfig {
   drawdown_hard_stop_pct: number
   backtest_initial_balance_usdt: number
   symbol_weights: Record<string, number>
+  max_leverage_level: number
+  use_allocation_weighting: boolean
 }
 
 interface PerSymbol {
@@ -390,6 +392,26 @@ export default function RiskPage() {
             onChange={v => patchConfig({ min_profit_factor: Number(v) })}
             min={0.1} max={10} step={0.1}
           />
+          <LabeledInput
+            label="Max leverage level"
+            tooltip="LeverageTracker ceiling — global level will not advance past this value (1–20)"
+            value={config.max_leverage_level ?? 5}
+            onChange={v => patchConfig({ max_leverage_level: Number(v) })}
+            min={1}
+            max={20}
+            step={1}
+          />
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-gray-500 w-52 shrink-0" title="When disabled, position size = min_notional / leverage. Enable to use per-symbol weighted allocation.">
+              Use allocation weighting
+            </label>
+            <input
+              type="checkbox"
+              checked={config.use_allocation_weighting ?? false}
+              onChange={e => patchConfig({ use_allocation_weighting: e.target.checked })}
+              className="accent-indigo-500 h-4 w-4 cursor-pointer"
+            />
+          </div>
           <p className="text-[10px] text-gray-600 font-mono">
             Formula: leverage = base + floor(score × (min(max, tier_ceiling) − base))
           </p>

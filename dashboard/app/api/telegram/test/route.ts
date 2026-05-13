@@ -26,11 +26,11 @@ interface SymbolSummary {
 
 const SAMPLE_MESSAGES: Record<string, { text: string; mention: boolean }> = {
   trade_win: {
-    text: '✅ <b>BTCUSDT BUY — Win</b>\nPnL: <b>+12.34 USDT</b>\nEntry: 68,000.00 → Close: 68,450.00\nPreset: trail_15_from_30_full',
+    text: '✅ <b>BTCUSDT BUY — Win</b>\nPnL: <b>+12.34 USDT</b>\nBalance: 1,234.56 USDT\nEntry: 68,000.00 → Close: 68,450.00\nPreset: trail_15_from_30_full',
     mention: false,
   },
   trade_loss: {
-    text: '❌ <b>ETHUSDT SELL — Loss</b>\nPnL: <b>-5.20 USDT</b>\nEntry: 3,200.00 → Close: 3,218.50\nPreset: trail_15_from_30_full',
+    text: '❌ <b>ETHUSDT SELL — Loss</b>\nPnL: <b>-5.20 USDT</b>\nBalance: 1,229.36 USDT\nEntry: 3,200.00 → Close: 3,218.50\nPreset: trail_15_from_30_full',
     mention: false,
   },
   emergency: {

@@ -422,6 +422,15 @@ async def run() -> None:
                 pnl_usdt=c.get('pnl_usdt'),
             )
             virtual_order_simulator.record_real_pnl(c.get('pnl_usdt') or 0.0)
+            notifier.notify_trade_close(
+                symbol=c['symbol'],
+                side=c.get('side', ''),
+                pnl_usdt=c.get('pnl_usdt', 0.0),
+                entry_price=c.get('entry_price', 0.0),
+                close_price=c.get('close_price', 0.0),
+                preset_name=c.get('preset_name', ''),
+                balance_after=fresh_bal,
+            )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         for vc in virtual_closed:

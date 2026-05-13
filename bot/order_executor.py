@@ -416,15 +416,6 @@ class OrderExecutor:
         tmp = path.with_suffix('.json.tmp')
         tmp.write_text(json.dumps(records))
         tmp.replace(path)
-        if self._notifier is not None:
-            self._notifier.notify_trade_close(
-                symbol=symbol,
-                side=order.side,
-                pnl_usdt=pnl_usdt,
-                entry_price=order.entry_price,
-                close_price=close_price,
-                preset_name=order.preset_name,
-            )
 
     # ------------------------------------------------------------------ #
     # Exchange integration                                                 #

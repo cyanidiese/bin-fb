@@ -26,6 +26,7 @@ _TEST_SAMPLES: dict[str, tuple[str, bool]] = {
     "trade_win": (
         "✅ <b>BTCUSDT BUY — Win</b>\n"
         "PnL: <b>+12.34 USDT</b>\n"
+        "Balance: 1,234.56 USDT\n"
         "Entry: 68,000.00 → Close: 68,450.00\n"
         "Preset: trail_15_from_30_full",
         False,
@@ -33,6 +34,7 @@ _TEST_SAMPLES: dict[str, tuple[str, bool]] = {
     "trade_loss": (
         "❌ <b>ETHUSDT SELL — Loss</b>\n"
         "PnL: <b>-5.20 USDT</b>\n"
+        "Balance: 1,229.36 USDT\n"
         "Entry: 3,200.00 → Close: 3,218.50\n"
         "Preset: trail_15_from_30_full",
         False,
@@ -109,6 +111,7 @@ class Notifier:
         entry_price: float,
         close_price: float,
         preset_name: str,
+        balance_after: float = 0.0,
     ) -> None:
         win = pnl_usdt >= 0
         emoji = "✅" if win else "❌"
@@ -117,6 +120,7 @@ class Notifier:
         text = (
             f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b>\n"
             f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
+            f"Balance: {balance_after:,.2f} USDT\n"
             f"Entry: {entry_price:,.2f} → Close: {close_price:,.2f}\n"
             f"Preset: {html.escape(preset_name)}"
         )

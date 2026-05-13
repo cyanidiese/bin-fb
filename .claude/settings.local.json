@@ -124,7 +124,9 @@
       "Bash(curl -s \"http://localhost:3000/api/balance-history?mode=test&limit=10\")",
       "Bash(curl -s \"http://localhost:3000/api/balance-history?mode=live\")",
       "Bash(pkill -f \"next dev\")",
-      "Bash(curl -s -X POST http://localhost:3000/api/mode -H 'Content-Type: application/json' -d '{\"target_mode\":\"test\"}')"
+      "Bash(curl -s -X POST http://localhost:3000/api/mode -H 'Content-Type: application/json' -d '{\"target_mode\":\"test\"}')",
+      "Read(//Users/bohdanpaliichuk/.claude/plugins/**)",
+      "Read(//Users/bohdanpaliichuk/.claude/**)"
     ]
   }
 }

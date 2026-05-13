@@ -88,7 +88,7 @@ class Notifier:
             is_emergency = level == "emergency"
             if is_emergency or self._rate_limit_ok("system"):
                 emoji = {"info": "ℹ️", "warning": "⚠️", "emergency": "🚨"}.get(level, "")
-                text = f"{emoji} <b>{title}</b>\n{body}"
+                text = f"{emoji} <b>{html.escape(title)}</b>\n{html.escape(body)}"
                 try:
                     self._send_telegram(text, mention=is_emergency)
                 except Exception as exc:

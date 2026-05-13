@@ -31,10 +31,12 @@ Build a suite of 8 specialized Claude Code agents that assist in developing, mai
 Triggered when: new functionality, multi-module changes, anything touching order execution or real-money paths.
 
 ```
-User → Receptionist → Architect ──► [domain cluster] ──► Coder → Tester → Librarian
-                                     Trader ◄──► Analyst
-                                     (only if trading/strategy domain questions exist)
+User → Receptionist → Architect ──► Trader (standing advisor on all bot/ runtime changes)
+                           │              ◄──► Analyst (if strategy/data questions exist)
+                           └──────────────────────────────────────────► Coder → Tester → Librarian
 ```
+
+Trader is a **standing advisor** for Architect: any change touching `bot/` runtime modules goes through a Trader constraint check before Architect finalises scope. Trader either clears it ("no exchange constraints") or flags issues. Analyst joins when the change also has strategy or data implications.
 
 ### Small Fix Flow (on-demand, option C)
 
@@ -103,7 +105,7 @@ Haiku is sufficient — this is structured Q&A, not deep reasoning.
 | **Tools** | `Read`, `Bash`, `Glob`, `Grep` |
 | **Skills** | `project-knowledge` |
 
-The codebase oracle. For every incoming feature: checks if it already exists (this project has a history of re-implementing things), identifies which modules are touched, detects conflict risks, produces the minimal change surface. Also approves scope before Coder starts. Maintains a living module map via `project-knowledge` so it doesn't re-explore from scratch each session.
+The codebase oracle. For every incoming feature: checks if it already exists (this project has a history of re-implementing things), identifies which modules are touched, detects conflict risks, produces the minimal change surface. For any change touching `bot/` runtime modules, always consults Trader before finalising scope — Trader either clears it or flags exchange-side constraints Architect may not have seen. Maintains a living module map via `project-knowledge` so it doesn't re-explore from scratch each session.
 
 ---
 
@@ -112,12 +114,12 @@ The codebase oracle. For every incoming feature: checks if it already exists (th
 | Field | Value |
 |---|---|
 | **Model** | Sonnet 4.6 |
-| **Triggers** | Any feature involving orders, sizing, leverage, or exchange interaction; jointly with Analyst on strategy changes |
-| **Outputs to** | Architect (constraint report); Analyst (joint evaluation) |
+| **Triggers** | Standing advisor: all changes touching `bot/` runtime modules; jointly with Analyst on strategy/profit changes; explicit trading domain questions |
+| **Outputs to** | Architect (constraint report — clears or flags); Analyst (joint evaluation) |
 | **Tools** | `Read`, `WebFetch`, `WebSearch`, `Bash` |
 | **Skills** | None |
 
-Binance Futures domain expert. Answers: *"Can we do this on Binance?"* Knows exchange constraints — lot sizes, min notionals, leverage tiers, rate limits, order types, WebSocket behaviour, testnet quirks. Advises on order placement timing, stop logic, and margin calculations. Can fetch current Binance API docs when constraints need verification. Keeps the bot safe from exchange-side failures.
+Binance Futures domain expert and standing advisor to Architect. Answers: *"Can we do this on Binance?"* Knows exchange constraints — lot sizes, min notionals, leverage tiers, rate limits, order types, WebSocket behaviour, testnet quirks. Advises on order placement timing, stop logic, and margin calculations. Proactively flags exchange-side implications in Architect's proposed scope that Architect may not have recognised — not just answering when asked, but catching what wasn't asked. Can fetch current Binance API docs when constraints need verification. Keeps the bot safe from exchange-side failures.
 
 ---
 
@@ -203,7 +205,7 @@ Sonnet over Opus: the domain knowledge lives in the agent prompts and the projec
 |---|---|---|---|
 | Receptionist | Haiku 4.5 | Large features only | Very low |
 | Architect | Sonnet 4.6 | Large features + explicit | Medium |
-| Trader | Sonnet 4.6 | Trading domain questions | Low–medium |
+| Trader | Sonnet 4.6 | All bot/ runtime changes (standing) + domain questions | Medium |
 | Analyst | Sonnet 4.6 | Data questions + Planner | Low–medium |
 | Coder | Sonnet 4.6 | Every implementation | High (unavoidable) |
 | Tester | Sonnet 4.6 | After implementation | Medium |
@@ -231,9 +233,8 @@ Key token-saving decisions:
           ▼                  │              Analyst ◄──► Trader
       Architect ◄────────────┘
           │
-    [trading domain?]
-    Trader ◄──► Analyst
-          │
+    Trader (always, for bot/ changes) ◄──► Analyst (if strategy/data involved)
+          │ constraint report back to Architect
           ▼
         Coder ──► [escalation?] ──► back to full pipeline
           │

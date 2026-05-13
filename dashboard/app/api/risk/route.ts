@@ -23,6 +23,7 @@ const DEFAULT_CONFIG = {
   use_allocation_weighting: false,
   min_balance_pct: 15.0,
   telegram_notify_interval_s: 120,
+  scenario: 'default',
 }
 
 function readJson(filePath: string, fallback: unknown) {

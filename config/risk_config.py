@@ -35,6 +35,7 @@ DEFAULT_CONFIG: dict = {
     "use_allocation_weighting": False,
     # Telegram rate limiting
     "telegram_notify_interval_s": 120,
+    "scenario": "default",
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

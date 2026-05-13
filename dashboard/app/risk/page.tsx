@@ -23,6 +23,7 @@ interface RiskConfig {
   max_leverage_level: number
   use_allocation_weighting: boolean
   min_balance_pct: number
+  scenario?: string
 }
 
 interface PerSymbol {
@@ -403,16 +404,29 @@ export default function RiskPage() {
             step={1}
           />
           <div className="flex items-center gap-3">
-            <label className="text-xs text-gray-500 w-52 shrink-0" title="When disabled, position size = min_notional / leverage. Enable to use per-symbol weighted allocation.">
-              Use allocation weighting
+            <label
+              className="text-xs text-gray-500 w-52 shrink-0"
+              title="Controls how each symbol's leverage is determined and when it can increase."
+            >
+              Leverage scenario
             </label>
-            <input
-              type="checkbox"
-              checked={config.use_allocation_weighting ?? false}
-              onChange={e => patchConfig({ use_allocation_weighting: e.target.checked })}
-              className="accent-indigo-500 h-4 w-4 cursor-pointer"
-            />
+            <select
+              value={(config.scenario as string) ?? 'default'}
+              onChange={e => patchConfig({ scenario: e.target.value })}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              <option value="default">Default — cross-symbol progression</option>
+              <option value="allocation">Allocation — per-symbol independent</option>
+              <option value="first_has_most">First Has the Most — score-based, instant</option>
+            </select>
           </div>
+          <p className="text-[10px] text-gray-500 font-mono">
+            {(config.scenario as string) === 'allocation'
+              ? 'Each symbol advances independently after 1 close at its current level.'
+              : (config.scenario as string) === 'first_has_most'
+              ? 'Leverage = base + floor(score × (max − base)). No cross-symbol wait.'
+              : 'All symbols must complete level N before any advances to N+1.'}
+          </p>
           <p className="text-[10px] text-gray-600 font-mono">
             Formula: leverage = base + floor(score × (min(max, tier_ceiling) − base))
           </p>

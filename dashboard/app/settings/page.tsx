@@ -65,6 +65,8 @@ export default function SettingsPage() {
   const [telegram, setTelegram] = useState({ token: '', chat_id: '' })
   const [telegramStatus, setTelegramStatus] = useState<'idle'|'testing'|'ok'|'error'>('idle')
   const [telegramError, setTelegramError] = useState('')
+  const [notifyInterval, setNotifyInterval] = useState(120)
+  const [testMsgType, setTestMsgType] = useState('connection')
   const [preview, setPreview] = useState({ liveRunning: false, testRunning: false, emergency: false })
 
   useEffect(() => {
@@ -74,6 +76,9 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch('/api/risk').then(r => r.json()).then(d => {
       if (d.config?.telegram) setTelegram(d.config.telegram)
+      if (d.config?.telegram_notify_interval_s != null) {
+        setNotifyInterval(Number(d.config.telegram_notify_interval_s))
+      }
     }).catch(() => {})
   }, [])
 
@@ -134,11 +139,23 @@ export default function SettingsPage() {
     } catch {}
   }
 
+  const saveInterval = async (value: number) => {
+    await fetch('/api/risk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegram_notify_interval_s: value }),
+    })
+  }
+
   const testTelegram = async () => {
     setTelegramStatus('testing')
     setTelegramError('')
     try {
-      const r = await fetch('/api/telegram/test', { method: 'POST' })
+      const r = await fetch('/api/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: testMsgType }),
+      })
       const d = await r.json()
       setTelegramStatus(d.ok ? 'ok' : 'error')
       if (!d.ok) setTelegramError(d.error || 'Unknown error')
@@ -476,6 +493,37 @@ export default function SettingsPage() {
               onBlur={saveTelegram}
               placeholder="123456789"
               className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Alert interval (min gap between messages)</label>
+            <select
+              value={notifyInterval}
+              onChange={e => {
+                const v = Number(e.target.value)
+                setNotifyInterval(v)
+                saveInterval(v)
+              }}
+              className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500"
+            >
+              <option value={30}>30 seconds</option>
+              <option value={120}>2 minutes</option>
+              <option value={300}>5 minutes</option>
+              <option value={600}>10 minutes</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Test message type</label>
+            <select
+              value={testMsgType}
+              onChange={e => setTestMsgType(e.target.value)}
+              className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="connection">Connection (backtest highlights)</option>
+              <option value="trade_win">Trade Win</option>
+              <option value="trade_loss">Trade Loss</option>
+              <option value="emergency">Emergency (with @bo_pal)</option>
+              <option value="balance_warning">Balance Warning</option>
+            </select>
           </div>
           <div className="flex items-center gap-3">
             <button

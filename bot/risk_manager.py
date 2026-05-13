@@ -185,6 +185,7 @@ class RiskManager:
             self._scenario_name = name
             self._scenario_global_level = global_level
             self._scenario_per_symbol = dict(per_symbol)
+            self._write_snapshot()
 
     # ------------------------------------------------------------------ #
     # Async thin wrapper                                                   #

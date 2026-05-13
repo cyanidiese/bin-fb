@@ -80,12 +80,19 @@ class AllocationScenario:
         active_symbols: list[str],
         data_path: Path,
         max_level: int = 5,
+        inherit_from_level: int = 0,
     ) -> None:
         self._data_path = data_path
         self._max_level = max_level
         self._symbol_levels: dict[str, int] = {s: 1 for s in active_symbols}
         self._completed: dict[str, set[int]] = {}
         self._load()
+        # Seed symbols missing from saved state when inheriting progress from another scenario
+        if inherit_from_level > 1:
+            seed = max(1, inherit_from_level - 1)
+            for sym in active_symbols:
+                if sym not in self._symbol_levels:
+                    self._symbol_levels[sym] = seed
 
     def get_leverage(
         self, symbol: str, score: float, base: int, max_policy: int, bracket_max: int
@@ -184,9 +191,10 @@ def create_scenario(
     active_symbols: list[str],
     data_path: Path,
     max_level: int = 5,
+    inherit_from_level: int = 0,
 ) -> LeverageScenario:  # type: ignore[return-value]
     if name == "allocation":
-        return AllocationScenario(mode, active_symbols, data_path, max_level)
+        return AllocationScenario(mode, active_symbols, data_path, max_level, inherit_from_level)
     if name == "first_has_most":
         return FirstHasMostScenario()
     if name != "default":

@@ -169,7 +169,7 @@ async def run() -> None:
             sym, score,
             risk_cfg.get("base_leverage", 1),
             risk_cfg.get("max_leverage_level", 5),
-            125,
+            125,  # Binance absolute max; virtual sim uses best-case ceiling
         )
 
     # min_notionals populated later after exchange fetch; default to 5 USDT until then
@@ -383,6 +383,7 @@ async def run() -> None:
         risk_cfg = load_risk_config()
         new_scenario_name = risk_cfg.get("scenario", "default")
         if new_scenario_name != _active_scenario_name:
+            prior_global_level = scenario.get_global_level()
             _active_scenario_name = new_scenario_name
             scenario = create_scenario(
                 name=new_scenario_name,
@@ -390,6 +391,7 @@ async def run() -> None:
                 active_symbols=symbol_registry.get_symbols(),
                 data_path=_scenario_data_path(new_scenario_name, mode_manager.current_mode),
                 max_level=risk_cfg.get("max_leverage_level", 5),
+                inherit_from_level=prior_global_level if new_scenario_name == "allocation" else 0,
             )
             logger.info(f"Scenario switched to: {new_scenario_name}")
             _push_scenario_info()

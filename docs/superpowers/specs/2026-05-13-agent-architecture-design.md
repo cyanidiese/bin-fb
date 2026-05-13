@@ -103,9 +103,9 @@ Haiku is sufficient — this is structured Q&A, not deep reasoning.
 | **Triggers** | After Receptionist on large features; explicit "check this solution / review this architecture" |
 | **Outputs to** | Domain cluster (if needed) → Coder |
 | **Tools** | `Read`, `Bash`, `Glob`, `Grep` |
-| **Skills** | `project-knowledge` |
+| **Skills** | `project-knowledge`, `superpowers:systematic-debugging` |
 
-The codebase oracle. For every incoming feature: checks if it already exists (this project has a history of re-implementing things), identifies which modules are touched, detects conflict risks, produces the minimal change surface. For any change touching `bot/` runtime modules, always consults Trader before finalising scope — Trader either clears it or flags exchange-side constraints Architect may not have seen. Maintains a living module map via `project-knowledge` so it doesn't re-explore from scratch each session.
+The codebase oracle. For every incoming feature: checks if it already exists (this project has a history of re-implementing things), identifies which modules are touched, detects conflict risks, produces the minimal change surface. For any change touching `bot/` runtime modules, always consults Trader before finalising scope — Trader either clears it or flags exchange-side constraints Architect may not have seen. When investigating bugs, uses `superpowers:systematic-debugging` to reproduce → hypothesise → identify root cause before handing a diagnosis to Coder. Maintains a living module map via `project-knowledge` so it doesn't re-explore from scratch each session.
 
 ---
 
@@ -145,7 +145,7 @@ Reads the actual data — `backtest_results_*.json`, `preset_efficiency_*.json`,
 | **Triggers** | After Architect approves scope (large features); directly on small fixes; explicit "implement this" |
 | **Outputs to** | Tester |
 | **Tools** | `Read`, `Edit`, `Write`, `Bash` |
-| **Skills** | `superpowers:systematic-debugging`, `superpowers:verification-before-completion` |
+| **Skills** | `superpowers:verification-before-completion` |
 
 Primary implementation agent. Writes Python, TypeScript, config files. Enforces code quality: well-named identifiers, comments only where the *why* is non-obvious, no over-engineering, no half-finished implementations. Owns refactoring when Architect identifies structural problems. Fixes bugs jointly with Architect when root cause analysis is needed.
 

@@ -61,6 +61,10 @@ class RiskManager:
         # {symbol: (score: float, timestamp: float, true_pf: float)}
         self._perf_cache: dict[str, tuple[float, float, float]] = {}
 
+        self._scenario_name: str = "default"
+        self._scenario_global_level: int = 1
+        self._scenario_per_symbol: dict[str, int] = {}
+
         logger.info(
             f"RiskManager({mode}) — balance={initial_balance:.2f} USDT "
             f"config={config_path}"
@@ -170,6 +174,17 @@ class RiskManager:
         """Full state dump written to risk_state.json."""
         with self._lock:
             return self._build_snapshot()
+
+    def set_scenario_info(
+        self,
+        name: str,
+        global_level: int,
+        per_symbol: dict[str, int],
+    ) -> None:
+        with self._lock:
+            self._scenario_name = name
+            self._scenario_global_level = global_level
+            self._scenario_per_symbol = dict(per_symbol)
 
     # ------------------------------------------------------------------ #
     # Async thin wrapper                                                   #
@@ -307,6 +322,7 @@ class RiskManager:
             per_symbol[sym] = {
                 "allocation_usdt": round(self._calc_allocation(sym, cfg), 2),
                 "leverage": self._calc_leverage(sym, cfg),
+                "leverage_level": self._scenario_per_symbol.get(sym, self._scenario_global_level),
                 "performance_score": round(score, 3),
             }
         return {
@@ -320,6 +336,8 @@ class RiskManager:
             "active_tier": self._get_tier(cfg),
             "last_event": self._last_notify_event,
             "last_event_time": self._last_notify_time,
+            "scenario": self._scenario_name,
+            "leverage_level": self._scenario_global_level,
             "per_symbol": per_symbol,
         }
 

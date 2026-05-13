@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import SymbolSwitcher from './SymbolSwitcher'
 import { useSymbolContext } from '@/lib/SymbolContext'
@@ -17,8 +17,14 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { symbol, setSymbol, availableSymbols } = useSymbolContext()
   const [unread, setUnread] = useState(0)
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.push('/login')
+  }
 
   useEffect(() => {
     const lastRead = localStorage.getItem('log_last_read')
@@ -61,8 +67,16 @@ export default function NavBar() {
           </span>
         )}
       </Link>
-      <div className="ml-auto max-w-[50%] min-w-0">
-        <SymbolSwitcher symbols={availableSymbols} selected={symbol} onSelect={setSymbol} />
+      <div className="ml-auto flex items-center gap-3 min-w-0">
+        <div className="max-w-[200px] min-w-0">
+          <SymbolSwitcher symbols={availableSymbols} selected={symbol} onSelect={setSymbol} />
+        </div>
+        <button
+          onClick={handleLogout}
+          className="text-gray-400 hover:text-white transition-colors text-sm shrink-0"
+        >
+          Logout
+        </button>
       </div>
     </nav>
   )

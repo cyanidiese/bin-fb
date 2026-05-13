@@ -11,13 +11,21 @@ interface RiskConfig {
   balance_tiers: Array<{ min_balance_usdt: number; max_deploy_pct: number; max_leverage_ceiling: number }>
   base_leverage: number
   max_leverage: number
+  max_leverage_level?: number
   min_balance_pct?: number
   symbol_weights?: Record<string, number>
+  scenario?: string
 }
 
 interface RiskStateSnapshot {
   balance: number
-  per_symbol: Record<string, { allocation_usdt: number; leverage: number; performance_score: number }>
+  leverage_level?: number
+  per_symbol: Record<string, {
+    allocation_usdt: number
+    leverage: number
+    leverage_level?: number
+    performance_score: number
+  }>
 }
 
 interface Props {
@@ -34,6 +42,57 @@ const LEVERAGES = [1, 2, 3, 5, 10, 15, 20, 25, 50, 75, 100, 125]
 function activeTier(config: RiskConfig, balance: number) {
   const sorted = [...config.balance_tiers].sort((a, b) => a.min_balance_usdt - b.min_balance_usdt)
   return sorted.reduce((active, t) => balance >= t.min_balance_usdt ? t : active, sorted[0])
+}
+
+type ScenarioId = 'default' | 'allocation' | 'first_has_most'
+
+function computeSizingDefault(
+  symbol: string,
+  balance: number,
+  config: RiskConfig,
+  riskState: RiskStateSnapshot | undefined,
+): { margin: number; lev: number } {
+  const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage_level ?? riskState?.leverage_level ?? 1)
+  const tier = activeTier(config, balance)
+  const reserve = balance * (config.min_balance_pct ?? 0) / 100
+  const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
+  const numSymbols = Object.keys(riskState?.per_symbol ?? {}).length || 1
+  return { margin: pool / numSymbols, lev }
+}
+
+function computeSizingAllocation(
+  symbol: string,
+  balance: number,
+  config: RiskConfig,
+  riskState: RiskStateSnapshot | undefined,
+): { margin: number; lev: number } {
+  const tier = activeTier(config, balance)
+  const reserve = balance * (config.min_balance_pct ?? 0) / 100
+  const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
+  const weights = config.symbol_weights ?? {}
+  const totalW = Object.values(weights).reduce((a, b) => a + b, 0) || 1
+  const w = weights[symbol] ?? 1
+  const margin = pool * (w / totalW)
+  const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage_level ?? 1)
+  return { margin, lev }
+}
+
+function computeSizingFirstHasMost(
+  symbol: string,
+  balance: number,
+  config: RiskConfig,
+  riskState: RiskStateSnapshot | undefined,
+): { margin: number; lev: number } {
+  const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
+  const base = config.base_leverage ?? 1
+  const maxLev = config.max_leverage_level ?? 5
+  const raw = base + Math.floor(score * (maxLev - base))
+  const lev = Math.max(base, Math.min(maxLev, raw))
+  const tier = activeTier(config, balance)
+  const reserve = balance * (config.min_balance_pct ?? 0) / 100
+  const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
+  const numSymbols = Object.keys(riskState?.per_symbol ?? {}).length || 1
+  return { margin: pool / numSymbols, lev }
 }
 
 function computeSizing(
@@ -119,6 +178,9 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
 
   const [useSharedBalance, setUseSharedBalance] = useState(false)
   const [totalBalance, setTotalBalance] = useState<number>(() => riskState?.balance ?? 1000)
+  const [scenarioTab, setScenarioTab] = useState<ScenarioId>(
+    (riskConfig?.scenario as ScenarioId | undefined) ?? 'default'
+  )
 
   const [combinedSort,   setCombinedSort]   = useState<SortState>({ key: 'total',  dir: 'desc' })
   const [sideBySideSort, setSideBySideSort] = useState<SortState>({ key: '',       dir: 'desc' })
@@ -131,13 +193,22 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
     const out: Record<string, { margin: number; lev: number }> = {}
     for (const sym of loadedSymbols) {
       if (useSharedBalance && riskConfig) {
-        out[sym] = computeSizing(sym, totalBalance, riskConfig, riskState)
+        switch (scenarioTab) {
+          case 'allocation':
+            out[sym] = computeSizingAllocation(sym, totalBalance, riskConfig, riskState)
+            break
+          case 'first_has_most':
+            out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState)
+            break
+          default:
+            out[sym] = computeSizingDefault(sym, totalBalance, riskConfig, riskState)
+        }
       } else {
         out[sym] = { margin: positionSize, lev: leverage }
       }
     }
     return out
-  }, [useSharedBalance, riskConfig, riskState, totalBalance, positionSize, leverage, loadedSymbols])
+  }, [useSharedBalance, scenarioTab, riskConfig, riskState, totalBalance, positionSize, leverage, loadedSymbols])
 
   const allPresetNames = useMemo(() => {
     const names = new Set<string>()
@@ -337,6 +408,30 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
           )}
         </div>
       </div>
+
+      {/* Scenario tabs — only visible in shared balance mode */}
+      {useSharedBalance && riskConfig && (
+        <div className="flex items-center gap-1">
+          <span className="text-gray-600 text-[10px] mr-1">Scenario:</span>
+          {([
+            ['default',        'Default'],
+            ['allocation',     'Allocation'],
+            ['first_has_most', 'First Has Most'],
+          ] as [ScenarioId, string][]).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setScenarioTab(id)}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                scenarioTab === id
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Shared balance: per-symbol allocation breakdown */}
       {useSharedBalance && riskConfig && (

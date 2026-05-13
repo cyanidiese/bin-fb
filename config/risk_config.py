@@ -33,6 +33,8 @@ DEFAULT_CONFIG: dict = {
     "max_leverage_level": 5,
     # Allocation weighting (archived — disabled by default)
     "use_allocation_weighting": False,
+    # Telegram rate limiting
+    "telegram_notify_interval_s": 120,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

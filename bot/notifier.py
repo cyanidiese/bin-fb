@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,11 +25,14 @@ class Notifier:
         alert_path: Path,
         telegram_token: str,
         telegram_chat_id: str,
+        min_interval_s: float = 120.0,
     ) -> None:
         self._log_path = log_path
         self._alert_path = alert_path
         self._token = telegram_token
         self._chat_id = telegram_chat_id
+        self._min_interval_s = min_interval_s
+        self._last_sent: dict[str, float] = {}
 
     def notify(
         self,
@@ -49,17 +53,63 @@ class Notifier:
                 logger.error(f"alert_state write failed: {exc}")
 
         if self._token and self._chat_id:
-            try:
-                self._send_telegram(level, title, body)
-            except Exception as exc:
-                logger.error("Telegram send failed (HTTP error)")
+            is_emergency = level == "emergency"
+            if is_emergency or self._rate_limit_ok("system"):
+                emoji = {"info": "ℹ️", "warning": "⚠️", "emergency": "🚨"}.get(level, "")
+                text = f"{emoji} <b>{title}</b>\n{body}"
                 try:
-                    append_entry(
-                        self._log_path, "warning",
-                        "Telegram send failed", str(exc), "notifier"
-                    )
-                except Exception:
-                    pass
+                    self._send_telegram(text, mention=is_emergency)
+                except Exception as exc:
+                    logger.error("Telegram send failed (HTTP error)")
+                    try:
+                        append_entry(
+                            self._log_path, "warning",
+                            "Telegram send failed", str(exc), "notifier"
+                        )
+                    except Exception:
+                        pass
+
+    def notify_trade_close(
+        self,
+        symbol: str,
+        side: str,
+        pnl_usdt: float,
+        entry_price: float,
+        close_price: float,
+        preset_name: str,
+    ) -> None:
+        win = pnl_usdt >= 0
+        emoji = "✅" if win else "❌"
+        result = "Win" if win else "Loss"
+        sign = "+" if pnl_usdt >= 0 else ""
+        text = (
+            f"{emoji} <b>{symbol} {side} — {result}</b>\n"
+            f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
+            f"Entry: {entry_price:,.2f} → Close: {close_price:,.2f}\n"
+            f"Preset: {preset_name}"
+        )
+        try:
+            append_entry(
+                self._log_path, "info",
+                f"{symbol} {side} {result}", f"pnl={pnl_usdt:.2f}", "order_executor",
+            )
+        except Exception as exc:
+            logger.error(f"system_log write failed: {exc}")
+
+        if not (self._token and self._chat_id):
+            return
+        if not self._rate_limit_ok("trade"):
+            return
+        try:
+            self._send_telegram(text)
+        except Exception as exc:
+            logger.error("Telegram trade_close send failed")
+            try:
+                append_entry(
+                    self._log_path, "warning", "Telegram send failed", str(exc), "notifier"
+                )
+            except Exception:
+                pass
 
     def dismiss(self, alert_id: str) -> None:
         state = self._read_alert_state()
@@ -67,17 +117,60 @@ class Notifier:
             state["dismissed_ids"].append(alert_id)
         self._write_alert_state(state)
 
-    def send_test(self) -> tuple[bool, str]:
-        """Returns (ok, error_message)."""
+    def send_test(self, msg_type: str = "connection") -> tuple[bool, str]:
+        """Returns (ok, error_message). Always bypasses rate limit."""
         if not self._token or not self._chat_id:
             return False, "Token or chat_id not configured"
+
+        _SAMPLES: dict[str, tuple[str, bool]] = {
+            "connection": (
+                "ℹ️ <b>Test notification</b>\nBot notifier is working.",
+                False,
+            ),
+            "trade_win": (
+                "✅ <b>BTCUSDT BUY — Win</b>\n"
+                "PnL: <b>+12.34 USDT</b>\n"
+                "Entry: 68,000.00 → Close: 68,450.00\n"
+                "Preset: trail_15_from_30_full",
+                False,
+            ),
+            "trade_loss": (
+                "❌ <b>ETHUSDT SELL — Loss</b>\n"
+                "PnL: <b>−5.20 USDT</b>\n"
+                "Entry: 3,200.00 → Close: 3,218.50\n"
+                "Preset: trail_15_from_30_full",
+                False,
+            ),
+            "emergency": (
+                "🚨 <b>Test emergency alert</b>\n"
+                "This is a test of the emergency notification.",
+                True,
+            ),
+            "balance_warning": (
+                "⚠️ <b>Low balance warning</b>\n"
+                "Balance 42.10 USDT is below threshold 50.00 USDT.",
+                False,
+            ),
+        }
+
+        if msg_type not in _SAMPLES:
+            return False, f"Unknown message type: {msg_type}"
+
+        text, mention = _SAMPLES[msg_type]
         try:
-            self._send_telegram("info", "Test notification", "Bot notifier is working.")
+            self._send_telegram(text, mention=mention)
             return True, ""
         except Exception as exc:
             return False, str(exc)
 
     # ------------------------------------------------------------------ #
+
+    def _rate_limit_ok(self, category: str) -> bool:
+        now = time.monotonic()
+        if now - self._last_sent.get(category, 0.0) < self._min_interval_s:
+            return False
+        self._last_sent[category] = now
+        return True
 
     def _append_alert(self, level: str, title: str, body: str, source: str) -> None:
         state = self._read_alert_state()
@@ -91,13 +184,13 @@ class Notifier:
         })
         self._write_alert_state(state)
 
-    def _send_telegram(self, level: str, title: str, body: str) -> None:
-        emoji = {"info": "ℹ️", "warning": "⚠️", "emergency": "🚨"}.get(level, "")
-        text = f"{emoji} *{title}*\n{body}"
+    def _send_telegram(self, text: str, mention: bool = False) -> None:
+        if mention:
+            text = f"@bo_pal {text}"
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
         resp = requests.post(
             url,
-            json={"chat_id": self._chat_id, "text": text, "parse_mode": "Markdown"},
+            json={"chat_id": self._chat_id, "text": text, "parse_mode": "HTML"},
             timeout=10,
         )
         try:

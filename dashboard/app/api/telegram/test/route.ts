@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { BOT_ROOT } from '../../_utils'
 import path from 'path'
 import fs from 'fs'
@@ -10,8 +10,6 @@ interface Preset {
   total_profit_pct: number
   total_trades: number
   win_rate: number
-  balance_start: number
-  balance_end: number
 }
 
 interface BacktestFile {
@@ -24,8 +22,25 @@ interface SymbolSummary {
   profit: number
   trades: number
   winRate: number
-  balanceStart: number
-  balanceEnd: number
+}
+
+const SAMPLE_MESSAGES: Record<string, { text: string; mention: boolean }> = {
+  trade_win: {
+    text: '✅ <b>BTCUSDT BUY — Win</b>\nPnL: <b>+12.34 USDT</b>\nEntry: 68,000.00 → Close: 68,450.00\nPreset: trail_15_from_30_full',
+    mention: false,
+  },
+  trade_loss: {
+    text: '❌ <b>ETHUSDT SELL — Loss</b>\nPnL: <b>-5.20 USDT</b>\nEntry: 3,200.00 → Close: 3,218.50\nPreset: trail_15_from_30_full',
+    mention: false,
+  },
+  emergency: {
+    text: '🚨 <b>Test emergency alert</b>\nThis is a test of the emergency notification.',
+    mention: true,
+  },
+  balance_warning: {
+    text: '⚠️ <b>Low balance warning</b>\nBalance 42.10 USDT is below threshold 50.00 USDT.',
+    mention: false,
+  },
 }
 
 function esc(s: string): string {
@@ -36,13 +51,35 @@ function sign(n: number): string {
   return n >= 0 ? `+${n.toFixed(1)}%` : `${n.toFixed(1)}%`
 }
 
-function buildMessage(summaries: SymbolSummary[]): string {
+function buildConnectionMessage(): string {
+  let files: string[]
+  try {
+    files = fs.readdirSync(PUBLIC_DIR).filter(f => f.startsWith('backtest_results_') && f.endsWith('.json'))
+  } catch {
+    return '🤖 <b>Binance Futures Bot</b>\n\n✅ Notifier connected — no backtest data yet.'
+  }
+
+  const summaries: SymbolSummary[] = []
+  for (const file of files) {
+    try {
+      const data: BacktestFile = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, file), 'utf8'))
+      const presets = Object.values(data.presets ?? {})
+      if (presets.length === 0) continue
+      const best = presets.reduce((a, b) => b.total_profit_pct > a.total_profit_pct ? b : a)
+      summaries.push({ symbol: data.symbol, profit: best.total_profit_pct, trades: best.total_trades, winRate: best.win_rate })
+    } catch { /* skip corrupt file */ }
+  }
+
+  if (summaries.length === 0) {
+    return '🤖 <b>Binance Futures Bot</b>\n\n✅ Notifier connected — no backtest data yet.'
+  }
+
   const sorted = [...summaries].sort((a, b) => b.profit - a.profit)
   const profitable = summaries.filter(s => s.profit > 0).length
   const avgProfit = summaries.reduce((a, s) => a + s.profit, 0) / summaries.length
   const totalTrades = summaries.reduce((a, s) => a + s.trades, 0)
-
   const medals = ['🥇', '🥈', '🥉']
+
   const rows = sorted.map((s, i) => {
     const medal = medals[i] ?? '  '
     const sym = esc(s.symbol.replace('USDT', ''))
@@ -52,7 +89,7 @@ function buildMessage(summaries: SymbolSummary[]): string {
     return `${medal} <b>${sym}</b>  ${profitTag}  ${s.trades}T  WR ${wr}%`
   })
 
-  const lines: string[] = [
+  return [
     '🤖 <b>Binance Futures Bot — Backtest Highlights</b>',
     '',
     `Best preset profit per symbol (${summaries.length} active):`,
@@ -63,42 +100,10 @@ function buildMessage(summaries: SymbolSummary[]): string {
     `✅ <b>${profitable}/${summaries.length}</b> symbols profitable`,
     '',
     '<i>Notifier connected — alerts are live.</i>',
-  ]
-
-  return lines.join('\n')
+  ].join('\n')
 }
 
-function loadSummaries(): SymbolSummary[] {
-  const summaries: SymbolSummary[] = []
-  let files: string[]
-  try {
-    files = fs.readdirSync(PUBLIC_DIR).filter(f => f.startsWith('backtest_results_') && f.endsWith('.json'))
-  } catch {
-    return summaries
-  }
-
-  for (const file of files) {
-    try {
-      const data: BacktestFile = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, file), 'utf8'))
-      const presets = Object.values(data.presets ?? {})
-      if (presets.length === 0) continue
-      const best = presets.reduce((a, b) => b.total_profit_pct > a.total_profit_pct ? b : a)
-      summaries.push({
-        symbol: data.symbol,
-        profit: best.total_profit_pct,
-        trades: best.total_trades,
-        winRate: best.win_rate,
-        balanceStart: best.balance_start,
-        balanceEnd: best.balance_end,
-      })
-    } catch {
-      // skip corrupt file
-    }
-  }
-  return summaries
-}
-
-export async function POST() {
+export async function POST(req: NextRequest) {
   let token = ''
   let chatId = ''
   try {
@@ -116,10 +121,24 @@ export async function POST() {
     )
   }
 
-  const summaries = loadSummaries()
-  const text = summaries.length > 0
-    ? buildMessage(summaries)
-    : '🤖 <b>Binance Futures Bot</b>\n\n✅ Notifier connected — no backtest data yet.'
+  let msgType = 'connection'
+  try {
+    const body = await req.json()
+    if (body?.type && typeof body.type === 'string') msgType = body.type
+  } catch { /* default to connection */ }
+
+  let text: string
+  let mention = false
+
+  if (msgType === 'connection') {
+    text = buildConnectionMessage()
+  } else if (msgType in SAMPLE_MESSAGES) {
+    ;({ text, mention } = SAMPLE_MESSAGES[msgType])
+  } else {
+    return NextResponse.json({ ok: false, error: `Unknown message type: ${msgType}` }, { status: 400 })
+  }
+
+  if (mention) text = `@bo_pal ${text}`
 
   try {
     const url = `https://api.telegram.org/bot${token}/sendMessage`

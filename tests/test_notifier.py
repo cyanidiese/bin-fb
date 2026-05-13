@@ -92,3 +92,96 @@ def test_send_test_no_credentials(tmp_path):
     ok, msg = n.send_test()
     assert ok is False
     assert "not configured" in msg
+
+
+# ── Rate limiting ───────────────────────────────────────────────────── #
+
+def _make_notifier_with_creds(tmp_path, min_interval_s=120.0):
+    return Notifier(
+        log_path=tmp_path / "system_log.json",
+        alert_path=tmp_path / "alert_state.json",
+        telegram_token="tok",
+        telegram_chat_id="123",
+        min_interval_s=min_interval_s,
+    )
+
+
+def _mock_resp():
+    m = MagicMock()
+    m.raise_for_status.return_value = None
+    return m
+
+
+def test_rate_limit_drops_second_trade_message(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close("BTCUSDT", "BUY", 10.0, 68000.0, 68500.0, "preset_a")
+        n.notify_trade_close("ETHUSDT", "SELL", -5.0, 3200.0, 3250.0, "preset_b")
+    assert mock_post.call_count == 1
+
+
+def test_rate_limit_allows_after_interval(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close("BTCUSDT", "BUY", 10.0, 68000.0, 68500.0, "preset_a")
+        n._last_sent["trade"] = 0.0  # simulate interval elapsed
+        n.notify_trade_close("ETHUSDT", "SELL", -5.0, 3200.0, 3250.0, "preset_b")
+    assert mock_post.call_count == 2
+
+
+def test_emergency_bypasses_rate_limit(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify("emergency", "Alert 1", "body", "test")
+        n.notify("emergency", "Alert 2", "body", "test")
+    assert mock_post.call_count == 2
+
+
+# ── Message format ──────────────────────────────────────────────────── #
+
+def test_trade_close_win_format(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close("BTCUSDT", "BUY", 12.34, 68000.0, 68500.0, "trail_15")
+    text = mock_post.call_args[1]["json"]["text"]
+    assert "Win" in text
+    assert "BTCUSDT" in text
+    assert "+12.34" in text
+    assert "trail_15" in text
+
+
+def test_trade_close_loss_format(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close("ETHUSDT", "SELL", -5.20, 3200.0, 3220.0, "trail_15")
+    text = mock_post.call_args[1]["json"]["text"]
+    assert "Loss" in text
+    assert "ETHUSDT" in text
+    assert "5.20" in text
+
+
+def test_emergency_includes_mention(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify("emergency", "Crash", "details", "main")
+    text = mock_post.call_args[1]["json"]["text"]
+    assert "@bo_pal" in text
+
+
+# ── send_test ───────────────────────────────────────────────────────── #
+
+def test_send_test_unknown_type(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    ok, err = n.send_test("foobar")
+    assert ok is False
+    assert "foobar" in err
+
+
+def test_send_test_bypasses_rate_limit(tmp_path):
+    import time as _time
+    n = _make_notifier_with_creds(tmp_path)
+    n._last_sent["trade"] = _time.monotonic()  # saturate trade category
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        ok, _ = n.send_test("trade_win")
+    assert ok is True
+    assert mock_post.call_count == 1

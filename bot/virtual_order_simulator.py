@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
@@ -14,7 +14,6 @@ from bot.recommendation_engine import RecommendationEngine
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
     from bot.data_feed import DataFeed
-    from bot.leverage_tracker import LeverageTracker
     from bot.virtual_tracker import VirtualTracker
     from config.settings import Settings
 
@@ -37,7 +36,7 @@ class VirtualOrderSimulator:
         mode: str,
         all_presets: dict,
         project_root: Path,
-        leverage_tracker: 'LeverageTracker',
+        get_leverage: Callable[[str], int],
         initial_balance: float,
         virtual_tracker: 'VirtualTracker',
         min_notionals: dict[str, float],
@@ -45,7 +44,7 @@ class VirtualOrderSimulator:
         self._mode = mode
         self._all_presets = all_presets
         self._project_root = project_root
-        self._leverage_tracker = leverage_tracker
+        self._get_leverage = get_leverage
         self._virtual_tracker = virtual_tracker
         self._min_notionals = min_notionals
         # symbol -> {preset_name: order_record_dict}
@@ -103,7 +102,7 @@ class VirtualOrderSimulator:
         open_for_symbol = self._open.setdefault(symbol, {})
         fake_for_symbol = self._fake_orders.setdefault(symbol, {})
 
-        lev = self._leverage_tracker.get_current_level()
+        lev = self._get_leverage(symbol)
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
         margin = min_notional / lev if lev > 0 else min_notional
 

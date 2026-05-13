@@ -78,20 +78,14 @@ from bot.virtual_order_simulator import VirtualOrderSimulator
 
 
 def make_simulator(tmp_path, mode='test'):
-    from bot.leverage_tracker import LeverageTracker
     all_presets = {'preset_x': {}, 'preset_y': {}}
-    lt = LeverageTracker(
-        mode=mode,
-        active_symbols=['BTCUSDT'],
-        data_path=tmp_path / 'lev.json',
-    )
     vt = MagicMock()
     vt.get_preset_efficiency.return_value = 0.0
     return VirtualOrderSimulator(
         mode=mode,
         all_presets=all_presets,
         project_root=tmp_path,
-        leverage_tracker=lt,
+        get_leverage=lambda sym: 1,
         initial_balance=1000.0,
         virtual_tracker=vt,
         min_notionals={'BTCUSDT': 5.0},
@@ -297,7 +291,7 @@ def make_sim(tmp_path, initial_balance=100.0, presets=None):
         mode='test',
         all_presets=presets or {'preset_a': {}, 'preset_b': {}},
         project_root=tmp_path,
-        leverage_tracker=lt,
+        get_leverage=lambda sym: lt.get_current_level(),
         initial_balance=initial_balance,
         virtual_tracker=vt,
         min_notionals={'BTCUSDT': 5.0},

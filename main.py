@@ -23,7 +23,7 @@ from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
 from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
-from bot.leverage_tracker import LeverageTracker
+from bot.leverage_scenario import create_scenario
 from config.risk_config import load_risk_config
 from bot.balance_history import record as bh_record
 from bot.decision_log import record as dl_record
@@ -147,24 +147,52 @@ async def run() -> None:
         efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{current_mode}.json",
     )
 
-    leverage_tracker = LeverageTracker(
+    def _scenario_data_path(scenario_name: str, mode: str) -> Path:
+        if scenario_name == "default":
+            return _PROJECT_ROOT / "data" / f"leverage_state_{mode}.json"
+        return _PROJECT_ROOT / "data" / f"leverage_state_{scenario_name}_{mode}.json"
+
+    _active_scenario_name: str = risk_cfg.get("scenario", "default")
+    scenario = create_scenario(
+        name=_active_scenario_name,
         mode=current_mode,
-        active_symbols=list(symbols),
-        data_path=_PROJECT_ROOT / "data" / f"leverage_state_{current_mode}.json",
+        active_symbols=symbol_registry.get_symbols(),
+        data_path=_scenario_data_path(_active_scenario_name, current_mode),
+        max_level=risk_cfg.get("max_leverage_level", 5),
     )
 
     all_presets = {**LOCKED_PRESETS, **PRESETS}
+
+    def _virtual_lev(sym: str) -> int:
+        score = virtual_tracker.get_efficiency_score(sym)
+        return scenario.get_leverage(
+            sym, score,
+            risk_cfg.get("base_leverage", 1),
+            risk_cfg.get("max_leverage_level", 5),
+            125,
+        )
+
     # min_notionals populated later after exchange fetch; default to 5 USDT until then
     min_notionals: dict[str, float] = {sym: 5.0 for sym in symbols}
     virtual_order_simulator = VirtualOrderSimulator(
         mode=current_mode,
         all_presets=all_presets,
         project_root=_PROJECT_ROOT,
-        leverage_tracker=leverage_tracker,
+        get_leverage=_virtual_lev,
         initial_balance=0.0,
         virtual_tracker=virtual_tracker,
         min_notionals=min_notionals,
     )
+
+    def _push_scenario_info() -> None:
+        syms = symbol_registry.get_symbols()
+        risk_manager.set_scenario_info(
+            name=_active_scenario_name,
+            global_level=scenario.get_global_level(),
+            per_symbol={s: scenario.get_symbol_level(s) for s in syms},
+        )
+
+    _push_scenario_info()
 
     started_at = datetime.now(timezone.utc).isoformat()
     try:
@@ -264,10 +292,11 @@ async def run() -> None:
         if entry <= 0:
             return
 
-        current_lev = leverage_tracker.get_current_level()
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
-        actual_lev = min(current_lev, bracket_max, max_policy_lev)
+        base_lev = risk_cfg.get('base_leverage', 1)
+        eff_score = virtual_tracker.get_efficiency_score(symbol)
+        actual_lev = scenario.get_leverage(symbol, eff_score, base_lev, max_policy_lev, bracket_max)
         if actual_lev <= 0:
             actual_lev = 1
 
@@ -344,9 +373,26 @@ async def run() -> None:
             )
 
     async def on_candle_close(symbol: str, kline: list) -> None:
+        nonlocal risk_cfg, _active_scenario_name, scenario
+
         if os.path.exists('STOP'):
             logger.info("STOP file detected — halting.")
             raise SystemExit(0)
+
+        # Hot-reload config and switch scenario if changed
+        risk_cfg = load_risk_config()
+        new_scenario_name = risk_cfg.get("scenario", "default")
+        if new_scenario_name != _active_scenario_name:
+            _active_scenario_name = new_scenario_name
+            scenario = create_scenario(
+                name=new_scenario_name,
+                mode=mode_manager.current_mode,
+                active_symbols=symbol_registry.get_symbols(),
+                data_path=_scenario_data_path(new_scenario_name, mode_manager.current_mode),
+                max_level=risk_cfg.get("max_leverage_level", 5),
+            )
+            logger.info(f"Scenario switched to: {new_scenario_name}")
+            _push_scenario_info()
 
         if symbol_registry.is_disabled(symbol):
             return
@@ -414,7 +460,8 @@ async def run() -> None:
         closed = await order_executor.check_symbol_price(symbol, price)
         for c in closed:
             virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
-            leverage_tracker.record_closed(c['symbol'], c.get('leverage', 1))
+            scenario.record_closed(c['symbol'], c.get('leverage', 1))
+            _push_scenario_info()
             fresh_bal = await _get_fresh_balance()
             bh_record(
                 bh_path, balance=fresh_bal, trigger='order_close',
@@ -437,7 +484,7 @@ async def run() -> None:
             virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 
     async def on_switch_mode(target_mode: str) -> None:
-        nonlocal virtual_tracker, virtual_order_simulator
+        nonlocal virtual_tracker, virtual_order_simulator, scenario
         current_symbols = symbol_registry.get_symbols()
         await virtual_order_simulator.close_all_open(current_symbols, feed)
         await order_executor.close_all_orders_at_market()
@@ -471,15 +518,15 @@ async def run() -> None:
         for sym in current_symbols:
             bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
             virtual_tracker.seed_from_backtest(sym, bt_path)
-        leverage_tracker.reset_for_mode(
+        scenario.reset_for_mode(
             target_mode,
-            _PROJECT_ROOT / "data" / f"leverage_state_{target_mode}.json",
+            _scenario_data_path(_active_scenario_name, target_mode),
         )
         virtual_order_simulator = VirtualOrderSimulator(
             mode=target_mode,
             all_presets=all_presets,
             project_root=_PROJECT_ROOT,
-            leverage_tracker=leverage_tracker,
+            get_leverage=_virtual_lev,
             initial_balance=0.0,
             virtual_tracker=virtual_tracker,
             min_notionals=min_notionals,

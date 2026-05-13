@@ -1,6 +1,7 @@
 # bot/notifier.py
 from __future__ import annotations
 
+import html
 import json
 import logging
 import time
@@ -16,6 +17,37 @@ from bot.system_log import append_entry
 logger = logging.getLogger(__name__)
 
 _ALERT_LEVELS = {"warning", "emergency"}
+
+_TEST_SAMPLES: dict[str, tuple[str, bool]] = {
+    "connection": (
+        "ℹ️ <b>Test notification</b>\nBot notifier is working.",
+        False,
+    ),
+    "trade_win": (
+        "✅ <b>BTCUSDT BUY — Win</b>\n"
+        "PnL: <b>+12.34 USDT</b>\n"
+        "Entry: 68,000.00 → Close: 68,450.00\n"
+        "Preset: trail_15_from_30_full",
+        False,
+    ),
+    "trade_loss": (
+        "❌ <b>ETHUSDT SELL — Loss</b>\n"
+        "PnL: <b>-5.20 USDT</b>\n"
+        "Entry: 3,200.00 → Close: 3,218.50\n"
+        "Preset: trail_15_from_30_full",
+        False,
+    ),
+    "emergency": (
+        "🚨 <b>Test emergency alert</b>\n"
+        "This is a test of the emergency notification.",
+        True,
+    ),
+    "balance_warning": (
+        "⚠️ <b>Low balance warning</b>\n"
+        "Balance 42.10 USDT is below threshold 50.00 USDT.",
+        False,
+    ),
+}
 
 
 class Notifier:
@@ -83,10 +115,10 @@ class Notifier:
         result = "Win" if win else "Loss"
         sign = "+" if pnl_usdt >= 0 else ""
         text = (
-            f"{emoji} <b>{symbol} {side} — {result}</b>\n"
+            f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b>\n"
             f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
             f"Entry: {entry_price:,.2f} → Close: {close_price:,.2f}\n"
-            f"Preset: {preset_name}"
+            f"Preset: {html.escape(preset_name)}"
         )
         try:
             append_entry(
@@ -122,41 +154,10 @@ class Notifier:
         if not self._token or not self._chat_id:
             return False, "Token or chat_id not configured"
 
-        _SAMPLES: dict[str, tuple[str, bool]] = {
-            "connection": (
-                "ℹ️ <b>Test notification</b>\nBot notifier is working.",
-                False,
-            ),
-            "trade_win": (
-                "✅ <b>BTCUSDT BUY — Win</b>\n"
-                "PnL: <b>+12.34 USDT</b>\n"
-                "Entry: 68,000.00 → Close: 68,450.00\n"
-                "Preset: trail_15_from_30_full",
-                False,
-            ),
-            "trade_loss": (
-                "❌ <b>ETHUSDT SELL — Loss</b>\n"
-                "PnL: <b>−5.20 USDT</b>\n"
-                "Entry: 3,200.00 → Close: 3,218.50\n"
-                "Preset: trail_15_from_30_full",
-                False,
-            ),
-            "emergency": (
-                "🚨 <b>Test emergency alert</b>\n"
-                "This is a test of the emergency notification.",
-                True,
-            ),
-            "balance_warning": (
-                "⚠️ <b>Low balance warning</b>\n"
-                "Balance 42.10 USDT is below threshold 50.00 USDT.",
-                False,
-            ),
-        }
-
-        if msg_type not in _SAMPLES:
+        if msg_type not in _TEST_SAMPLES:
             return False, f"Unknown message type: {msg_type}"
 
-        text, mention = _SAMPLES[msg_type]
+        text, mention = _TEST_SAMPLES[msg_type]
         try:
             self._send_telegram(text, mention=mention)
             return True, ""

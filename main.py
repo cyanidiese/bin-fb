@@ -109,6 +109,7 @@ async def run() -> None:
         alert_path=_PROJECT_ROOT / "dashboard" / "public" / "alert_state.json",
         telegram_token=risk_cfg.get("telegram", {}).get("token", ""),
         telegram_chat_id=risk_cfg.get("telegram", {}).get("chat_id", ""),
+        min_interval_s=float(risk_cfg.get("telegram_notify_interval_s", 120)),
     )
     mode_manager = ModeManager(notifier=notifier)
     current_mode = mode_manager.current_mode

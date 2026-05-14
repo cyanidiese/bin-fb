@@ -29,7 +29,7 @@ export default function RiskPage() {
   }, [])
 
   const pollState = useCallback(() => {
-    fetch(`/risk_state.json?t=${Date.now()}`)
+    fetch(`/api/public-file?f=risk_state.json`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setState(data) })
       .catch(() => {})

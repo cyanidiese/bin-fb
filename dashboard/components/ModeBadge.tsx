@@ -10,7 +10,7 @@ export default function ModeBadge() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(`/bot_state.json?t=${Date.now()}`)
+        const r = await fetch(`/api/public-file?f=bot_state.json`)
         if (r.ok) {
           const data: BotState = await r.json()
           if (data.last_heartbeat) {

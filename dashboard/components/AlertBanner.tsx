@@ -11,7 +11,7 @@ export default function AlertBanner() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(`/alert_state.json?t=${Date.now()}`)
+        const r = await fetch(`/api/public-file?f=alert_state.json`)
         if (r.ok) setAlertState(await r.json())
       } catch {}
     }

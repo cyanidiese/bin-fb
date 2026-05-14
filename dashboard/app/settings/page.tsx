@@ -53,7 +53,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(`/bot_state.json?t=${Date.now()}`)
+        const r = await fetch(`/api/public-file?f=bot_state.json`)
         if (!r.ok) { setBotState(null); return }
         const data = await r.json()
         const isStale = data.last_heartbeat

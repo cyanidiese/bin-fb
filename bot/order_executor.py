@@ -584,8 +584,11 @@ class OrderExecutor:
         self._lot_cache.clear()  # re-fetch lot sizes for the new endpoint
         logger.info(f"OrderExecutor mode reset to {new_mode}")
 
+    # TRADIFI_PERPETUAL = gold/silver (XAUUSDT, XAGUSD) — behave like regular perps
+    _VALID_CONTRACT_TYPES = {'PERPETUAL', 'TRADIFI_PERPETUAL'}
+
     async def check_symbols_on_exchange(self, symbols: list[str]) -> None:
-        """Startup check: disable any symbol that is not TRADING/PERPETUAL on the exchange."""
+        """Startup check: disable any symbol that is not TRADING or is not a supported perpetual type."""
         if self._feed is None or self._symbol_registry is None:
             return
         try:
@@ -598,7 +601,7 @@ class OrderExecutor:
                     continue
                 status = sym_info.get('status', '')
                 contract_type = sym_info.get('contractType', '')
-                if status != 'TRADING' or contract_type != 'PERPETUAL':
+                if status != 'TRADING' or contract_type not in self._VALID_CONTRACT_TYPES:
                     reason = f"status={status} contractType={contract_type}"
                     await self._auto_disable(symbol, reason)
         except Exception as exc:

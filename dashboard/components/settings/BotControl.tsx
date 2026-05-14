@@ -2,6 +2,11 @@
 
 import { useState } from 'react'
 
+// Startup takes 30-60s (obligatory backtest). We hold the "Starting…" label
+// for up to this many ms after the API call succeeds so the UI doesn't
+// flicker back to "Start Bot" while the bot is still initialising.
+const STARTING_HOLD_MS = 120_000
+
 interface BotState {
   running: boolean
   pid: number | null
@@ -16,7 +21,10 @@ interface Props {
 
 export default function BotControl({ botState, onAction }: Props) {
   const [loading, setLoading] = useState(false)
+  const [startingUntil, setStartingUntil] = useState(0)
   const [error, setError] = useState('')
+
+  const isStarting = !botState?.running && Date.now() < startingUntil
 
   async function handleStart() {
     setLoading(true)
@@ -24,8 +32,12 @@ export default function BotControl({ botState, onAction }: Props) {
     try {
       const r = await fetch('/api/bot/start', { method: 'POST' })
       const d = await r.json()
-      if (!d.ok) setError(d.error || 'Failed to start bot')
-      else onAction()
+      if (!d.ok) {
+        setError(d.error || 'Failed to start bot')
+      } else {
+        setStartingUntil(Date.now() + STARTING_HOLD_MS)
+        onAction()
+      }
     } catch (e) {
       setError(String(e))
     } finally {
@@ -36,6 +48,7 @@ export default function BotControl({ botState, onAction }: Props) {
   async function handleStop() {
     if (!window.confirm('Stop the bot? All open orders will be closed at market price.')) return
     setLoading(true)
+    setStartingUntil(0)
     setError('')
     try {
       const r = await fetch('/api/bot/stop', { method: 'POST' })
@@ -67,10 +80,10 @@ export default function BotControl({ botState, onAction }: Props) {
           ) : (
             <button
               onClick={handleStart}
-              disabled={loading}
+              disabled={loading || isStarting}
               className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
-              {loading ? 'Starting…' : 'Start Bot'}
+              {loading || isStarting ? 'Starting…' : 'Start Bot'}
             </button>
           )}
           <span className="text-sm text-gray-400">
@@ -78,7 +91,9 @@ export default function BotControl({ botState, onAction }: Props) {
               ? 'Status unknown'
               : botState.running
                 ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
-                : 'Stopped'}
+                : isStarting
+                  ? 'Starting up — running backtests…'
+                  : 'Stopped'}
           </span>
         </div>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}

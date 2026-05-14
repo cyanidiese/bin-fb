@@ -38,6 +38,12 @@ class Settings:
     # SL distance filters (% of entry). 0.0 = disabled.
     min_sl_pct: float   # skip trades where SL is closer than this (too noisy)
     max_sl_pct: float   # skip trades where SL is farther than this (too risky)
+    # ATR-based SL floor: skip trade if structural SL distance < min_sl_atr_mult × avg candle
+    # range of the last atr_lookback candles. 0.0 = disabled. Symbol-agnostic — adapts to each
+    # instrument's volatility. Useful for high-price instruments like XAUUSDT where a fixed
+    # min_sl_pct threshold is too coarse.
+    min_sl_atr_mult: float
+    atr_lookback: int
     # When True: tighten SL to meet min_profit_loss_ratio instead of skipping the trade.
     sl_adjust_to_rr: bool
     # Max TP distance as % of entry. Trades with wider TP targets are skipped. 0.0 = disabled.
@@ -120,6 +126,8 @@ def load_settings(symbol: str | None = None) -> Settings:
         tp_multiplier=float(os.getenv('TP_MULTIPLIER', '1.0')),
         min_sl_pct=float(os.getenv('MIN_SL_PCT', '0.0')),
         max_sl_pct=float(os.getenv('MAX_SL_PCT', '0.0')),
+        min_sl_atr_mult=float(os.getenv('MIN_SL_ATR_MULT', '0.0')),
+        atr_lookback=int(os.getenv('ATR_LOOKBACK', '20')),
         sl_adjust_to_rr=os.getenv('SL_ADJUST_TO_RR', 'false').lower() in ('1', 'true', 'yes'),
         max_profit_pct=float(os.getenv('MAX_PROFIT_PCT', '0.0')),
         correction_weight=float(os.getenv('CORRECTION_WEIGHT', '0.0')),

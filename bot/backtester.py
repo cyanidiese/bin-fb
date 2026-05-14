@@ -305,6 +305,12 @@ class Backtester:
                         continue
                     if settings.max_sl_pct > 0 and sl_dist_pct > settings.max_sl_pct:
                         continue
+                    if settings.min_sl_atr_mult > 0 and settings.atr_lookback > 0:
+                        start = max(0, i - settings.atr_lookback + 1)
+                        candle_slice = klines[start:i + 1]
+                        avg_range = sum(float(k[2]) - float(k[3]) for k in candle_slice) / len(candle_slice)
+                        if avg_range > 0 and abs(sl - entry_price) < settings.min_sl_atr_mult * avg_range:
+                            continue
 
                     profit_dist = abs(tp - entry_price)
                     loss_dist = abs(sl - entry_price)

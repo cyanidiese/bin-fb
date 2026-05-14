@@ -292,6 +292,23 @@ async def run() -> None:
         if entry <= 0:
             return 0.0
 
+        if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:
+            sl_raw = best.getStop()
+            if sl_raw is not None and sl_raw > 0:
+                klines_now = analyzers[symbol].get_klines()
+                if klines_now:
+                    tail = klines_now[-preset_settings.atr_lookback:]
+                    avg_range = sum(float(k[2]) - float(k[3]) for k in tail) / len(tail)
+                    if avg_range > 0 and abs(sl_raw - entry) < preset_settings.min_sl_atr_mult * avg_range:
+                        dl_record(
+                            dl_path, candle_ts=candle_ts, symbol=symbol,
+                            decision='skip_sl_too_tight',
+                            reason=f'sl_dist={abs(sl_raw - entry):.4f} < {preset_settings.min_sl_atr_mult}×avg_range={avg_range:.4f}',
+                            balance=balance, leverage=0, efficiency_score=virtual_tracker.get_efficiency_score(symbol),
+                            preset_name=preset_name,
+                        )
+                        return 0.0
+
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
         base_lev = risk_cfg.get('base_leverage', 1)

@@ -266,6 +266,13 @@ async def run() -> None:
     _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
     _BALANCE_TTL = 5.0
 
+    # Daily exchange-info refresh: re-fetch leverage brackets + min notionals every 96 candles
+    # (96 × 15 min = 24 h). Counter increments only on the first symbol close per candle so
+    # it ticks once per real candle regardless of how many symbols are active.
+    _EXCHANGE_REFRESH_CANDLES = 96
+    _candle_counter: list[int] = [0]
+    _last_refresh_candle_open: list[int] = [0]
+
     async def _get_fresh_balance() -> float:
         now = time.monotonic()
         cached_val, cached_ts = _balance_cache_inner[0]
@@ -414,6 +421,23 @@ async def run() -> None:
             )
             logger.info(f"Scenario switched to: {new_scenario_name}")
             _push_scenario_info()
+
+        # Daily exchange-info refresh — fires once per candle (keyed on candle open time)
+        candle_open = int(kline[0]) if kline else 0
+        if candle_open and candle_open != _last_refresh_candle_open[0]:
+            _last_refresh_candle_open[0] = candle_open
+            _candle_counter[0] += 1
+            if _candle_counter[0] >= _EXCHANGE_REFRESH_CANDLES:
+                _candle_counter[0] = 0
+                active_syms = symbol_registry.get_symbols()
+                logger.info("Daily exchange-info refresh: fetching leverage brackets and min notionals")
+                try:
+                    await order_executor.fetch_leverage_brackets(active_syms)
+                    for sym in active_syms:
+                        min_notionals[sym] = await order_executor.get_min_notional(sym)
+                    logger.info("Daily exchange-info refresh complete")
+                except Exception as exc:
+                    logger.warning(f"Daily exchange-info refresh failed (will retry next cycle): {exc}")
 
         if symbol_registry.is_disabled(symbol):
             return

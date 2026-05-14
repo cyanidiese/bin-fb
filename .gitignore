@@ -2,9 +2,11 @@
 .env
 .env.local
 
-# Logs
+# Logs (runtime log files, not source code)
 logs/
 *.log
+!dashboard/app/logs/
+!dashboard/app/api/logs/
 
 # Python
 __pycache__/
@@ -35,9 +37,25 @@ data/
 !data/.gitkeep
 
 # Bot runtime
-STOP
+/STOP
+
+# Runtime state files (generated at runtime, not committed)
+data/bot_pid.json
+data/bot_mode.json
+data/bot_command.json
+data/bot_command_result.json
+data/system_log.json
+data/preset_efficiency_test.json
+data/preset_efficiency_live.json
+data/virtual_orders_test.json
+data/virtual_orders_live.json
+dashboard/public/bot_state.json
+dashboard/public/alert_state.json
 
 # Dashboard
 dashboard/node_modules/
 dashboard/.next/
 dashboard/.env*.local
+
+# Bot-generated dashboard data
+dashboard/public/backtest_results_*.json

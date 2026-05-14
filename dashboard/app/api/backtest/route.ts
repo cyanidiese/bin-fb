@@ -14,12 +14,17 @@ function getPython(): string {
 
 export async function POST(req: NextRequest) {
   let settings: Record<string, unknown>
+  let symbol: string | null = null
   try {
     const body = await req.json()
     settings = body.settings ?? {}
+    symbol = typeof body.symbol === 'string' && body.symbol.trim() ? body.symbol.trim().toUpperCase() : null
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
+
+  // backtest_api.py pops 'symbol' from the overrides JSON before using the rest
+  const payload = symbol ? { ...settings, symbol } : settings
 
   const python = getPython()
 
@@ -27,7 +32,7 @@ export async function POST(req: NextRequest) {
     let stdout = ''
     let stderr = ''
 
-    const child = spawn(python, ['backtest_api.py', JSON.stringify(settings)], {
+    const child = spawn(python, ['backtest_api.py', JSON.stringify(payload)], {
       cwd: BOT_ROOT,
     })
 

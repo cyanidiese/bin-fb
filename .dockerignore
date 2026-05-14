@@ -1,0 +1,17 @@
+.git
+.DS_Store
+.env
+.venv
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+
+# Large data files — these are bind-mounted at runtime
+data/*.json
+data/discovery/
+logs/
+
+# Built artefacts
+dashboard/.next
+dashboard/node_modules

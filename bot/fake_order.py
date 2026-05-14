@@ -180,6 +180,11 @@ class FakeOrder:
 
         return None
 
+    def check_price(self, current_price: float) -> Optional[str]:
+        """For live/test mode: check a single price against TP/SL/trail.
+        Delegates to check() with current_price as both high and low."""
+        return self.check(current_price, current_price, self.open_candle, current_price, current_price)
+
     def _check_trail(self, high: float, low: float, candle_index: int) -> Optional[str]:
         if self.side == 'BUY':
             gained = self._max_favorable - self.entry_price

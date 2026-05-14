@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      # Mutable runtime state — persisted on host, survive container rebuilds
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./dashboard/public:/app/dashboard/public
+      # Config files editable via the dashboard
+      - ./risk_config.json:/app/risk_config.json
+      - ./symbol_registry.json:/app/symbol_registry.json
+    restart: unless-stopped

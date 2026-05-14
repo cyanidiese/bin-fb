@@ -46,12 +46,13 @@ DEFAULTS = {
 }
 
 
-def build_settings(overrides: dict) -> Settings:
+def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
     p = {**DEFAULTS, **overrides}
-    symbol = os.getenv('SYMBOL', 'BTCUSDT').upper()
+    if symbol is None:
+        symbol = os.getenv('SYMBOL', 'BTCUSDT').upper()
     timeframe = os.getenv('TIMEFRAME', '15m')
     return Settings(
-        trading_mode='testnet',
+        trading_mode='test',
         api_key='',
         api_secret='',
         symbol=symbol,
@@ -83,39 +84,46 @@ def build_settings(overrides: dict) -> Settings:
     )
 
 
-def find_klines() -> Path:
-    # Prefer the same klines file that generated backtest_results.json so that
-    # API results are directly comparable to the already-loaded dashboard data.
-    results_path = Path('dashboard/public/backtest_results.json')
+def find_klines(symbol: str) -> tuple[Path, int | None]:
+    """Return (klines_path, total_klines_used_at_backtest_time).
+    total_klines is None when there is no reference backtest JSON to read from."""
+    results_path = Path(f'dashboard/public/backtest_results_{symbol}.json')
     if results_path.exists():
         try:
             with open(results_path) as f:
-                klines_file = Path(json.load(f).get('klines_file', ''))
+                data = json.load(f)
+            klines_file = Path(data.get('klines_file', ''))
+            total_klines = data.get('total_klines')
             if klines_file.exists():
-                return klines_file
+                return klines_file, total_klines
         except Exception:
             pass
 
-    # Fall back: prefer the file with more history (test > live)
-    symbol = os.getenv('SYMBOL', 'BTCUSDT').upper()
     timeframe = os.getenv('TIMEFRAME', '15m')
     for name in (f'{symbol}_{timeframe}_test.json', f'{symbol}_{timeframe}.json'):
         p = Path('data') / name
         if p.exists():
-            return p
+            return p, None
     raise FileNotFoundError(
-        'No klines file found in data/. Run backtest.py first to populate the cache.'
+        f'No klines file found for {symbol} in data/. '
+        'Run backtest.py first to populate the cache.'
     )
 
 
 def main() -> None:
     overrides = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+    symbol = (overrides.pop('symbol', None) or os.getenv('SYMBOL', 'BTCUSDT')).upper()
 
-    klines_path = find_klines()
+    klines_path, total_klines = find_klines(symbol)
     with open(klines_path) as f:
         klines = json.load(f)
 
-    settings = build_settings(overrides)
+    # Use the same kline window that produced the reference backtest JSON so
+    # that the per-preset numbers shown in the Create page match the static results.
+    if total_klines and len(klines) > total_klines:
+        klines = klines[-total_klines:]
+
+    settings = build_settings(overrides, symbol=symbol)
     backtester = Backtester(settings)
     results = backtester.run(klines, {'custom': overrides})
     result = results['custom']

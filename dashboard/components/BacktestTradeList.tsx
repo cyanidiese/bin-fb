@@ -1,10 +1,13 @@
 'use client'
 
+import { useRef, useEffect } from 'react'
 import type { BacktestTrade } from '@/lib/types'
 
 interface Props {
   presetName: string
   trades: BacktestTrade[]
+  hoveredIdx?: number | null
+  onHover?: (idx: number | null) => void
 }
 
 const RESULT_STYLE: Record<string, string> = {
@@ -21,7 +24,15 @@ function tpReachColor(pct: number): string {
   return 'text-red-400'
 }
 
-export default function BacktestTradeList({ presetName, trades }: Props) {
+export default function BacktestTradeList({ presetName, trades, hoveredIdx = null, onHover = () => {} }: Props) {
+  const rowRefs = useRef<(HTMLTableRowElement | null)[]>([])
+
+  // Scroll hovered row into view when the chart drives the highlight.
+  useEffect(() => {
+    if (hoveredIdx === null) return
+    rowRefs.current[hoveredIdx]?.scrollIntoView({ block: 'nearest' })
+  }, [hoveredIdx])
+
   if (trades.length === 0) {
     return (
       <div className="text-gray-500 text-sm py-4 text-center">
@@ -55,8 +66,17 @@ export default function BacktestTradeList({ presetName, trades }: Props) {
             const style = RESULT_STYLE[t.result] ?? 'text-gray-400'
             const pnlColor = t.profit_pct >= 0 ? 'text-emerald-400' : 'text-red-400'
             const duration = t.close_candle != null ? t.close_candle - t.open_candle : '—'
+            const isHovered = hoveredIdx === idx
             return (
-              <tr key={idx} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+              <tr
+                key={idx}
+                ref={el => { rowRefs.current[idx] = el }}
+                onMouseEnter={() => onHover(idx)}
+                onMouseLeave={() => onHover(null)}
+                className={`border-b border-gray-800/50 transition-colors cursor-default ${
+                  isHovered ? 'bg-indigo-900/25' : 'hover:bg-gray-800/30'
+                }`}
+              >
                 <td className="px-3 py-1 text-gray-500">{idx + 1}</td>
                 <td className={`px-3 py-1 font-bold ${t.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{t.side}</td>
                 <td className="px-3 py-1 text-gray-400 max-w-[160px] truncate">{t.signal_type}</td>

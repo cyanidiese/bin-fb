@@ -1,7 +1,13 @@
+import dataclasses
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Registry file lives in the project root (one level up from config/).
+_REGISTRY_PATH = Path(__file__).resolve().parent.parent / 'symbol_registry.json'
 
 load_dotenv()
 
@@ -60,13 +66,18 @@ class Settings:
     higher_low_buy: bool
 
 
-def load_settings() -> Settings:
-    trading_mode = os.getenv('TRADING_MODE', 'testnet').lower()
+def load_settings(symbol: str | None = None) -> Settings:
+    import logging as _logging
+    _raw_mode = os.getenv('TRADING_MODE', 'test').lower()
+    trading_mode = 'test' if _raw_mode == 'testnet' else _raw_mode
+    if trading_mode not in ('test', 'live'):
+        raise RuntimeError(f"TRADING_MODE must be 'test' or 'live', got: '{_raw_mode}'")
+    if _raw_mode == 'testnet':
+        _logging.getLogger(__name__).warning(
+            "TRADING_MODE=testnet is deprecated — treating as 'test'. Update your .env."
+        )
 
-    if trading_mode not in ('testnet', 'live'):
-        raise RuntimeError(f"TRADING_MODE must be 'testnet' or 'live', got: '{trading_mode}'")
-
-    if trading_mode == 'testnet':
+    if trading_mode == 'test':
         api_key = os.getenv('TESTNET_API_KEY', '')
         api_secret = os.getenv('TESTNET_API_SECRET', '')
         key_names = ('TESTNET_API_KEY', 'TESTNET_API_SECRET')
@@ -81,26 +92,18 @@ def load_settings() -> Settings:
     if not api_secret:
         missing.append(key_names[1])
 
-    symbol = os.getenv('SYMBOL', '')
-    if not symbol:
+    resolved_symbol = symbol.upper() if symbol else os.getenv('SYMBOL', '').upper()
+    if not resolved_symbol:
         missing.append('SYMBOL')
 
     if missing:
         raise RuntimeError(f"Missing required .env variables: {', '.join(missing)}")
 
-    if trading_mode == 'live':
-        confirmed = os.getenv('LIVE_MODE_CONFIRMED', '').strip().lower()
-        if confirmed != 'yes':
-            raise RuntimeError(
-                "TRADING_MODE=live requires LIVE_MODE_CONFIRMED=yes in .env. "
-                "Set this only after reviewing all risk parameters."
-            )
-
-    return Settings(
+    base = Settings(
         trading_mode=trading_mode,
         api_key=api_key,
         api_secret=api_secret,
-        symbol=symbol.upper(),
+        symbol=resolved_symbol,
         timeframe=os.getenv('TIMEFRAME', '15m'),
         kline_limit=int(os.getenv('KLINE_LIMIT', '1000')),
         kline_cache_limit=int(os.getenv('KLINE_CACHE_LIMIT', '5000')),
@@ -127,3 +130,54 @@ def load_settings() -> Settings:
         lower_high_sell=os.getenv('LOWER_HIGH_SELL', 'false').lower() in ('1', 'true', 'yes'),
         higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
     )
+
+    if symbol is not None:
+        base = _apply_symbol_overrides(base, symbol)
+
+    return base
+
+
+def load_symbols() -> list[str]:
+    # Registry file is the authority when it exists and is readable.
+    if _REGISTRY_PATH.exists():
+        try:
+            data = json.loads(_REGISTRY_PATH.read_text())
+            symbols = [s.strip().upper() for s in data.get('symbols', []) if s.strip()]
+            if symbols:
+                return symbols
+        except Exception:
+            pass  # fall through to .env
+
+    # Fall back to .env
+    raw = os.getenv('SYMBOLS', '').strip()
+    if raw:
+        return [s.strip().upper() for s in raw.split(',') if s.strip()]
+    fallback = os.getenv('SYMBOL', '').strip()
+    if fallback:
+        return [fallback.upper()]
+    raise RuntimeError("Neither SYMBOLS nor SYMBOL is set in .env")
+
+
+def _apply_symbol_overrides(settings: Settings, symbol: str) -> Settings:
+    prefix = symbol.upper() + '_'
+    field_names = {f.name for f in dataclasses.fields(Settings)}
+    overrides: dict = {}
+    for env_key, env_val in os.environ.items():
+        if not env_key.startswith(prefix):
+            continue
+        field_name = env_key[len(prefix):].lower()
+        if field_name not in field_names:
+            continue
+        current = getattr(settings, field_name)
+        try:
+            if isinstance(current, bool):
+                overrides[field_name] = env_val.lower() in ('1', 'true', 'yes')
+            elif isinstance(current, int):
+                overrides[field_name] = int(env_val)
+            elif isinstance(current, float):
+                overrides[field_name] = float(env_val)
+            else:
+                overrides[field_name] = env_val
+        except (ValueError, TypeError):
+            pass
+    return dataclasses.replace(settings, **overrides) if overrides else settings

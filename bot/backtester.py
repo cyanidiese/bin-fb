@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from bot.analyzer import Analyzer
@@ -14,6 +15,9 @@ class PresetResult:
     def __init__(self, name: str):
         self.name = name
         self.trades: List[FakeOrder] = []
+        self.balance_start: float = 0.0
+        self.balance_end: float = 0.0
+        self.drawdown_triggered: bool = False
 
     def add(self, order: FakeOrder) -> None:
         self.trades.append(order)
@@ -110,6 +114,9 @@ class PresetResult:
             'potential_win_pts': round(self.potential_win_pts(), 2),
             'potential_loss_pts': round(self.potential_loss_pts(), 2),
             'avg_max_tp_reach_pct': round(self.avg_max_tp_reach_pct(), 2),
+            'balance_start': round(self.balance_start, 2),
+            'balance_end': round(self.balance_end, 2),
+            'drawdown_triggered': self.drawdown_triggered,
             'trades': [t.to_dict() for t in self.trades],
         }
 
@@ -132,8 +139,15 @@ class Backtester:
     - Same-candle TP+SL hit → loss (SL takes priority).
     """
 
-    def __init__(self, base_settings: Settings):
+    def __init__(
+        self,
+        base_settings: Settings,
+        initial_balance: float = 0.0,
+        risk_config_path: Path | None = None,
+    ):
         self._base = base_settings
+        self._initial_balance = initial_balance
+        self._risk_config_path = risk_config_path
 
     def run(
         self, klines: list, presets: Dict[str, dict]
@@ -163,6 +177,16 @@ class Backtester:
         result = PresetResult(name)
         open_order: Optional[FakeOrder] = None
 
+        balance = self._initial_balance
+        peak_balance = balance
+        hard_stop_pct = 20.0
+        if self._initial_balance > 0 and self._risk_config_path is not None:
+            from config.risk_config import load_risk_config
+            _cfg = load_risk_config(self._risk_config_path)
+            hard_stop_pct = _cfg.get("drawdown_hard_stop_pct", 20.0)
+        result.balance_start = balance
+        drawdown_triggered = False
+
         # Candle-based directional cooldown state (only active when loss_streak_max > 0)
         consecutive_losses: Dict[str, int] = {'BUY': 0, 'SELL': 0}
         blocked_until: Dict[str, int] = {'BUY': 0, 'SELL': 0}
@@ -181,6 +205,19 @@ class Backtester:
                 outcome = open_order.check(high, low, i, candle_open=open_price, candle_close=close_price)
                 if outcome is not None:
                     result.add(open_order)
+                    if self._initial_balance > 0:
+                        pct = open_order.profit_pct() or 0.0
+                        balance *= (1 + pct / 100.0)
+                        if balance > peak_balance:
+                            peak_balance = balance
+                        if peak_balance > 0:
+                            dd = (peak_balance - balance) / peak_balance * 100.0
+                            if dd >= hard_stop_pct and not drawdown_triggered:
+                                drawdown_triggered = True
+                                logger.info(
+                                    f"  {name}: drawdown hard stop triggered "
+                                    f"({dd:.1f}% >= {hard_stop_pct}%) at candle {i}"
+                                )
                     if settings.loss_streak_max > 0:
                         side_closed = open_order.side
                         other_side = 'SELL' if side_closed == 'BUY' else 'BUY'
@@ -211,6 +248,9 @@ class Backtester:
             # ── Try to open a new order if none is open ──────────────────
             if open_order is None:
                 if i + 1 >= len(klines):
+                    continue
+
+                if drawdown_triggered:
                     continue
 
                 trend = analyzer.get_trend()
@@ -300,4 +340,6 @@ class Backtester:
                     break  # entered — stop checking this candle's price path
 
         # Any order still open at end-of-data is discarded.
+        result.balance_end = balance
+        result.drawdown_triggered = drawdown_triggered
         return result

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import type { BacktestPreset, BacktestApiResponse } from '@/lib/types'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import type { BacktestPreset, BacktestApiResponse, BacktestTrade } from '@/lib/types'
 import PresetChart from './PresetChart'
 import { useLocalStorage } from '@/lib/useLocalStorage'
 
 interface Props {
   preset: BacktestPreset | null
+  symbol?: string
 }
 
 function toDateStr(unixSec: number): string {
@@ -25,7 +26,7 @@ const DATE_INPUT_CLS =
 const NAV_BTN_CLS =
   'px-2 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-[11px] font-mono transition-colors'
 
-export default function PresetResultsPanel({ preset }: Props) {
+export default function PresetResultsPanel({ preset, symbol }: Props) {
   const [open, setOpen] = useLocalStorage<boolean>('db:visualize:open', false)
   const [result, setResult] = useState<BacktestApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -53,7 +54,7 @@ export default function PresetResultsPanel({ preset }: Props) {
     fetch('/api/backtest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: preset.settings }),
+      body: JSON.stringify({ settings: preset.settings, symbol }),
       signal: ctrl.signal,
     })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
@@ -65,42 +66,48 @@ export default function PresetResultsPanel({ preset }: Props) {
       .finally(() => setLoading(false))
 
     return () => ctrl.abort()
-  }, [open, preset?.preset])
+  }, [open, preset?.preset, symbol])
 
-  // Initialise date range from result, but only if the user has no stored value
+  // Reset date range whenever a new result arrives (symbol or preset changed)
   useEffect(() => {
     if (!result?.klines.length) return
-    setFromDate(prev => prev || toDateStr(result.klines[0].time))
-    setToDate(prev => prev || toDateStr(result.klines[result.klines.length - 1].time))
+    setFromDate(toDateStr(result.klines[0].time))
+    setToDate(toDateStr(result.klines[result.klines.length - 1].time))
   }, [result])
 
-  const filteredKlines = result
-    ? result.klines.filter(k => {
-        const d = toDateStr(k.time)
-        return d >= fromDate && d <= toDate
-      })
-    : []
+  const filteredKlines = useMemo(() => {
+    if (!result) return []
+    return result.klines.filter(k => {
+      const d = toDateStr(k.time)
+      return d >= fromDate && d <= toDate
+    })
+  }, [result, fromDate, toDate])
 
   const minIdx = filteredKlines[0]?.index ?? 0
   const maxIdx = filteredKlines[filteredKlines.length - 1]?.index ?? -1
 
   // Re-index from 0 so the chart always fills its full width
-  const displayKlines = filteredKlines.map((k, i) => ({ ...k, index: i }))
+  const displayKlines = useMemo(
+    () => filteredKlines.map((k, i) => ({ ...k, index: i })),
+    [filteredKlines],
+  )
 
-  const filteredTrades = result
-    ? result.trades.filter(t =>
-        t.open_candle <= maxIdx && (t.close_candle ?? t.open_candle + 1) >= minIdx
-      )
-    : []
-
-  // Shift trade candle indices to match re-indexed klines
-  const displayTrades = filteredTrades.map(t => ({
-    ...t,
-    open_candle: Math.max(0, t.open_candle - minIdx),
-    close_candle: t.close_candle != null
-      ? Math.min(displayKlines.length - 1, Math.max(0, t.close_candle - minIdx))
-      : null,
-  }))
+  const displayTrades = useMemo((): BacktestTrade[] => {
+    if (!result) return []
+    const trades: BacktestTrade[] = []
+    result.trades.forEach(t => {
+      if (t.open_candle <= maxIdx && (t.close_candle ?? t.open_candle + 1) >= minIdx) {
+        trades.push({
+          ...t,
+          open_candle: Math.max(0, t.open_candle - minIdx),
+          close_candle: t.close_candle != null
+            ? Math.min(displayKlines.length - 1, Math.max(0, t.close_candle - minIdx))
+            : null,
+        })
+      }
+    })
+    return trades
+  }, [result, minIdx, maxIdx, displayKlines.length])
 
   const klineMinDate = result?.klines.length ? toDateStr(result.klines[0].time) : ''
   const klineMaxDate = result?.klines.length ? toDateStr(result.klines[result.klines.length - 1].time) : ''
@@ -195,12 +202,15 @@ export default function PresetResultsPanel({ preset }: Props) {
                   Fwd →
                 </button>
                 <span className="text-[10px] text-gray-600 font-mono">
-                  {filteredKlines.length} candles · {filteredTrades.length} trades
+                  {filteredKlines.length} candles · {displayTrades.length} trades
                 </span>
               </div>
 
               {/* Chart */}
-              <PresetChart klines={displayKlines} trades={displayTrades} />
+              <PresetChart
+                klines={displayKlines}
+                trades={displayTrades}
+              />
             </div>
           )}
         </div>

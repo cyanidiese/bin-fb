@@ -122,7 +122,7 @@ def show(
     """Print the full console UI. Called on startup and on each candle close."""
     ts = Utils.time_to_str(candle_time) if candle_time else \
         datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    mode_style = "yellow" if settings.trading_mode == 'testnet' else "red bold"
+    mode_style = "yellow" if settings.trading_mode == 'test' else "red bold"
 
     console.rule()
     console.print(

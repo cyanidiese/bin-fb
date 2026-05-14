@@ -30,14 +30,20 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] `bot/chart.py` — ASCII rank-based swing point chart
 - [x] `bot/display.py` — full console UI (chart + trend table + all-points table + signals)
 - [x] Timezone support — TIMEZONE env var wired through all display functions
-- [ ] Order state reconciliation on startup
+- [x] Order state reconciliation on startup
 
 ## Phase 1 — Risk management
 
-- [ ] Max position size per trade (% of account or fixed USDT)
-- [ ] Max concurrent open positions
-- [ ] Daily loss limit with bot pause
-- [ ] Leverage validation on startup (warn above threshold)
+- [x] `config/risk_config.py` — load/save with atomic writes, default-merging, DEFAULT_CONFIG
+- [x] `bot/risk_manager.py` — full RiskManager: balance tiers, weighted allocation, leverage formula, drawdown guard, TTL-cached performance score
+- [x] `dashboard/app/api/risk/route.ts` — GET config+state, POST save config atomically
+- [x] `dashboard/app/risk/page.tsx` — Risk page sections A–E with live polling
+- [x] NavBar Risk link
+- [x] Paper trader gate — `can_open_sync()` before every entry
+- [x] Backtester compound balance tracking + drawdown hard-stop gate per preset
+- [ ] Daily loss limit with bot pause (deferred — handled via drawdown guard for now)
+- [ ] Leverage validation on startup (warn if set above threshold in exchange settings)
+- [ ] Merge `feature/risk-module` into main
 
 ## Phase 2 — Validation
 
@@ -111,32 +117,127 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] Run Backtest button + step-50 klines input + loading overlay on backtest page
 - [x] `lower_high_sell` setting — DESCENDING_NEAR_LOWER_HIGH signal, 6 new presets
 - [x] `higher_low_buy` setting — ASCENDING_NEAR_HIGHER_LOW signal (mirror), 6+4 new presets
+- [x] **Critical fix**: `bot/trend.py` — BUY signals were unreachable (`is_last_high is not None` → `is_last_high`)
+- [ ] Re-evaluate all presets now that both BUY and SELL signals fire correctly
 - [ ] Run backtest with lh_sell presets and evaluate results
 - [ ] Backtest on larger dataset (fetch 5000 candles) for more statistical confidence
-- [ ] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
+- [x] Wire `OrderManager` into `main.py` (requires risk module for quantity sizing)
 
 ## Phase 3.6 — Multi-symbol support (design approved 2026-05-04)
 
 See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
 
 ### Python backend
-- [ ] `config/settings.py` — add `load_symbols()` + `load_settings(symbol)` with per-symbol env overrides
-- [ ] `bot/risk_manager.py` — new: async-safe capital budget tracker (asyncio.Lock, can_open/open/close)
-- [ ] `bot/exporter.py` — write to `results_{symbol}.json` instead of `results.json`
-- [ ] `bot/paper_trader.py` — accept optional `risk_manager` param
-- [ ] `paper_trade.py` — rewrite: loop over symbols, asyncio.gather, write symbols.json
-- [ ] `backtest.py` — loop over symbols, write `backtest_results_{symbol}.json` per symbol
-- [ ] `backtest_api.py` — accept `symbol` param; default to first symbol
-- [ ] `main.py` — write `symbols.json` at startup (stays single-symbol for display)
-- [ ] Migrate existing `paper_state.json` → `paper_state_BTCUSDT.json`
+- [x] `config/settings.py` — add `load_symbols()` + `load_settings(symbol)` with per-symbol env overrides
+- [x] `bot/risk_manager.py` — new: async-safe capital budget tracker (asyncio.Lock, can_open/open/close)
+- [x] `bot/exporter.py` — write to `results_{symbol}.json` instead of `results.json`
+- [x] `bot/paper_trader.py` — accept optional `risk_manager` param
+- [x] `paper_trade.py` — rewrite: loop over symbols, asyncio.gather, write symbols.json
+- [x] `backtest.py` — loop over symbols, write `backtest_results_{symbol}.json` per symbol
+- [x] `backtest_api.py` — accept `symbol` param; default to first symbol
+- [x] `main.py` — write `symbols.json` at startup (stays single-symbol for display)
+- [x] Migrate existing `paper_state.json` → `paper_state_BTCUSDT.json`
 
 ### Dashboard
-- [ ] Fetch `symbols.json` in all pages; wire `useSymbol` + `SymbolSwitcher` into header
-- [ ] `app/page.tsx` — fetch `results_{symbol}.json`; scope localStorage keys to symbol
-- [ ] `app/backtest/page.tsx` — fetch `backtest_results_{symbol}.json`; add CrossSymbolComparison
-- [ ] `app/paper/page.tsx` — fetch `paper_results_{symbol}.json`
-- [ ] `components/CrossSymbolComparison.tsx` — new: 3-tab cross-symbol preset comparison
-- [ ] `lib/types.ts` — add `SymbolConfig` type for symbols.json
+- [x] Fetch `symbols.json` in all pages; wire `useSymbol` + `SymbolSwitcher` into header
+- [x] `app/page.tsx` — fetch `results_{symbol}.json`; scope localStorage keys to symbol
+- [x] `app/backtest/page.tsx` — fetch `backtest_results_{symbol}.json`; add CrossSymbolComparison
+- [x] `app/paper/page.tsx` — fetch `paper_results_{symbol}.json`
+- [x] `components/CrossSymbolComparison.tsx` — new: 3-tab cross-symbol preset comparison
+- [x] `lib/types.ts` — add `SymbolConfig` type for symbols.json
+- [x] `useSymbols.ts` — poll every 3s (was: single fetch on mount); newly added symbols reflect live
+- [x] `POST /api/symbols` — write placeholder `results_{symbol}.json` immediately on symbol add
+- [x] `app/page.tsx` — fix selectedLevel localStorage bug (reset when prev < min available level)
+- [x] `app/page.tsx` — "Waiting for bot analysis…" state when klines + trend_levels both empty
+- [x] `components/SymbolSwitcher.tsx` — selected symbol pinned left, rest scrollable, max 50% width
+- [x] `components/NavBar.tsx` — `max-w-[50%] min-w-0` wrapper for SymbolSwitcher
+
+## Phase 3.7 — Symbol Discovery
+
+See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
+
+- [x] `bot/symbol_discovery.py` — SymbolDiscovery class: get_precandidates, get_fast_presets, compute_baseline, score_candidate
+- [x] `tests/test_symbol_discovery.py` — 10 tests all passing; uses _DASHBOARD_PUBLIC patch for fs isolation
+- [x] `discover.py` — project-root CLI: ThreadPoolExecutor, SIGTERM via threading.Event, atomic writes
+- [x] `dashboard/app/api/discovery/run/route.ts` — POST: spawn discover.py, track PID, update state on close
+- [x] `dashboard/app/api/discovery/cancel/route.ts` — POST: SIGTERM to running discover.py
+- [x] `dashboard/components/SymbolDiscovery.tsx` — controls + progress + sortable candidates table
+- [x] `dashboard/app/api/_utils.ts` — shared BOT_ROOT + isAlive utilities
+- [x] `dashboard/app/settings/page.tsx` — SymbolDiscovery section added
+- [x] `dashboard/lib/types.ts` — CandidateResult, DiscoveryState, DiscoveryCandidatesFile interfaces
+- [ ] End-to-end test: run discovery from UI, verify candidates appear, add one, verify it disappears
+
+## Phase 3.8 — Order Execution & Infrastructure
+
+- [x] `bot/system_log.py` — rolling 100-entry log
+- [x] `bot/notifier.py` — Telegram + alert state + log wrapper
+- [x] `bot/mode_manager.py` — mode state and command poll loop
+- [x] `bot/order_executor.py` — state machine, SL/TP monitoring, exchange API wired
+- [x] `bot/virtual_tracker.py` — virtual order efficiency tracking
+- [x] `config/risk_config.py` — extended with Telegram, min_balance, failure threshold fields
+- [x] `bot/risk_manager.py` — renamed paper→test, added min_balance check, Notifier wired
+- [x] `bot/data_feed.py` — reinit() for runtime mode switching
+- [x] `config/settings.py` — test/live mode model (testnet→test rename)
+- [x] `main.py` — Notifier, ModeManager, RiskManager, OrderExecutor, VirtualTracker wired
+- [x] Dashboard: Start/Stop Bot controls (settings page)
+- [x] Dashboard: Trading Mode switcher with obligatory backtest gate
+- [x] Dashboard: Telegram Alerts section + test button
+- [x] Dashboard: ModeBadge in NavBar
+- [x] Dashboard: AlertBanner (warning/emergency alerts, dismissible)
+- [x] Dashboard: System log page (/log) with level filter + NavBar unread badge
+- [x] `TELEGRAM_SETUP.md` — step-by-step Telegram bot creation guide
+- [x] `_submit_to_exchange()` + `_market_close()` wired to real Binance Futures API
+- [x] Combined WebSocket stream (`stream_combined`) — all symbols on one WS connection
+- [x] Price feed fallback (`start_watchdog`) — REST polling when WS silent >15s
+- [x] Kline gap detection and re-fetch — in `refresh_klines` + `_merge`
+- [x] Leverage bracket fetch from Binance API (`fetch_leverage_brackets`)
+- [x] SL stop-market order placed on exchange after each real order open (crash protection)
+- [x] SL order cancelled before any software-triggered market close
+- [x] All order closes (TP/SL, bulk-close, single-close) recorded to `real_orders_{symbol}_{mode}.json`
+- [x] `seed_from_backtest` skips symbol if already in efficiency file
+- [ ] Allocation weight step 0.01 + initial rebalance on symbol add
+- [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
+- [ ] Fix `.env` — change `TRADING_MODE=testnet` → `TRADING_MODE=test` (currently warns on startup)
+
+## Phase 3.9 — Trades Page & Virtual Order Simulation
+
+See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-design.md`
+
+**Preset cleanup** (done):
+- [x] Remove 22 presets with Total% < −10 from `backtest.py` (100 remain + 4 locked)
+
+**Python backend:**
+- [x] Fix `VirtualTracker.seed_from_backtest` — skips if symbol already in efficiency file
+- [x] Build `bot/virtual_order_simulator.py` — open/close/persist lifecycle, TP/SL checks, early-close on stop/mode-switch
+- [x] Real order recording in `OrderExecutor` — `real_orders_{symbol}_{mode}.json` on ALL close types
+- [x] Real order opening guard — `_last_opened_preset[symbol]` + exchange verify on preset change
+- [x] Wire `VirtualOrderSimulator` into `main.py` — candle close, price update, stop, mode switch
+- [ ] Add `Analyzer.get_recommendation_for_preset(overrides: dict) -> Optional[Recommendation]` (deferred)
+
+**Dashboard:**
+- [x] `GET /api/trades?symbol=BTCUSDT` — implemented
+- [x] `/trades` page — preset efficiency table + trade chart + real orders table
+
+**Tests:**
+- [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
+
+## Phase 3.10 — Balance & Leverage Progression ✅ COMPLETE (2026-05-10)
+
+Design approved + implemented in session 14.
+
+- [x] `bot/leverage_tracker.py` — LeverageTracker: graduated level advancement, persistence, add/remove symbol, reset_for_mode
+- [x] `bot/balance_history.py` — append-only balance event logger (MAX 10k entries, atomic write)
+- [x] `bot/decision_log.py` — append-only placement decision logger (MAX 5k entries, atomic write)
+- [x] `bot/virtual_tracker.py` — added `get_efficiency_score(symbol)` + `get_preset_efficiency(symbol, preset_name)`
+- [x] `config/risk_config.py` + `bot/risk_manager.py` — `max_leverage_level`/`use_allocation_weighting` defaults; `can_open_sync(symbol)` simplified (removed `estimated_size_usdt` + allocation checks)
+- [x] `bot/order_executor.py` — `balance_at_open`, `signal_level`, `precision_score` in records; `leverage` in close result dicts
+- [x] `bot/virtual_order_simulator.py` — rewrote: virtual balance pool, leverage_tracker, preset-efficiency sorting, persistence
+- [x] `main.py` — efficiency-ranked cross-symbol loop, `_get_fresh_balance()` 5s TTL, LeverageTracker + bh_record + dl_record wired, real min_notionals fetched at startup
+- [x] `dashboard/app/api/balance-history/route.ts` — GET /api/balance-history?mode=&limit=
+- [x] `dashboard/app/api/risk/route.ts` + `dashboard/app/risk/page.tsx` — max_leverage_level input + use_allocation_weighting checkbox
+
+**Deferred (not in Phase 3.10 scope):**
+- [ ] Balance history chart on Risk page (time-series line + order event markers)
 
 ## Phase 4 — Order placement
 

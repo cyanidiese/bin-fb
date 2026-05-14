@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 // Startup takes 30-60s (obligatory backtest). We hold the "Starting…" label
 // for up to this many ms after the API call succeeds so the UI doesn't
@@ -22,9 +22,18 @@ interface Props {
 export default function BotControl({ botState, onAction }: Props) {
   const [loading, setLoading] = useState(false)
   const [startingUntil, setStartingUntil] = useState(0)
+  const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
 
   const isStarting = !botState?.running && Date.now() < startingUntil
+  const isStopping = stopping
+
+  // Clear stopping flag once the bot process actually exits
+  useEffect(() => {
+    if (stopping && botState !== null && !botState.running) {
+      setStopping(false)
+    }
+  }, [stopping, botState])
 
   async function handleStart() {
     setLoading(true)
@@ -53,14 +62,20 @@ export default function BotControl({ botState, onAction }: Props) {
     try {
       const r = await fetch('/api/bot/stop', { method: 'POST' })
       const d = await r.json()
-      if (!d.ok) setError(d.error || 'Failed to stop bot')
-      else onAction()
+      if (!d.ok) {
+        setError(d.error || 'Failed to stop bot')
+      } else {
+        setStopping(true)
+        onAction()
+      }
     } catch (e) {
       setError(String(e))
     } finally {
       setLoading(false)
     }
   }
+
+  const showStopButton = botState?.running || isStopping
 
   return (
     <section className="space-y-3">
@@ -69,13 +84,13 @@ export default function BotControl({ botState, onAction }: Props) {
       </h2>
       <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
         <div className="flex items-center gap-4">
-          {botState?.running ? (
+          {showStopButton ? (
             <button
               onClick={handleStop}
-              disabled={loading}
-              className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+              disabled={loading || isStopping}
+              className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Stopping…' : 'Stop Bot'}
+              {loading || isStopping ? 'Stopping…' : 'Stop Bot'}
             </button>
           ) : (
             <button
@@ -89,11 +104,13 @@ export default function BotControl({ botState, onAction }: Props) {
           <span className="text-sm text-gray-400">
             {botState === null
               ? 'Status unknown'
-              : botState.running
-                ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
-                : isStarting
-                  ? 'Starting up — running backtests…'
-                  : 'Stopped'}
+              : isStopping
+                ? 'Stopping — waiting for current candle to close…'
+                : botState.running
+                  ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
+                  : isStarting
+                    ? 'Starting up — running backtests…'
+                    : 'Stopped'}
           </span>
         </div>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}

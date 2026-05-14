@@ -211,7 +211,7 @@ async def run() -> None:
     # Run obligatory startup backtest
     notifier.notify("info", "Running obligatory backtest", f"mode={current_mode}", "main")
     bt_result = subprocess.run(
-        ["python", "backtest.py", "--mode", current_mode],
+        [sys.executable, "backtest.py", "--mode", current_mode],
         capture_output=True,
         cwd=str(_PROJECT_ROOT),
     )

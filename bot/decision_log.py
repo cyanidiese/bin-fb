@@ -24,6 +24,7 @@ def record(
     signal_type: Optional[str] = None,
     precision_score: Optional[float] = None,
     level: Optional[int] = None,
+    scenario: Optional[str] = None,
 ) -> None:
     """Append one placement decision. Caps at MAX_ENTRIES (oldest trimmed first).
 
@@ -48,6 +49,8 @@ def record(
         entry['precision_score'] = precision_score
     if level is not None:
         entry['level'] = level
+    if scenario is not None:
+        entry['scenario'] = scenario
 
     _append(path, entry)
 

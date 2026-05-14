@@ -312,7 +312,7 @@ async def run() -> None:
                             decision='skip_sl_too_tight',
                             reason=f'sl_dist={abs(sl_raw - entry):.4f} < {preset_settings.min_sl_atr_mult}×avg_range={avg_range:.4f}',
                             balance=balance, leverage=0, efficiency_score=virtual_tracker.get_efficiency_score(symbol),
-                            preset_name=preset_name,
+                            preset_name=preset_name, scenario=_active_scenario_name,
                         )
                         return 0.0
 
@@ -338,7 +338,7 @@ async def run() -> None:
                 decision='skip_balance',
                 reason=f'balance={balance:.2f} < margin={margin:.2f}',
                 balance=balance, leverage=actual_lev, efficiency_score=eff_score,
-                preset_name=preset_name,
+                preset_name=preset_name, scenario=_active_scenario_name,
             )
             logger.info(f"[{symbol}] Insufficient balance: {balance:.2f} < margin={margin:.2f}")
             return 0.0
@@ -350,7 +350,7 @@ async def run() -> None:
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision=decision, reason=reason,
                 balance=balance, leverage=actual_lev, efficiency_score=eff_score,
-                preset_name=preset_name,
+                preset_name=preset_name, scenario=_active_scenario_name,
             )
             logger.info(f"[{symbol}] Order skipped: {reason}")
             return 0.0
@@ -390,7 +390,7 @@ async def run() -> None:
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision='placed', reason='',
                 balance=balance, leverage=actual_lev, efficiency_score=eff_score,
-                preset_name=preset_name,
+                preset_name=preset_name, scenario=_active_scenario_name,
                 signal_type=best.getType().value,
                 level=best.getLevel(),
                 precision_score=precision or 0.0,

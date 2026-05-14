@@ -13,7 +13,6 @@ const NAV_LINKS = [
   { href: '/create',    label: 'Create'   },
   { href: '/risk',      label: 'Risk'     },
   { href: '/settings',  label: 'Settings' },
-  { href: '/logs',      label: 'Logs'     },
 ]
 
 export default function NavBar() {
@@ -61,7 +60,7 @@ export default function NavBar() {
         href="/log"
         className={`relative ${pathname === '/log' ? 'text-white' : 'text-gray-400 hover:text-white transition-colors'}`}
       >
-        Log
+        Logs
         {unread > 0 && (
           <span className="absolute -top-1 -right-2 inline-flex items-center justify-center w-4 h-4 text-[10px] bg-red-600 text-white rounded-full">
             {unread > 9 ? '9+' : unread}

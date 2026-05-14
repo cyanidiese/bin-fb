@@ -29,40 +29,10 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
   const [refreshing, setRefreshing] = useState(false)
   const [refreshProgress, setRefreshProgress] = useState('')
 
-  async function handleSwitch() {
-    const target = mode === 'test' ? 'live' : 'test'
-    const botRunning = botState?.running ?? false
-    const msg = botRunning
-      ? target === 'live'
-        ? 'Switch to LIVE mode? Real orders will be placed with real money.'
-        : 'Switch to TEST mode? All open orders will be closed at market price.'
-      : `Switch to ${target.toUpperCase()} mode?\n\nThe bot is not running — the mode preference will be saved and used on next start.\n\nRun "Refresh Backtests" afterward to load ${target}-mode kline data into the dashboard.`
-    if (!confirm(msg)) return
-    setSwitching(true)
-    setSwitchError('')
-    try {
-      const r = await fetch('/api/mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_mode: target }),
-      })
-      const data = await r.json()
-      if (data.ok) onModeChanged(target)
-      else setSwitchError(data.error || 'Mode switch failed')
-    } catch (e) {
-      setSwitchError(String(e))
-    } finally {
-      setSwitching(false)
-    }
-  }
-
-  async function handleRefresh() {
-    if (!registry || registry.symbols.length === 0) return
-    if (!confirm(`Re-run backtests for all ${registry.symbols.length} symbols in ${mode.toUpperCase()} mode?\n\nThis fetches fresh klines from the exchange for the current mode.`)) return
+  async function runBatchedBacktests(symbols: string[]) {
+    const BATCH = 4
     setRefreshing(true)
     setRefreshProgress('')
-    const symbols = registry.symbols
-    const BATCH = 4
     try {
       for (let i = 0; i < symbols.length; i += BATCH) {
         const batch = symbols.slice(i, i + BATCH)
@@ -82,6 +52,46 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
       setRefreshing(false)
       setRefreshProgress('')
     }
+  }
+
+  async function handleSwitch() {
+    const target = mode === 'test' ? 'live' : 'test'
+    const botRunning = botState?.running ?? false
+    const symbolCount = registry?.symbols.length ?? 0
+    const msg = botRunning
+      ? target === 'live'
+        ? `Switch to LIVE mode? Real orders will be placed with real money.\n\nBacktests for all ${symbolCount} symbols will re-run automatically after switching.`
+        : `Switch to TEST mode? All open orders will be closed at market price.\n\nBacktests for all ${symbolCount} symbols will re-run automatically after switching.`
+      : `Switch to ${target.toUpperCase()} mode?\n\nThe bot is not running — the mode preference will be saved and used on next start.\n\nBacktests for all ${symbolCount} symbols will re-run automatically to load ${target}-mode kline data.`
+    if (!confirm(msg)) return
+    setSwitching(true)
+    setSwitchError('')
+    try {
+      const r = await fetch('/api/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_mode: target }),
+      })
+      const data = await r.json()
+      if (data.ok) {
+        onModeChanged(target)
+        if (registry && registry.symbols.length > 0) {
+          await runBatchedBacktests(registry.symbols)
+        }
+      } else {
+        setSwitchError(data.error || 'Mode switch failed')
+      }
+    } catch (e) {
+      setSwitchError(String(e))
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  async function handleRefresh() {
+    if (!registry || registry.symbols.length === 0) return
+    if (!confirm(`Re-run backtests for all ${registry.symbols.length} symbols in ${mode.toUpperCase()} mode?\n\nThis fetches fresh klines from the exchange for the current mode.`)) return
+    await runBatchedBacktests(registry.symbols)
   }
 
   return (
@@ -104,7 +114,7 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
           <button
             onClick={handleRefresh}
             disabled={refreshing || !registry || registry.symbols.length === 0}
-            title={`Re-run backtests for all symbols using ${mode.toUpperCase()}-mode klines. Use this after switching mode to load fresh data.`}
+            title={`Manually re-run backtests for all symbols using ${mode.toUpperCase()}-mode klines. This runs automatically on mode switch.`}
             className="px-4 py-2 bg-indigo-900/60 border border-indigo-700 text-indigo-300 text-sm rounded hover:bg-indigo-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {refreshing ? `Refreshing… ${refreshProgress}` : 'Refresh Backtests'}
@@ -112,8 +122,7 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
         </div>
         {!botState?.running && (
           <p className="text-xs text-gray-500">
-            Bot is stopped — switching mode saves the preference for next start.
-            Use <span className="text-indigo-400">Refresh Backtests</span> to pull {mode === 'live' ? 'live' : 'testnet'}-mode klines into the dashboard now.
+            Bot is stopped — switching mode saves the preference for next start and re-runs backtests automatically.
           </p>
         )}
         {switchError && <p className="text-sm text-red-400">{switchError}</p>}

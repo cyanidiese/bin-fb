@@ -2,9 +2,11 @@
 .env
 .env.local
 
-# Logs
+# Logs (runtime log files, not source code)
 logs/
 *.log
+!dashboard/app/logs/
+!dashboard/app/api/logs/
 
 # Python
 __pycache__/

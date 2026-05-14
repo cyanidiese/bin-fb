@@ -69,9 +69,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const tmp = CONFIG_PATH + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2))
-    fs.renameSync(tmp, CONFIG_PATH)
+    // Write directly — atomic rename fails on Docker single-file bind mounts (EBUSY)
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2))
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }

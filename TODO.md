@@ -198,6 +198,9 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [ ] Allocation weight step 0.01 + initial rebalance on symbol add
 - [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
 - [ ] Fix `.env` — change `TRADING_MODE=testnet` → `TRADING_MODE=test` (currently warns on startup)
+- [ ] Apply Global Capital Rules recommendation to risk_config.json (user has proposal, not yet applied)
+- [ ] Deploy session-clearing + virtual tracker changes to server (pending user test confirmation)
+- [ ] Archive viewer in dashboard (possible future: browse archived sessions)
 
 ## Phase 3.9 — Trades Page & Virtual Order Simulation
 
@@ -217,9 +220,20 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 **Dashboard:**
 - [x] `GET /api/trades?symbol=BTCUSDT` — implemented
 - [x] `/trades` page — preset efficiency table + trade chart + real orders table
+- [x] Merge Logs and Log nav pages (done)
+- [x] Fix AlertBanner hidden behind navbar (done)
+- [x] Run Backtest button blocking API (done — now non-blocking with polling)
+- [x] Stop Bot error when bot already stopped (done)
+- [x] Add scenario to decision log entries (done)
 
 **Tests:**
 - [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
+
+**Session 2026-05-14 refinements:**
+- [x] Virtual tracker `seed_from_backtest` redesign — trade_count vs seeded_winning_usdt separation
+- [x] Raise `_MIN_TRADES` from 4 to 8 — more conservative maturation threshold
+- [x] Session data clearing on bot start — archive old real_orders files instead of delete
+- [x] Hide virtual-only checkbox on Trades page — hide seeded orders with no runtime trades
 
 ## Phase 3.10 — Balance & Leverage Progression ✅ COMPLETE (2026-05-10)
 

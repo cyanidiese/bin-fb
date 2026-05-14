@@ -1,6 +1,25 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-10 (session 14)
+## Last updated: 2026-05-14 (session 16)
+
+---
+
+## ⟳ RESUME POINT — session 16 ended here (2026-05-14)
+
+**Branch**: `feature/test-live-preparation` (awaiting user test confirmation on server before merge)
+
+**What was completed this session:**
+1. Virtual tracker `seed_from_backtest()` redesigned — no longer copies backtest trade counts; stores `trade_count: 0` and `seeded_winning_usdt` (backtest score as fallback)
+2. `_MIN_TRADES` raised from 4 to **8** — bot waits for 8 combined real + virtual closed trades per preset before switching from backtest-seeded score to live score
+3. Real order closes (line 527 in main.py) and virtual order closes (line 549) both call `virtual_tracker.record_closed_trade` so counter accumulates correctly
+4. Real orders archive on bot restart — `real_orders_{sym}_{mode}.json` is archived to `real_orders_{sym}_{mode}_archive_{YYYYMMDDTHHMMSSZ}.json`; Trades page shows only current session
+5. Trades page: "Hide virtual-only" checkbox added to Preset Efficiency section header (checked by default) — hides all Virtual rows where `tradeCount === 0` (seeded with no runtime trades)
+6. `CollapsibleSection` gained `headerExtra?: React.ReactNode` prop with click-isolation from toggle
+7. UI fixes (pre-existing, same session): AlertBanner moved inside `pt-11`, Run Backtest non-blocking with polling, Stop Bot returns ok when bot already stopped, Logs+Log pages merged, scenario added to decision log
+
+**Immediate next action**: User to test session-clearing + virtual tracker on server; then merge to main
+
+**Key state**: All Phase 3.10 design decisions from session 13 are now fully implemented. Virtual balance seeds from real at mode start, trades page ready for evaluation.
 
 ---
 
@@ -704,6 +723,33 @@ Settings page (`/settings`) allows adding and removing symbols. Registry stored 
 **Test results (21 tests total, all passing):**
 - 4 `test_risk_config.py`: file creation, key merging, save/reload, corrupt-file fallback
 - 17 `test_risk_manager.py`: tier selection, allocation, capital gate, drawdown guard, leverage formula, TTL cache, backtester compound balance
+
+---
+
+### Session 16 — 2026-05-14: Virtual tracker refinements + Trades page polish
+
+#### Virtual tracker — session clearing and trade count logic
+- `seed_from_backtest` now stores `trade_count: 0` (not backtest trade count) and `seeded_winning_usdt` field (backtest score as fallback)
+- `best_preset()` uses `seeded_winning_usdt` fallback when `trade_count < _MIN_TRADES`; switches to live `total_winning_usdt` once ≥8 real+virtual trades accumulate
+- `get_efficiency_score()` also falls back to `seeded_winning_usdt` until runtime trades mature
+- `_MIN_TRADES` raised from 4 to **8** — more conservative maturation threshold
+- `record_closed_trade()` called on both real (line 527) and virtual (line 549) order closes to accumulate trade count correctly
+
+#### Real order archiving on bot restart
+- On every bot start, `virtual_tracker.clear_session_data(symbols)` is called before seeding
+- This wipes `preset_efficiency_{mode}.json` and the in-memory dict (clears accumulated runtime data)
+- `real_orders_{sym}_{mode}.json` is **archived** to `real_orders_{sym}_{mode}_archive_{YYYYMMDDTHHMMSSZ}.json` instead of deleted
+- Trades page shows only current session; old sessions preserved in archive files for post-run analysis
+
+#### Trades page UI improvements
+- "Hide virtual-only" checkbox added to Preset Efficiency section header, checked by default
+- When checked: hides all Virtual rows where `tradeCount === 0` (seeded-from-backtest with no actual runtime trades yet)
+- `CollapsibleSection` gained `headerExtra?: React.ReactNode` prop with click-isolation from toggle
+
+#### Why these changes
+- **Trade count maturation**: 8 trades is a higher bar before trusting live score — reduces noise from lucky early runs
+- **Session archiving**: Preserves trade history for analysis without polluting current-session view; allows decision-log correlation
+- **Hide virtual-only**: Declutters Trades page when seeded virtual orders haven't yet accumulated real execution data
 
 ---
 

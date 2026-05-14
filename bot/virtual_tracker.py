@@ -7,7 +7,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-_MIN_TRADES = 4
+_MIN_TRADES = 8  # combined real + virtual trades before live score overrides the backtest seed
 
 
 class VirtualTracker:
@@ -22,9 +22,22 @@ class VirtualTracker:
         self._efficiency_path = efficiency_path
         self._efficiency: dict = self._load_efficiency()
 
+    def clear_session_data(self, symbols: list[str]) -> None:
+        """Wipe in-memory and on-disk efficiency so the new session starts clean."""
+        self._efficiency = {}
+        if self._efficiency_path.exists():
+            try:
+                self._efficiency_path.unlink()
+            except Exception as exc:
+                logger.warning(f"Could not delete efficiency file: {exc}")
+
     def seed_from_backtest(self, symbol: str, backtest_path: Path) -> None:
-        if symbol in self._efficiency:
-            return
+        """Seed efficiency scores from backtest results.
+
+        Sets seeded_winning_usdt as a fallback score for preset selection but
+        keeps trade_count at 0 so the UI never shows backtest history as if it
+        were live virtual trades.
+        """
         if not backtest_path.exists():
             logger.warning(f"No backtest file for {symbol}: {backtest_path}")
             return
@@ -38,19 +51,30 @@ class VirtualTracker:
                     for t in trades
                     if t.get("profit_pct", 0.0) > 0
                 )
-                self._set_efficiency(symbol, name, total_winning=winning_usdt, count=len(trades))
+                self._efficiency.setdefault(symbol, {})[name] = {
+                    "total_winning_usdt": 0.0,
+                    "trade_count": 0,
+                    "seeded_winning_usdt": winning_usdt,
+                }
+            self._save_efficiency()
         except Exception as exc:
             logger.error(f"Failed to seed efficiency for {symbol}: {exc}")
 
     def best_preset(self, symbol: str) -> str | None:
         symbol_data = self._efficiency.get(symbol, {})
-        eligible = {
-            name: stats for name, stats in symbol_data.items()
-            if stats.get("trade_count", 0) >= _MIN_TRADES
-        }
-        if not eligible:
+        if not symbol_data:
             return None
-        return max(eligible, key=lambda n: eligible[n].get("total_winning_usdt", 0.0))
+
+        def _score(stats: dict) -> float:
+            # Once a preset has enough live virtual trades, use the live score.
+            # Otherwise fall back to the backtest-seeded score so the bot can
+            # still pick a best preset before any runtime data accumulates.
+            if stats.get("trade_count", 0) >= _MIN_TRADES:
+                return stats.get("total_winning_usdt", 0.0)
+            return stats.get("seeded_winning_usdt", 0.0)
+
+        best = max(symbol_data, key=lambda n: _score(symbol_data[n]))
+        return best if _score(symbol_data[best]) > 0 else None
 
     def get_efficiency(self, symbol: str, preset: str) -> dict:
         return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0})
@@ -61,6 +85,8 @@ class VirtualTracker:
         for stats in symbol_data.values():
             if stats.get('trade_count', 0) >= _MIN_TRADES:
                 best = max(best, stats.get('total_winning_usdt', 0.0))
+            else:
+                best = max(best, stats.get('seeded_winning_usdt', 0.0))
         return best
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:

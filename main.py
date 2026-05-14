@@ -220,6 +220,20 @@ async def run() -> None:
                         bt_result.stderr.decode()[:500], "main")
         sys.exit(1)
 
+    # Archive previous session's real orders, then start a clean slate so the
+    # Trades page only shows data from the current run.
+    session_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    virtual_tracker.clear_session_data(symbols)
+    for sym in symbols:
+        real_orders_path = _PROJECT_ROOT / "data" / f"real_orders_{sym}_{current_mode}.json"
+        if real_orders_path.exists():
+            try:
+                archive_path = _PROJECT_ROOT / "data" / f"real_orders_{sym}_{current_mode}_archive_{session_ts}.json"
+                real_orders_path.rename(archive_path)
+                logger.info(f"Archived real orders for {sym} → {archive_path.name}")
+            except Exception as exc:
+                logger.warning(f"Could not archive real orders for {sym}: {exc}")
+
     for sym in symbols:
         bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
         virtual_tracker.seed_from_backtest(sym, bt_path)

@@ -79,6 +79,7 @@ export default function TradesPage() {
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [klines, setKlines] = useState<Array<{ time: number; close: number }>>([])
+  const [hideVirtualOnly, setHideVirtualOnly] = useState(true)
 
   useEffect(() => {
     if (!symbol) return
@@ -103,7 +104,10 @@ export default function TradesPage() {
   if (error) return <div className="pt-16 p-4 text-red-400">{error}</div>
   if (!data) return <div className="pt-16 p-4 text-gray-400">Loading…</div>
 
-  const presetRows = buildPresetRows(data)
+  const allPresetRows = buildPresetRows(data)
+  const presetRows = hideVirtualOnly
+    ? allPresetRows.filter(r => r.type === 'Real' || r.tradeCount > 0)
+    : allPresetRows
   const realOrders = [...data.real_orders].reverse()
 
   return (
@@ -122,6 +126,17 @@ export default function TradesPage() {
         title={`Preset Efficiency (${presetRows.length} presets)`}
         storageKey="trades-preset-efficiency"
         defaultOpen
+        headerExtra={
+          <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hideVirtualOnly}
+              onChange={e => setHideVirtualOnly(e.target.checked)}
+              className="accent-indigo-500"
+            />
+            Hide virtual-only
+          </label>
+        }
       >
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">

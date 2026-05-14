@@ -74,7 +74,7 @@ export default function BacktestPage() {
         body: JSON.stringify({ name, action }),
       })
       if (!res.ok) return
-      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
+      const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
       if (!r.ok) return
       setData(await r.json())
     } catch { /* silently ignore network errors */ }
@@ -102,7 +102,7 @@ export default function BacktestPage() {
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 2000))
         try {
-          const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
+          const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
           if (!r.ok) continue
           const result: BacktestResults = await r.json()
           if (result.generated_at !== snapshotTs) {
@@ -129,7 +129,7 @@ export default function BacktestPage() {
       })
       if (!res.ok) return
       // Refetch so all derived state (filteredPresets, activePreset) updates atomically
-      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
+      const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
       if (!r.ok) return
       const json: BacktestResults = await r.json()
       setData(json)
@@ -139,7 +139,7 @@ export default function BacktestPage() {
 
   useEffect(() => {
     setData(null)
-    fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
+    fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
@@ -161,7 +161,7 @@ export default function BacktestPage() {
     if (availableSymbols.length < 2) return
     Promise.all(
       availableSymbols.map(s =>
-        fetch(`/backtest_results_${s}.json?t=${Date.now()}`)
+        fetch(`/api/public-file?f=backtest_results_${s}.json`)
           .then(r => (r.ok ? r.json() : null))
           .catch(() => null)
       )

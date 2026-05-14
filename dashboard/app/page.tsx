@@ -51,7 +51,7 @@ function PageContent({ symbol }: { symbol: string }) {
     setData(null)
 
     function load() {
-      fetch(`/results_${symbol}.json?_=${Date.now()}`)
+      fetch(`/api/public-file?f=results_${symbol}.json`)
         .then(r => {
           if (r.status === 404) return null   // file not yet written — not an error
           if (!r.ok) throw new Error(`HTTP ${r.status}`)

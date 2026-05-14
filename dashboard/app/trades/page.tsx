@@ -93,7 +93,7 @@ export default function TradesPage() {
 
   useEffect(() => {
     if (!symbol) return
-    fetch(`/results_${symbol}.json?t=${Date.now()}`)
+    fetch(`/api/public-file?f=results_${symbol}.json`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.klines) setKlines(d.klines)

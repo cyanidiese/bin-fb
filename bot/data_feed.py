@@ -365,7 +365,7 @@ class DataFeed:
 
     @staticmethod
     def _write_cache(path: Path, klines: list) -> None:
-        path.parent.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f:
             json.dump(klines, f)
 

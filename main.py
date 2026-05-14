@@ -547,7 +547,7 @@ async def run() -> None:
         feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
         bt_result = await asyncio.to_thread(
             subprocess.run,
-            ["python", "backtest.py", "--mode", target_mode],
+            [sys.executable, "backtest.py", "--mode", target_mode],
             capture_output=True,
             cwd=str(_PROJECT_ROOT),
         )

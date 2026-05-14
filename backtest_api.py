@@ -43,6 +43,8 @@ DEFAULTS = {
     'correction_weight': 0.0,
     'lower_high_sell': False,
     'higher_low_buy': False,
+    'min_sl_atr_mult': 0.0,
+    'atr_lookback': 20,
 }
 
 
@@ -81,6 +83,8 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         global_pause_candles=int(p['global_pause_candles']),
         lower_high_sell=bool(p['lower_high_sell']),
         higher_low_buy=bool(p['higher_low_buy']),
+        min_sl_atr_mult=float(p['min_sl_atr_mult']),
+        atr_lookback=int(p['atr_lookback']),
     )
 
 

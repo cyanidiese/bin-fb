@@ -43,23 +43,16 @@ export async function POST(req: NextRequest) {
     ...(symbol ? ['--symbols', symbol] : []),
   ]
 
+  // Spawn and return immediately — the frontend polls the results JSON file.
+  // Waiting for backtest.py to finish (can take 30 s+) would block the browser.
   return new Promise<NextResponse>(resolve => {
-    let stderr = ''
-    const child = spawn(python, args, { cwd: BOT_ROOT })
-    child.stdout.on('data', () => {})
-    child.stderr.on('data', chunk => { stderr += chunk })
+    const child = spawn(python, args, { cwd: BOT_ROOT, detached: true, stdio: 'ignore' })
     child.on('error', err => {
-      resolve(NextResponse.json({ error: `Failed to start Python: ${err.message}` }, { status: 500 }))
+      resolve(NextResponse.json({ error: `Failed to start backtest: ${err.message}` }, { status: 500 }))
     })
-    child.on('close', code => {
-      if (code !== 0) {
-        resolve(NextResponse.json(
-          { error: stderr.trim() || `backtest.py exited with code ${code}` },
-          { status: 500 },
-        ))
-        return
-      }
-      resolve(NextResponse.json({ ok: true, klines_count: klinesCount, symbol }))
+    child.on('spawn', () => {
+      child.unref()
+      resolve(NextResponse.json({ ok: true, klines_count: klinesCount, symbol, pid: child.pid }))
     })
   })
 }

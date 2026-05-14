@@ -83,6 +83,8 @@ export default function BacktestPage() {
   async function handleRunBacktest() {
     setIsRunning(true)
     setRunError(null)
+    // Record the results timestamp before launching so we can detect when the file is refreshed.
+    const snapshotTs = data?.generated_at ?? ''
     try {
       const res = await fetch('/api/run-backtest', {
         method: 'POST',
@@ -94,12 +96,23 @@ export default function BacktestPage() {
         setRunError(json.error ?? 'Backtest failed')
         return
       }
-      // Reload results after successful run
-      const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
-      if (r.ok) {
-        const updated: BacktestResults = await r.json()
-        setData(updated)
+      // Poll until the results JSON is newer than the snapshot we recorded, or 3 min max.
+      const deadline = Date.now() + 3 * 60 * 1000
+      let updated = false
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2000))
+        try {
+          const r = await fetch(`/backtest_results_${symbol}.json?t=${Date.now()}`)
+          if (!r.ok) continue
+          const result: BacktestResults = await r.json()
+          if (result.generated_at !== snapshotTs) {
+            setData(result)
+            updated = true
+            break
+          }
+        } catch { /* keep polling */ }
       }
+      if (!updated) setRunError('Backtest timed out or failed — check the Log page for details')
     } catch (e) {
       setRunError(String(e))
     } finally {

@@ -28,16 +28,18 @@ async function waitForResult(id: string): Promise<boolean> {
   return false
 }
 
-function sigterm(): boolean {
-  if (!fs.existsSync(PID_PATH)) return false
+/** Try to SIGTERM the bot. Returns 'killed' | 'already_stopped' | 'no_pid'. */
+function sigterm(): 'killed' | 'already_stopped' | 'no_pid' {
+  if (!fs.existsSync(PID_PATH)) return 'no_pid'
   try {
     const { pid } = JSON.parse(fs.readFileSync(PID_PATH, 'utf8'))
-    if (pid && isAlive(pid)) {
-      process.kill(pid, 'SIGTERM')
-      return true
-    }
-  } catch {}
-  return false
+    if (!pid) return 'no_pid'
+    if (!isAlive(pid)) return 'already_stopped'
+    process.kill(pid, 'SIGTERM')
+    return 'killed'
+  } catch {
+    return 'no_pid'
+  }
 }
 
 export async function POST() {
@@ -47,10 +49,13 @@ export async function POST() {
   } catch (err) {
     return NextResponse.json({ ok: false, error: `Failed to write command: ${err}` }, { status: 500 })
   }
-  const ok = await waitForResult(id)
-  if (!ok) {
-    const killed = sigterm()
-    if (!killed) return NextResponse.json({ ok: false, error: 'Bot not responding and no PID found' }, { status: 500 })
-  }
-  return NextResponse.json({ ok: true })
+  const responded = await waitForResult(id)
+  if (responded) return NextResponse.json({ ok: true })
+
+  // Bot didn't respond in time — fall back to SIGTERM
+  const result = sigterm()
+  if (result === 'killed') return NextResponse.json({ ok: true, note: 'Bot killed with SIGTERM (did not respond to stop command in time)' })
+  if (result === 'already_stopped') return NextResponse.json({ ok: true, note: 'Bot was already stopped' })
+  // No PID at all — treat as already stopped (goal achieved)
+  return NextResponse.json({ ok: true, note: 'Bot was not running' })
 }

@@ -27,6 +27,7 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
   const [switching, setSwitching] = useState(false)
   const [switchError, setSwitchError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshProgress, setRefreshProgress] = useState('')
 
   async function handleSwitch() {
     const target = mode === 'test' ? 'live' : 'test'
@@ -59,19 +60,27 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
     if (!registry || registry.symbols.length === 0) return
     if (!confirm(`Re-run backtests for all ${registry.symbols.length} symbols in ${mode.toUpperCase()} mode?\n\nThis fetches fresh klines from the exchange for the current mode.`)) return
     setRefreshing(true)
+    setRefreshProgress('')
+    const symbols = registry.symbols
+    const BATCH = 4
     try {
-      await Promise.allSettled(
-        registry.symbols.map(sym =>
-          fetch('/api/run-backtest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbol: sym, klines_count: 1500 }),
-          })
+      for (let i = 0; i < symbols.length; i += BATCH) {
+        const batch = symbols.slice(i, i + BATCH)
+        setRefreshProgress(`${Math.min(i + BATCH, symbols.length)}/${symbols.length}`)
+        await Promise.allSettled(
+          batch.map(sym =>
+            fetch('/api/run-backtest', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ symbol: sym, klines_count: 1500 }),
+            })
+          )
         )
-      )
+      }
       onRefetch()
     } finally {
       setRefreshing(false)
+      setRefreshProgress('')
     }
   }
 
@@ -98,7 +107,7 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
             title={`Re-run backtests for all symbols using ${mode.toUpperCase()}-mode klines. Use this after switching mode to load fresh data.`}
             className="px-4 py-2 bg-indigo-900/60 border border-indigo-700 text-indigo-300 text-sm rounded hover:bg-indigo-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {refreshing ? 'Refreshing…' : 'Refresh Backtests'}
+            {refreshing ? `Refreshing… ${refreshProgress}` : 'Refresh Backtests'}
           </button>
         </div>
         {!botState?.running && (

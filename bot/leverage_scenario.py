@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 @runtime_checkable
 class LeverageScenario(Protocol):
     name: str
+    uses_weight_allocation: bool  # False → scenario owns allocation; main.py uses get_deployable_budget
 
     def get_leverage(
         self, symbol: str, score: float, base: int, max_policy: int, bracket_max: int
@@ -30,6 +31,7 @@ class LeverageScenario(Protocol):
 class DefaultScenario:
     """All active symbols must complete level N before any advances to N+1."""
     name = "default"
+    uses_weight_allocation = True
 
     def __init__(
         self,
@@ -73,6 +75,7 @@ class DefaultScenario:
 class AllocationScenario:
     """Each symbol advances its own level independently."""
     name = "allocation"
+    uses_weight_allocation = True
 
     def __init__(
         self,
@@ -159,6 +162,41 @@ class AllocationScenario:
 class FirstHasMostScenario:
     """Leverage is derived immediately from efficiency score. No cross-symbol dependency."""
     name = "first_has_most"
+    uses_weight_allocation = True
+
+    def get_leverage(
+        self, symbol: str, score: float, base: int, max_policy: int, bracket_max: int
+    ) -> int:
+        raw = base + math.floor(score * (max_policy - base))
+        return min(max(base, raw), max_policy, bracket_max)
+
+    def record_closed(self, symbol: str, leverage: int) -> None:
+        pass
+
+    def add_symbol(self, symbol: str) -> None:
+        pass
+
+    def remove_symbol(self, symbol: str) -> None:
+        pass
+
+    def reset_for_mode(self, new_mode: str, data_path: Path) -> None:
+        pass
+
+    def get_global_level(self) -> int:
+        return 0
+
+    def get_symbol_level(self, symbol: str) -> int:
+        return 0
+
+
+class BestGetsFirstScenario:
+    """Best-scoring symbol gets the full deployable budget; each subsequent symbol gets the remainder.
+
+    Allocation is sequential (score-descending order); no per-symbol weight split.
+    Leverage is derived instantly from the efficiency score, same formula as FirstHasMost.
+    """
+    name = "best_gets_first"
+    uses_weight_allocation = False  # main.py tracks remaining pool per candle batch
 
     def get_leverage(
         self, symbol: str, score: float, base: int, max_policy: int, bracket_max: int
@@ -197,6 +235,8 @@ def create_scenario(
         return AllocationScenario(mode, active_symbols, data_path, max_level, inherit_from_level)
     if name == "first_has_most":
         return FirstHasMostScenario()
+    if name == "best_gets_first":
+        return BestGetsFirstScenario()
     if name != "default":
         logger.warning(f"Unknown scenario '{name}', falling back to 'default'")
     return DefaultScenario(mode, active_symbols, data_path, max_level)

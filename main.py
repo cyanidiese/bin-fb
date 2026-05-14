@@ -283,14 +283,14 @@ async def run() -> None:
 
     async def _try_place_order(
         symbol: str, best, settings, balance: float, candle_ts: int
-    ) -> None:
+    ) -> float:
         preset_name = virtual_tracker.best_preset(symbol)
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
         entry = best.getEntryPrice()
         if entry <= 0:
-            return
+            return 0.0
 
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
@@ -317,7 +317,7 @@ async def run() -> None:
                 preset_name=preset_name,
             )
             logger.info(f"[{symbol}] Insufficient balance: {balance:.2f} < margin={margin:.2f}")
-            return
+            return 0.0
 
         allowed, reason = risk_manager.can_open_sync(symbol)
         if not allowed:
@@ -329,13 +329,13 @@ async def run() -> None:
                 preset_name=preset_name,
             )
             logger.info(f"[{symbol}] Order skipped: {reason}")
-            return
+            return 0.0
 
         # If best preset changed since last order, verify exchange has no open position
         if order_executor._last_opened_preset.get(symbol) != preset_name:
             await order_executor.check_symbols_on_exchange([symbol])
             if order_executor.get_state(symbol) != OrderState.IDLE:
-                return
+                return 0.0
 
         quantity = (margin * actual_lev) / entry
 
@@ -371,6 +371,8 @@ async def run() -> None:
                 level=best.getLevel(),
                 precision_score=precision or 0.0,
             )
+            return margin
+        return 0.0
 
     async def on_candle_close(symbol: str, kline: list) -> None:
         nonlocal risk_cfg, _active_scenario_name, scenario
@@ -434,8 +436,16 @@ async def run() -> None:
             candidates.append((sym, best_sym, sym_settings.get(sym, settings), score))
 
         candidates.sort(key=lambda x: x[3], reverse=True)
-        for sym, best, sym_s, _ in candidates:
-            await _try_place_order(sym, best, sym_s, balance, candle_ts)
+        if scenario.uses_weight_allocation:
+            for sym, best, sym_s, _ in candidates:
+                await _try_place_order(sym, best, sym_s, balance, candle_ts)
+        else:
+            # BestGetsFirst: each symbol gets the remaining deployable pool after prior orders
+            deployable = risk_manager.get_deployable_budget()
+            deployed = 0.0
+            for sym, best, sym_s, _ in candidates:
+                used = await _try_place_order(sym, best, sym_s, max(0.0, deployable - deployed), candle_ts)
+                deployed += used
 
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,

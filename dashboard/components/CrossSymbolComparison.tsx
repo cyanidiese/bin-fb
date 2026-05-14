@@ -44,7 +44,7 @@ function activeTier(config: RiskConfig, balance: number) {
   return sorted.reduce((active, t) => balance >= t.min_balance_usdt ? t : active, sorted[0])
 }
 
-type ScenarioId = 'default' | 'allocation' | 'first_has_most'
+type ScenarioId = 'default' | 'allocation' | 'first_has_most' | 'best_gets_first'
 
 function computeSizingDefault(
   symbol: string,
@@ -93,6 +93,32 @@ function computeSizingFirstHasMost(
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
   const numSymbols = Object.keys(riskState?.per_symbol ?? {}).length || 1
   return { margin: pool / numSymbols, lev }
+}
+
+function computeSizingBestGetsFirst(
+  symbol: string,
+  balance: number,
+  config: RiskConfig,
+  riskState: RiskStateSnapshot | undefined,
+  allSymbols: string[],
+): { margin: number; lev: number } {
+  const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
+  const base = config.base_leverage ?? 1
+  const maxLev = config.max_leverage ?? 5
+  const tier = activeTier(config, balance)
+  const maxEffective = Math.min(maxLev, tier.max_leverage_ceiling)
+  const raw = base + Math.floor(score * (maxEffective - base))
+  const lev = Math.max(base, Math.min(maxEffective, raw))
+  const reserve = balance * (config.min_balance_pct ?? 0) / 100
+  const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
+  // Symbols sorted by score descending; each gets the full remaining pool after prior symbols' min margins
+  const sorted = [...allSymbols].sort((a, b) =>
+    (riskState?.per_symbol?.[b]?.performance_score ?? 0) - (riskState?.per_symbol?.[a]?.performance_score ?? 0)
+  )
+  const myRank = sorted.indexOf(symbol)
+  // Estimate consumed margin as 5 USDT per prior symbol (min_notional approximation)
+  const consumed = Math.max(0, myRank) * 5
+  return { margin: Math.max(0, pool - consumed), lev }
 }
 
 function computeSizing(
@@ -199,6 +225,9 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
             break
           case 'first_has_most':
             out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState)
+            break
+          case 'best_gets_first':
+            out[sym] = computeSizingBestGetsFirst(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           default:
             out[sym] = computeSizingDefault(sym, totalBalance, riskConfig, riskState)
@@ -414,9 +443,10 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
         <div className="flex items-center gap-1">
           <span className="text-gray-600 text-[10px] mr-1">Scenario:</span>
           {([
-            ['default',        'Default'],
-            ['allocation',     'Allocation'],
-            ['first_has_most', 'First Has Most'],
+            ['default',         'Default'],
+            ['allocation',      'Allocation'],
+            ['first_has_most',  'First Has Most'],
+            ['best_gets_first', 'Best Gets First'],
           ] as [ScenarioId, string][]).map(([id, label]) => (
             <button
               key={id}

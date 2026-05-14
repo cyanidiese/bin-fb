@@ -126,7 +126,8 @@
       "Bash(pkill -f \"next dev\")",
       "Bash(curl -s -X POST http://localhost:3000/api/mode -H 'Content-Type: application/json' -d '{\"target_mode\":\"test\"}')",
       "Read(//Users/bohdanpaliichuk/.claude/plugins/**)",
-      "Read(//Users/bohdanpaliichuk/.claude/**)"
+      "Read(//Users/bohdanpaliichuk/.claude/**)",
+      "Bash(awk '{print $5}')"
     ]
   }
 }

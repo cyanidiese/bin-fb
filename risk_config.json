@@ -2,12 +2,12 @@
   "balance_tiers": [
     {
       "min_balance_usdt": 0,
-      "max_deploy_pct": 40,
+      "max_deploy_pct": 80,
       "max_leverage_ceiling": 5
     },
     {
       "min_balance_usdt": 1000,
-      "max_deploy_pct": 50,
+      "max_deploy_pct": 70,
       "max_leverage_ceiling": 10
     },
     {
@@ -27,8 +27,23 @@
     "XAUUSDT": 1,
     "ETHUSDT": 1,
     "SOLUSDT": 1,
-    "BNBUSDT": 1
+    "BNBUSDT": 1,
+    "THETAUSDT": 1,
+    "REZUSDT": 1,
+    "DOGEUSDT": 1,
+    "1000PEPEUSDT": 1,
+    "WLDUSDT": 1,
+    "MEMEUSDT": 1,
+    "AVAXUSDT": 1,
+    "ETHFIUSDT": 1,
+    "TIAUSDT": 1,
+    "EIGENUSDT": 1
   },
+  "max_leverage_level": 5,
+  "use_allocation_weighting": false,
+  "min_balance_pct": 15,
+  "telegram_notify_interval_s": 120,
+  "scenario": "first_has_most",
   "telegram": {
     "token": "8679317265:AAEZL2fgWmbyjWe07ZgOWjckW_X3a0tTkAA",
     "chat_id": "420138767"

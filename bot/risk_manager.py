@@ -142,6 +142,16 @@ class RiskManager:
         with self._lock:
             return self._balance
 
+    def get_deployable_budget(self) -> float:
+        """Total deployable pool across all symbols (after reserve, before weight split).
+        Used by scenarios where allocation is not weight-based (e.g. BestGetsFirst)."""
+        with self._lock:
+            cfg = self._load_config()
+            tier = self._get_tier(cfg)
+            min_pct = cfg.get("min_balance_pct", 0.0)
+            reserve = self._balance * (min_pct / 100.0) if min_pct > 0 else 0.0
+            return max(0.0, self._balance - reserve) * tier["max_deploy_pct"] / 100.0
+
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
             self._last_notify_event = event

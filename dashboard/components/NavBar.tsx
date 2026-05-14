@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { href: '/create',    label: 'Create'   },
   { href: '/risk',      label: 'Risk'     },
   { href: '/settings',  label: 'Settings' },
+  { href: '/logs',      label: 'Logs'     },
 ]
 
 export default function NavBar() {
@@ -67,17 +68,15 @@ export default function NavBar() {
           </span>
         )}
       </Link>
-      <div className="ml-auto flex items-center gap-3 min-w-0">
-        <div className="max-w-[200px] min-w-0">
-          <SymbolSwitcher symbols={availableSymbols} selected={symbol} onSelect={setSymbol} />
-        </div>
-        <button
-          onClick={handleLogout}
-          className="text-gray-400 hover:text-white transition-colors text-sm shrink-0"
-        >
-          Logout
-        </button>
+      <div className="ml-6 mr-6 flex-1 min-w-0">
+        <SymbolSwitcher symbols={availableSymbols} selected={symbol} onSelect={setSymbol} />
       </div>
+      <button
+        onClick={handleLogout}
+        className="text-gray-400 hover:text-white transition-colors text-sm shrink-0"
+      >
+        Logout
+      </button>
     </nav>
   )
 }

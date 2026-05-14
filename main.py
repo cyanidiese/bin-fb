@@ -114,9 +114,17 @@ async def run() -> None:
     mode_manager = ModeManager(notifier=notifier)
     current_mode = mode_manager.current_mode
 
+    _cfg_balance = risk_cfg.get("test_starting_balance_usdt", 10000.0)
+    _balance_path = _PROJECT_ROOT / 'data' / f'virtual_balance_{current_mode}.json'
+    if _balance_path.exists():
+        try:
+            _persisted = json.loads(_balance_path.read_text())
+            _cfg_balance = float(_persisted.get('virtual_balance', _cfg_balance))
+        except Exception:
+            pass
     risk_manager = RiskManager(
         mode=current_mode,
-        initial_balance=risk_cfg.get("test_starting_balance_usdt", 10000.0),
+        initial_balance=_cfg_balance,
         notifier=notifier,
     )
 

@@ -14,9 +14,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   return (
     <SymbolContext.Provider value={{ symbol, setSymbol, availableSymbols }}>
-      {!isLoginPage && <AlertBanner />}
       {!isLoginPage && <NavBar />}
-      <div className={isLoginPage ? undefined : 'pt-11'}>{children}</div>
+      <div className={isLoginPage ? undefined : 'pt-11'}>
+        {!isLoginPage && <AlertBanner />}
+        {children}
+      </div>
     </SymbolContext.Provider>
   )
 }

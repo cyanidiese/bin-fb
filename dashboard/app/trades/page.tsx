@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
-import type { TradesData, RealOrder, VirtualOrder } from '@/lib/types'
+import type { TradesData, RealOrder, VirtualOrder, Kline } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import TradesChart from '@/components/TradesChart'
 
@@ -128,7 +128,7 @@ export default function TradesPage() {
   const { symbol } = useSymbolContext()
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [klines, setKlines] = useState<Array<{ time: number; close: number }>>([])
+  const [klines, setKlines] = useState<Kline[]>([])
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -350,7 +350,11 @@ export default function TradesPage() {
       {/* ── Price chart ── */}
       {klines.length > 0 && (
         <CollapsibleSection title="Price Chart + Trade Markers" storageKey="trades-chart" defaultOpen>
-          <TradesChart klines={klines} realOrders={data.real_orders} />
+          <TradesChart
+            klines={klines}
+            realOrders={selectedPreset ? data.real_orders.filter(o => o.preset_name === selectedPreset) : data.real_orders}
+            virtualOrders={selectedPreset ? data.virtual_orders.filter(o => o.preset_name === selectedPreset) : data.virtual_orders}
+          />
         </CollapsibleSection>
       )}
 

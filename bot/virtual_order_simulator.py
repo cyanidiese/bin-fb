@@ -41,6 +41,7 @@ class VirtualOrderSimulator:
         virtual_tracker: 'VirtualTracker',
         min_notionals: dict[str, float],
         get_allocation: Optional[Callable[[str], float]] = None,
+        get_scenario: Optional[Callable[[], str]] = None,
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
@@ -49,6 +50,7 @@ class VirtualOrderSimulator:
         self._virtual_tracker = virtual_tracker
         self._min_notionals = min_notionals
         self._get_allocation = get_allocation
+        self._get_scenario = get_scenario
         # symbol -> {preset_name: order_record_dict}
         self._open: dict[str, dict[str, dict]] = {}
         # symbol -> {preset_name: FakeOrder}
@@ -172,6 +174,7 @@ class VirtualOrderSimulator:
                 'quantity': quantity,
                 'leverage': lev,
                 'virtual_margin': margin,
+                'scenario': self._get_scenario() if self._get_scenario else '',
                 'virtual_balance_at_open': self._virtual_balance,
                 'open_time': datetime.now(timezone.utc).isoformat(),
                 'status': 'open',

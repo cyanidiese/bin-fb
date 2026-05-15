@@ -191,6 +191,7 @@ async def run() -> None:
         virtual_tracker=virtual_tracker,
         min_notionals=min_notionals,
         get_allocation=risk_manager.get_symbol_allocation,
+        get_scenario=lambda: _active_scenario_name,
     )
 
     def _push_scenario_info() -> None:
@@ -393,6 +394,7 @@ async def run() -> None:
             balance_at_open=balance,
             signal_level=best.getLevel() or 0,
             precision_score=precision or 0.0,
+            scenario=_active_scenario_name,
         )
         if placed:
             dl_record(
@@ -603,6 +605,7 @@ async def run() -> None:
             virtual_tracker=virtual_tracker,
             min_notionals=min_notionals,
             get_allocation=risk_manager.get_symbol_allocation,
+            get_scenario=lambda: _active_scenario_name,
         )
         switch_balance = await order_executor.fetch_account_balance()
         if switch_balance > 0:

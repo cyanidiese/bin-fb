@@ -63,6 +63,7 @@ class OpenOrder:
     balance_at_open: float = 0.0
     signal_level: int = 0
     precision_score: float = 0.0
+    scenario: str = ''
 
 
 class OrderExecutor:
@@ -141,6 +142,7 @@ class OrderExecutor:
         balance_at_open: float = 0.0,
         signal_level: int = 0,
         precision_score: float = 0.0,
+        scenario: str = '',
     ) -> bool:
         lock = self._get_placing_lock(symbol)
         async with lock:
@@ -163,6 +165,7 @@ class OrderExecutor:
                     balance_at_open=balance_at_open,
                     signal_level=signal_level,
                     precision_score=precision_score,
+                    scenario=scenario,
                 )
                 # Create software FakeOrder for trailing stop / TP / SL monitoring
                 self._fake_orders[symbol] = FakeOrder(
@@ -410,6 +413,7 @@ class OrderExecutor:
             'balance_at_open': order.balance_at_open,
             'signal_level': order.signal_level,
             'precision_score': order.precision_score,
+            'scenario': order.scenario,
         })
         if len(records) > 1000:
             records = records[-1000:]

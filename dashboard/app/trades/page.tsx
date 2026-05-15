@@ -257,6 +257,8 @@ export default function TradesPage() {
                   <th className="py-2 pr-3">Preset</th>
                   <th className="py-2 pr-3">Type</th>
                   <th className="py-2 pr-3">Side</th>
+                  <th className="py-2 pr-3 text-right">Lev</th>
+                  <th className="py-2 pr-3">Scenario</th>
                   <th className="py-2 pr-3 text-right">Entry</th>
                   <th className="py-2 pr-3 text-right">Close</th>
                   <th className="py-2 pr-3 text-right">PnL USDT</th>
@@ -275,6 +277,8 @@ export default function TradesPage() {
                   const closePrice = realOrder?.close_price ?? virtOrder?.close_price ?? null
                   const closedAt = realOrder?.close_time ?? virtOrder?.close_time ?? null
                   const result = realOrder?.result ?? virtOrder?.result ?? ''
+                  const leverage = order.leverage ?? null
+                  const scenario = realOrder?.scenario ?? virtOrder?.scenario ?? null
                   return (
                     <tr key={i} className="border-b border-gray-800">
                       <td className="py-1.5 pr-3 font-mono text-xs text-white">{order.preset_name}</td>
@@ -283,6 +287,12 @@ export default function TradesPage() {
                       </td>
                       <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>
                         {order.side}
+                      </td>
+                      <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">
+                        {leverage != null ? `${leverage}×` : '—'}
+                      </td>
+                      <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">
+                        {scenario || '—'}
                       </td>
                       <td className="py-1.5 pr-3 text-right text-gray-300">{entryPrice.toFixed(2)}</td>
                       <td className="py-1.5 pr-3 text-right text-gray-300">

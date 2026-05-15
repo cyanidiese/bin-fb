@@ -213,6 +213,7 @@ export interface RealOrder {
   sl: number;
   quantity: number;
   leverage: number;
+  scenario: string | null;
   open_time: string | null;
   close_time: string;
   pnl_usdt: number;
@@ -227,6 +228,8 @@ export interface VirtualOrder {
   sl: number;
   quantity: number;
   leverage: number;
+  virtual_margin: number | null;
+  scenario: string | null;
   open_time: string;
   status: 'open' | 'closed';
   close_price: number | null;

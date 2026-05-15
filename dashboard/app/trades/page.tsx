@@ -22,17 +22,23 @@ function pnlFmt(v: number) {
   return (v >= 0 ? '+' : '') + v.toFixed(2)
 }
 
-// ── Preset Efficiency row ──────────────────────────────────────────────────
+// ── Preset Efficiency ──────────────────────────────────────────────────────
+
+type SortKey = 'preset' | 'trades' | 'wins' | 'partials' | 'trails' | 'losses' | 'winPct' | 'profitPct' | 'gained'
 
 interface PresetRow {
   name: string
   isBest: boolean
   realCount: number
   virtualCount: number
-  winCount: number
+  wins: number
+  partials: number
+  trails: number
+  losses: number
+  winPct: number | null
+  profitPct: number | null
   totalPnl: number
-  totalWinningUsdt: number
-  virtualTotalWinning: number
+  totalVirtualPnl: number
 }
 
 function buildPresetRows(data: TradesData): PresetRow[] {
@@ -40,25 +46,80 @@ function buildPresetRows(data: TradesData): PresetRow[] {
     ? data.all_preset_names
     : Array.from(new Set([
         ...data.real_orders.map(o => o.preset_name),
-        ...Object.keys(data.virtual_summary),
+        ...data.virtual_orders.map(o => o.preset_name),
       ]))
 
   return presetNames.map(name => {
     const real = data.real_orders.filter(o => o.preset_name === name)
-    const virtStats = data.virtual_summary[name]
-    const wins = real.filter(o => o.result === 'win' || o.result === 'partial' || o.result === 'trail').length
-    const totalPnl = real.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
+    const virt = data.virtual_orders.filter(
+      o => o.preset_name === name && o.status === 'closed' && o.result != null,
+    )
+
+    const wins    = real.filter(o => o.result === 'win').length    + virt.filter(o => o.result === 'win').length
+    const partials = real.filter(o => o.result === 'partial').length + virt.filter(o => o.result === 'partial').length
+    const trails  = real.filter(o => o.result === 'trail').length  + virt.filter(o => o.result === 'trail').length
+    const losses  = real.filter(o => o.result === 'loss').length   + virt.filter(o => o.result === 'loss').length
+
+    const totalPnl        = real.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
+    const totalVirtualPnl = virt.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
+
+    const realCount    = real.length
+    const virtualCount = virt.length
+    const totalTrades  = realCount + virtualCount
+    const winPct       = totalTrades > 0 ? ((wins + partials + trails) / totalTrades) * 100 : null
+
+    // Sum of per-trade profit%: pnl_usdt / margin * 100
+    const sumPct = (orders: { entry_price: number; quantity: number; leverage: number; pnl_usdt: number; virtual_margin?: number | null }[]) =>
+      orders.reduce((s, o) => {
+        const margin = (o as { virtual_margin?: number | null }).virtual_margin
+          ?? (o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0)
+        return s + (margin > 0 ? (o.pnl_usdt / margin) * 100 : 0)
+      }, 0)
+
+    const profitPct = totalTrades > 0
+      ? sumPct(real) + sumPct(virt.map(o => ({ ...o, pnl_usdt: o.pnl_usdt ?? 0 })))
+      : null
+
     return {
       name,
       isBest: name === data.best_preset,
-      realCount: real.length,
-      virtualCount: virtStats?.trade_count ?? 0,
-      winCount: wins,
+      realCount,
+      virtualCount,
+      wins,
+      partials,
+      trails,
+      losses,
+      winPct,
+      profitPct,
       totalPnl,
-      totalWinningUsdt: real.filter(o => (o.pnl_usdt ?? 0) > 0).reduce((s, o) => s + o.pnl_usdt, 0),
-      virtualTotalWinning: virtStats?.total_winning_usdt ?? 0,
+      totalVirtualPnl,
     }
   })
+}
+
+// Sortable column header — defined at module level to avoid re-creating component type on each render
+function SortTh({
+  label, col, align = 'right', sortKey, sortDir, onSort,
+}: {
+  label: string
+  col: SortKey
+  align?: 'left' | 'right'
+  sortKey: SortKey | null
+  sortDir: 'asc' | 'desc'
+  onSort: (key: SortKey) => void
+}) {
+  const active = sortKey === col
+  const arrow = active ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''
+  return (
+    <th
+      onClick={() => onSort(col)}
+      className={`py-2 pr-4 cursor-pointer select-none whitespace-nowrap
+        ${active ? 'text-gray-300' : 'text-gray-500'} hover:text-gray-300
+        ${align === 'right' ? 'text-right' : ''}`}
+    >
+      {label}{arrow}
+    </th>
+  )
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
@@ -70,9 +131,12 @@ export default function TradesPage() {
   const [klines, setKlines] = useState<Array<{ time: number; close: number }>>([])
 
   // Preset Efficiency filters
-  const [hideNoReal, setHideNoReal] = useState(false)
-  const [hideNoVirtual, setHideNoVirtual] = useState(false)
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+  const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
+  const [hideHasVirtual, setHideHasVirtual]   = useState(false)  // hide presets that have any virtual orders
+
+  const [selectedPreset, setSelectedPreset]   = useState<string | null>(null)
+  const [sortKey, setSortKey]                 = useState<SortKey | null>(null)
+  const [sortDir, setSortDir]                 = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
     if (!symbol) return
@@ -97,21 +161,58 @@ export default function TradesPage() {
 
   const presetRows = useMemo(() => {
     let rows = allRows
-    if (hideNoReal)    rows = rows.filter(r => r.realCount > 0)
-    if (hideNoVirtual) rows = rows.filter(r => r.virtualCount > 0)
-    return rows.sort((a, b) => {
-      if (a.isBest && !b.isBest) return -1
-      if (!a.isBest && b.isBest) return 1
-      // Sort: real orders first, then by total PnL desc
-      if (a.realCount !== b.realCount) return b.realCount - a.realCount
-      return b.totalPnl - a.totalPnl
-    })
-  }, [allRows, hideNoReal, hideNoVirtual])
+    if (hideNoOrders)   rows = rows.filter(r => r.realCount + r.virtualCount > 0)
+    if (hideHasVirtual) rows = rows.filter(r => r.virtualCount === 0)
+
+    if (sortKey) {
+      rows = [...rows].sort((a, b) => {
+        if (sortKey === 'preset') {
+          const c = a.name.localeCompare(b.name)
+          return sortDir === 'asc' ? c : -c
+        }
+        let av: number, bv: number
+        switch (sortKey) {
+          case 'trades':    av = a.realCount + a.virtualCount; bv = b.realCount + b.virtualCount; break
+          case 'wins':      av = a.wins;      bv = b.wins;      break
+          case 'partials':  av = a.partials;  bv = b.partials;  break
+          case 'trails':    av = a.trails;    bv = b.trails;    break
+          case 'losses':    av = a.losses;    bv = b.losses;    break
+          case 'winPct':    av = a.winPct    ?? -1;         bv = b.winPct    ?? -1;         break
+          case 'profitPct': av = a.profitPct ?? -Infinity;  bv = b.profitPct ?? -Infinity;  break
+          case 'gained':    av = a.totalPnl + a.totalVirtualPnl; bv = b.totalPnl + b.totalVirtualPnl; break
+          default:          av = 0; bv = 0
+        }
+        return sortDir === 'asc' ? av - bv : bv - av
+      })
+    } else {
+      rows = [...rows].sort((a, b) => {
+        if (a.isBest && !b.isBest) return -1
+        if (!a.isBest && b.isBest) return 1
+        const ta = a.realCount + a.virtualCount
+        const tb = b.realCount + b.virtualCount
+        if (ta !== tb) return tb - ta
+        return (b.totalPnl + b.totalVirtualPnl) - (a.totalPnl + a.totalVirtualPnl)
+      })
+    }
+    return rows
+  }, [allRows, hideNoOrders, hideHasVirtual, sortKey, sortDir])
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortKey(key)
+      setSortDir('desc')
+    }
+  }
+
+  function handlePresetClick(name: string) {
+    setSelectedPreset(prev => prev === name ? null : name)
+  }
 
   if (error) return <div className="pt-16 p-4 text-red-400">{error}</div>
   if (!data)  return <div className="pt-16 p-4 text-gray-400">Loading…</div>
 
-  // Orders for the Trading Orders widget
   const tradingOrders: (RealOrder | VirtualOrder)[] = selectedPreset
     ? [
         ...data.real_orders.filter(o => o.preset_name === selectedPreset),
@@ -123,9 +224,7 @@ export default function TradesPage() {
     ? `Trading Orders — ${selectedPreset} (${tradingOrders.length})`
     : `Trading Orders (${data.real_orders.length} real · ${data.virtual_orders.length} virtual)`
 
-  function handlePresetClick(name: string) {
-    setSelectedPreset(prev => prev === name ? null : name)
-  }
+  const thProps = { sortKey, sortDir, onSort: handleSort }
 
   return (
     <div className="pt-14 p-4 space-y-6 max-w-7xl mx-auto">
@@ -147,14 +246,14 @@ export default function TradesPage() {
         headerExtra={
           <div className="flex items-center gap-3 text-xs text-gray-400">
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input type="checkbox" checked={hideNoReal}
-                onChange={e => setHideNoReal(e.target.checked)} className="accent-indigo-500" />
-              Hide no-real
+              <input type="checkbox" checked={hideNoOrders}
+                onChange={e => setHideNoOrders(e.target.checked)} className="accent-indigo-500" />
+              No orders
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input type="checkbox" checked={hideNoVirtual}
-                onChange={e => setHideNoVirtual(e.target.checked)} className="accent-indigo-500" />
-              Hide no-virtual
+              <input type="checkbox" checked={hideHasVirtual}
+                onChange={e => setHideHasVirtual(e.target.checked)} className="accent-indigo-500" />
+              Has virtual
             </label>
             {selectedPreset && (
               <button onClick={() => setSelectedPreset(null)}
@@ -168,24 +267,33 @@ export default function TradesPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono text-left">
             <thead>
-              <tr className="text-gray-500 border-b border-gray-700">
-                <th className="py-2 pr-4">Preset</th>
-                <th className="py-2 pr-4 text-right">Real</th>
-                <th className="py-2 pr-4 text-right">Virtual</th>
-                <th className="py-2 pr-4 text-right">Win%</th>
-                <th className="py-2 pr-4 text-right">Total PnL</th>
-                <th className="py-2 pr-4 text-right">Avg PnL</th>
-                <th className="py-2 pr-4 text-right">Winning USDT</th>
-                <th className="py-2 text-right">Virt Winning</th>
+              <tr className="border-b border-gray-700">
+                <SortTh label="Preset"   col="preset"    align="left" {...thProps} />
+                <SortTh label="Trades"   col="trades"               {...thProps} />
+                <SortTh label="Wins"     col="wins"                 {...thProps} />
+                <SortTh label="Part"     col="partials"             {...thProps} />
+                <SortTh label="Trail"    col="trails"               {...thProps} />
+                <SortTh label="Losses"   col="losses"               {...thProps} />
+                <SortTh label="Win%"     col="winPct"               {...thProps} />
+                <SortTh label="Profit%"  col="profitPct"            {...thProps} />
+                <SortTh label="Gained"   col="gained"               {...thProps} />
               </tr>
             </thead>
             <tbody>
               {presetRows.map(row => {
                 const isSelected = selectedPreset === row.name
-                const winPct = row.realCount > 0
-                  ? ((row.winCount / row.realCount) * 100).toFixed(1) + '%'
-                  : row.virtualCount > 0 ? '—' : '—'
-                const avgPnl = row.realCount > 0 ? row.totalPnl / row.realCount : null
+                const gained = row.totalPnl + row.totalVirtualPnl
+                const totalCount = row.realCount + row.virtualCount
+
+                let tradesLabel = '—'
+                if (row.realCount > 0 && row.virtualCount > 0) {
+                  tradesLabel = `${row.realCount}r · ${row.virtualCount}v`
+                } else if (row.realCount > 0) {
+                  tradesLabel = `${row.realCount}r`
+                } else if (row.virtualCount > 0) {
+                  tradesLabel = `${row.virtualCount}v`
+                }
+
                 return (
                   <tr
                     key={row.name}
@@ -200,24 +308,31 @@ export default function TradesPage() {
                       {row.name}
                       {row.isBest && <span className="ml-2 text-[10px] text-indigo-400">BEST</span>}
                     </td>
-                    <td className={`py-1.5 pr-4 text-right ${row.realCount > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                      {row.realCount || '—'}
+                    <td className={`py-1.5 pr-4 text-right ${totalCount > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {tradesLabel}
                     </td>
-                    <td className={`py-1.5 pr-4 text-right ${row.virtualCount > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
-                      {row.virtualCount || '—'}
+                    <td className={`py-1.5 pr-4 text-right ${row.wins > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                      {row.wins || '—'}
                     </td>
-                    <td className="py-1.5 pr-4 text-right text-gray-300">{winPct}</td>
-                    <td className={`py-1.5 pr-4 text-right font-semibold ${row.realCount > 0 ? pnlClass(row.totalPnl) : 'text-gray-600'}`}>
-                      {row.realCount > 0 ? pnlFmt(row.totalPnl) : '—'}
+                    <td className={`py-1.5 pr-4 text-right ${row.partials > 0 ? 'text-amber-400' : 'text-gray-600'}`}>
+                      {row.partials || '—'}
                     </td>
-                    <td className={`py-1.5 pr-4 text-right ${avgPnl !== null ? pnlClass(avgPnl) : 'text-gray-600'}`}>
-                      {avgPnl !== null ? pnlFmt(avgPnl) : '—'}
+                    <td className={`py-1.5 pr-4 text-right ${row.trails > 0 ? 'text-sky-400' : 'text-gray-600'}`}>
+                      {row.trails || '—'}
                     </td>
-                    <td className={`py-1.5 pr-4 text-right ${row.totalWinningUsdt > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                      {row.totalWinningUsdt > 0 ? '+' + row.totalWinningUsdt.toFixed(2) : '—'}
+                    <td className={`py-1.5 pr-4 text-right ${row.losses > 0 ? 'text-red-400' : 'text-gray-600'}`}>
+                      {row.losses || '—'}
                     </td>
-                    <td className={`py-1.5 text-right ${row.virtualTotalWinning !== 0 ? pnlClass(row.virtualTotalWinning) : 'text-gray-600'}`}>
-                      {row.virtualCount > 0 ? pnlFmt(row.virtualTotalWinning) : '—'}
+                    <td className="py-1.5 pr-4 text-right text-gray-300">
+                      {row.winPct != null ? row.winPct.toFixed(1) + '%' : '—'}
+                    </td>
+                    <td className={`py-1.5 pr-4 text-right ${row.profitPct != null ? pnlClass(row.profitPct) : 'text-gray-600'}`}>
+                      {row.profitPct != null
+                        ? (row.profitPct >= 0 ? '+' : '') + row.profitPct.toFixed(1) + '%'
+                        : '—'}
+                    </td>
+                    <td className={`py-1.5 pr-4 text-right font-semibold ${totalCount > 0 ? pnlClass(gained) : 'text-gray-600'}`}>
+                      {totalCount > 0 ? pnlFmt(gained) : '—'}
                     </td>
                   </tr>
                 )

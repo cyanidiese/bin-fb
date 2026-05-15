@@ -536,7 +536,6 @@ async def run() -> None:
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
-            virtual_order_simulator.record_real_pnl(c.get('pnl_usdt') or 0.0)
             notifier.notify_trade_close(
                 symbol=c['symbol'],
                 side=c.get('side', ''),

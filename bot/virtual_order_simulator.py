@@ -89,13 +89,6 @@ class VirtualOrderSimulator:
             self._save_virtual_balance()
             logger.info(f"Virtual balance seeded from real account: {balance:.2f} USDT")
 
-    def record_real_pnl(self, pnl: float) -> None:
-        """Apply a real order close P&L to the shared virtual balance pool."""
-        if pnl == 0.0:
-            return
-        self._virtual_balance += pnl
-        self._save_virtual_balance()
-
     async def on_candle_close(
         self,
         symbol: str,

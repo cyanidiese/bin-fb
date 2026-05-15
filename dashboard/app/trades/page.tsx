@@ -5,6 +5,7 @@ import { useSymbolContext } from '@/lib/SymbolContext'
 import type { TradesData, RealOrder, VirtualOrder, Kline } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import TradesChart from '@/components/TradesChart'
+import SymbolPicker from '@/components/SymbolPicker'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -125,10 +126,11 @@ function SortTh({
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function TradesPage() {
-  const { symbol } = useSymbolContext()
+  const { symbol, setSymbol } = useSymbolContext()
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [klines, setKlines] = useState<Kline[]>([])
+  const [symbolsWithOrders, setSymbolsWithOrders] = useState<string[]>([])
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -156,6 +158,13 @@ export default function TradesPage() {
       .then(d => { if (d?.klines) setKlines(d.klines) })
       .catch(() => {})
   }, [symbol])
+
+  useEffect(() => {
+    fetch('/api/trades/symbols')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.symbols) setSymbolsWithOrders(d.symbols) })
+      .catch(() => {})
+  }, [])
 
   const allRows = useMemo(() => data ? buildPresetRows(data) : [], [data])
 
@@ -210,8 +219,22 @@ export default function TradesPage() {
     setSelectedPreset(prev => prev === name ? null : name)
   }
 
-  if (error) return <div className="pt-16 p-4 text-red-400">{error}</div>
-  if (!data)  return <div className="pt-16 p-4 text-gray-400">Loading…</div>
+  if (error) return (
+    <div className="pt-14 p-4 space-y-4 max-w-7xl mx-auto">
+      {symbolsWithOrders.length > 0 && (
+        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+      )}
+      <div className="text-red-400">{error}</div>
+    </div>
+  )
+  if (!data) return (
+    <div className="pt-14 p-4 space-y-4 max-w-7xl mx-auto">
+      {symbolsWithOrders.length > 0 && (
+        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+      )}
+      <div className="text-gray-400">Loading…</div>
+    </div>
+  )
 
   const tradingOrders: (RealOrder | VirtualOrder)[] = selectedPreset
     ? [
@@ -228,6 +251,9 @@ export default function TradesPage() {
 
   return (
     <div className="pt-14 p-4 space-y-6 max-w-7xl mx-auto">
+      {symbolsWithOrders.length > 0 && (
+        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+      )}
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold text-white">{symbol} — Trades</h1>
         <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400">{data.mode}</span>

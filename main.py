@@ -413,6 +413,16 @@ async def run() -> None:
             logger.info("STOP file detected — halting.")
             raise SystemExit(0)
 
+        # Signal file: dashboard requested a hard-stop reset
+        _reset_signal = _PROJECT_ROOT / "data" / "reset_hard_stop.signal"
+        if _reset_signal.exists():
+            try:
+                _reset_signal.unlink()
+                risk_manager.reset_hard_stop()
+                logger.info("Hard stop reset via dashboard signal")
+            except Exception as _e:
+                logger.warning(f"Failed to process reset_hard_stop signal: {_e}")
+
         # Hot-reload config and switch scenario if changed
         risk_cfg = load_risk_config()
         new_scenario_name = risk_cfg.get("scenario", "default")

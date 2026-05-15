@@ -168,6 +168,13 @@ export default function CreatePresetPage() {
     return { chartTrades: trades, chartTradeOriginalIdxs: idxs }
   }, [activeResult, filteredKlines, chartKlines])
 
+  // Original trade objects at the filtered positions — used by the trade list
+  // so hover indices stay in sync with the chart (both iterate the same subset).
+  const filteredTradeList = useMemo(
+    () => chartTradeOriginalIdxs.map(i => (activeResult?.trades ?? [])[i]),
+    [chartTradeOriginalIdxs, activeResult],
+  )
+
   const currentAvg = avgProfit(results)
   const canRestoreBest = bestAvgProfit !== null && (currentAvg === null || currentAvg < bestAvgProfit)
   const canSave = hasAnyResult && settingsTouched
@@ -492,11 +499,11 @@ export default function CreatePresetPage() {
 
                     <div className="space-y-1">
                       <p className="text-[10px] text-gray-600 uppercase tracking-wide font-semibold">
-                        Orders ({activeResult.total_trades})
+                        Orders ({filteredTradeList.length} of {activeResult.total_trades})
                       </p>
                       <BacktestTradeList
                         presetName="custom"
-                        trades={activeResult.trades}
+                        trades={filteredTradeList}
                         hoveredIdx={hoveredTradeIdx}
                         onHover={setHoveredTradeIdx}
                       />

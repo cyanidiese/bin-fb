@@ -268,8 +268,7 @@ export default function TradesPage() {
               </thead>
               <tbody>
                 {tradingOrders.map((order, i) => {
-                  const isReal = 'pnl_usdt' in order && typeof (order as RealOrder).pnl_usdt === 'number'
-                    && 'entry_price' in order
+                  const isReal = !('status' in order)
                   const realOrder = isReal ? (order as RealOrder) : null
                   const virtOrder = !isReal ? (order as VirtualOrder) : null
                   const pnl = realOrder?.pnl_usdt ?? virtOrder?.pnl_usdt ?? null

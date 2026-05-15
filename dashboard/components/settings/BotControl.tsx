@@ -24,6 +24,8 @@ export default function BotControl({ botState, onAction }: Props) {
   const [startingUntil, setStartingUntil] = useState(0)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
+  const [clearingHistory, setClearingHistory] = useState(false)
+  const [clearMsg, setClearMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const isStarting = !botState?.running && Date.now() < startingUntil
   const isStopping = stopping
@@ -75,6 +77,26 @@ export default function BotControl({ botState, onAction }: Props) {
     }
   }
 
+  async function handleClearHistory() {
+    if (!window.confirm('Archive all trade history for all symbols? This cannot be undone.')) return
+    setClearingHistory(true)
+    setClearMsg(null)
+    try {
+      const r = await fetch('/api/bot/clear-history', { method: 'POST' })
+      const d = await r.json()
+      if (d.ok) {
+        setClearMsg({ ok: true, text: `Cleared — ${d.archived?.length ?? 0} file(s) archived` })
+      } else {
+        setClearMsg({ ok: false, text: d.error ?? 'Failed' })
+      }
+    } catch (e) {
+      setClearMsg({ ok: false, text: String(e) })
+    } finally {
+      setClearingHistory(false)
+      setTimeout(() => setClearMsg(null), 4000)
+    }
+  }
+
   const showStopButton = botState?.running || isStopping
 
   return (
@@ -82,7 +104,7 @@ export default function BotControl({ botState, onAction }: Props) {
       <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
         Bot Control
       </h2>
-      <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+      <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-3">
         <div className="flex items-center gap-4">
           {showStopButton ? (
             <button
@@ -113,7 +135,24 @@ export default function BotControl({ botState, onAction }: Props) {
                     : 'Stopped'}
           </span>
         </div>
-        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        <div className="flex items-center gap-3 pt-1 border-t border-gray-800">
+          <button
+            onClick={handleClearHistory}
+            disabled={clearingHistory}
+            className="px-3 py-1.5 bg-gray-700 text-gray-300 text-xs font-semibold rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {clearingHistory ? 'Clearing…' : 'Clear History'}
+          </button>
+          {clearMsg && (
+            <span className={`text-xs font-mono ${clearMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+              {clearMsg.text}
+            </span>
+          )}
+          {!clearMsg && (
+            <span className="text-xs text-gray-600">Archives all trade & virtual order history</span>
+          )}
+        </div>
       </div>
     </section>
   )

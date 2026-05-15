@@ -21,6 +21,7 @@ interface RegistryData {
 
 interface BotState {
   running: boolean
+  phase: 'starting' | 'running' | null
   pid: number | null
   mode: string
   last_heartbeat: string | null
@@ -56,9 +57,11 @@ export default function SettingsPage() {
         const r = await fetch(`/api/public-file?f=bot_state.json`)
         if (!r.ok) { setBotState(null); return }
         const data = await r.json()
-        const isStale = data.last_heartbeat
+        // Only apply staleness when phase='running'; during 'starting' the
+        // backtest subprocess blocks all heartbeat writes for up to ~60s.
+        const isStale = data.phase === 'running' && data.last_heartbeat
           ? (Date.now() - new Date(data.last_heartbeat).getTime()) > 30_000
-          : true
+          : false
         setBotState({ ...data, running: data.running && !isStale })
       } catch {
         setBotState(null)

@@ -42,11 +42,13 @@ def _write_pid() -> None:
 
 
 def _write_bot_state(running: bool, mode: str, started_at: str,
-                     symbols_active: int = 0, symbols_disabled: int = 0) -> None:
+                     symbols_active: int = 0, symbols_disabled: int = 0,
+                     phase: str = 'starting') -> None:
     _BOT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _BOT_STATE_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({
         "running": running,
+        "phase": phase,
         "pid": os.getpid(),
         "mode": mode,
         "started_at": started_at,
@@ -63,7 +65,8 @@ async def _heartbeat_loop(mode_manager: ModeManager, started_at: str,
         active = len(symbol_registry.get_symbols())
         disabled = len(symbol_registry.get_disabled())
         _write_bot_state(True, mode_manager.current_mode, started_at,
-                         symbols_active=active, symbols_disabled=disabled)
+                         symbols_active=active, symbols_disabled=disabled,
+                         phase='running')
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
 

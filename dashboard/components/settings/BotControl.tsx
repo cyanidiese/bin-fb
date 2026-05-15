@@ -2,13 +2,10 @@
 
 import { useState, useEffect } from 'react'
 
-// Startup takes 30-60s (obligatory backtest). We hold the "Starting…" label
-// for up to this many ms after the API call succeeds so the UI doesn't
-// flicker back to "Start Bot" while the bot is still initialising.
-const STARTING_HOLD_MS = 120_000
 
 interface BotState {
   running: boolean
+  phase: 'starting' | 'running' | null
   pid: number | null
   mode: string
   last_heartbeat: string | null
@@ -21,13 +18,13 @@ interface Props {
 
 export default function BotControl({ botState, onAction }: Props) {
   const [loading, setLoading] = useState(false)
-  const [startingUntil, setStartingUntil] = useState(0)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
   const [clearingHistory, setClearingHistory] = useState(false)
   const [clearMsg, setClearMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const isStarting = !botState?.running && Date.now() < startingUntil
+  // isStarting: bot process is alive but still in backtest/init phase
+  const isStarting = botState?.running === true && botState?.phase === 'starting'
   const isStopping = stopping
 
   // Clear stopping flag once the bot process actually exits
@@ -46,7 +43,6 @@ export default function BotControl({ botState, onAction }: Props) {
       if (!d.ok) {
         setError(d.error || 'Failed to start bot')
       } else {
-        setStartingUntil(Date.now() + STARTING_HOLD_MS)
         onAction()
       }
     } catch (e) {
@@ -59,7 +55,6 @@ export default function BotControl({ botState, onAction }: Props) {
   async function handleStop() {
     if (!window.confirm('Stop the bot? All open orders will be closed at market price.')) return
     setLoading(true)
-    setStartingUntil(0)
     setError('')
     try {
       const r = await fetch('/api/bot/stop', { method: 'POST' })
@@ -70,6 +65,7 @@ export default function BotControl({ botState, onAction }: Props) {
         setStopping(true)
         onAction()
       }
+
     } catch (e) {
       setError(String(e))
     } finally {
@@ -97,6 +93,7 @@ export default function BotControl({ botState, onAction }: Props) {
     }
   }
 
+  // Show Stop button whenever the bot process is alive (starting or running) or we're waiting for it to die
   const showStopButton = botState?.running || isStopping
 
   return (
@@ -109,18 +106,18 @@ export default function BotControl({ botState, onAction }: Props) {
           {showStopButton ? (
             <button
               onClick={handleStop}
-              disabled={loading || isStopping}
+              disabled={loading || isStopping || isStarting}
               className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading || isStopping ? 'Stopping…' : 'Stop Bot'}
+              {isStopping ? 'Stopping…' : isStarting ? 'Starting…' : 'Stop Bot'}
             </button>
           ) : (
             <button
               onClick={handleStart}
-              disabled={loading || isStarting}
+              disabled={loading}
               className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
-              {loading || isStarting ? 'Starting…' : 'Start Bot'}
+              {loading ? 'Starting…' : 'Start Bot'}
             </button>
           )}
           <span className="text-sm text-gray-400">
@@ -128,10 +125,10 @@ export default function BotControl({ botState, onAction }: Props) {
               ? 'Status unknown'
               : isStopping
                 ? 'Stopping — waiting for current candle to close…'
-                : botState.running
-                  ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
-                  : isStarting
-                    ? 'Starting up — running backtests…'
+                : isStarting
+                  ? 'Starting up — running backtests…'
+                  : botState.running
+                    ? `Running · ${botState.mode?.toUpperCase() ?? ''} mode`
                     : 'Stopped'}
           </span>
         </div>

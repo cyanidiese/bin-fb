@@ -50,7 +50,10 @@ class RiskManager:
         self._lock = threading.RLock()
 
         self._balance: float = initial_balance
-        self._peak_balance: float = initial_balance
+        # Peak is set to None until the first real exchange balance arrives via
+        # seed_real_balance(). This prevents config/virtual-balance values from
+        # creating a phantom drawdown that immediately fires the hard stop.
+        self._peak_balance: float | None = None
         self._hard_stop_active: bool = False
         self._warning_active: bool = False
         self._last_drawdown_pct: float = 0.0
@@ -74,13 +77,25 @@ class RiskManager:
     # Public sync interface                                                #
     # ------------------------------------------------------------------ #
 
+    def seed_real_balance(self, balance: float) -> None:
+        """Set both balance and peak from the real exchange balance at startup.
+        Must be called once before update_balance so the peak is anchored to
+        reality rather than a config default or virtual-balance file value."""
+        with self._lock:
+            self._balance = balance
+            self._peak_balance = balance
+            self._write_snapshot()
+        logger.info(f"RiskManager: real balance seeded — balance=peak={balance:.2f} USDT")
+
     def update_balance(self, balance: float) -> None:
         """Record new balance and check drawdown thresholds."""
         pending: tuple | None = None
         min_balance_notify: tuple | None = None
         with self._lock:
             self._balance = balance
-            if balance > self._peak_balance:
+            if self._peak_balance is None:
+                self._peak_balance = balance
+            elif balance > self._peak_balance:
                 self._peak_balance = balance
             pending = self._check_drawdown()
 
@@ -300,7 +315,7 @@ class RiskManager:
         Called inside lock. Returns (event, payload) if notification should
         fire, else None. Caller must call notify() AFTER releasing the lock.
         """
-        if self._peak_balance <= 0:
+        if not self._peak_balance or self._peak_balance <= 0:
             return None
         dd = (self._peak_balance - self._balance) / self._peak_balance * 100.0
         self._last_drawdown_pct = dd
@@ -346,7 +361,7 @@ class RiskManager:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "mode": self._mode,
             "balance": round(self._balance, 2),
-            "peak_balance": round(self._peak_balance, 2),
+            "peak_balance": round(self._peak_balance, 2) if self._peak_balance is not None else None,
             "drawdown_pct": round(self._last_drawdown_pct, 2),
             "warning_active": self._warning_active,
             "hard_stop_active": self._hard_stop_active,

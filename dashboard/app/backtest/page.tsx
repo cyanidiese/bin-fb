@@ -170,7 +170,7 @@ export default function BacktestPage() {
       availableSymbols.forEach((s, i) => { map[s] = results[i] as BacktestResults | null })
       setAllSymbolData(map)
     })
-  }, [availableSymbols, symbol])
+  }, [availableSymbols])
 
   const presetList: BacktestPreset[] = useMemo(() => {
     if (!data) return []

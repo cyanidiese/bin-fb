@@ -1,25 +1,25 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-const POLL_MS = 3000
+const POLL_MS = 15_000
 
-/**
- * Fetches /symbols.json and polls every 3s so the switcher updates immediately
- * when a symbol is added or removed via the Settings page.
- */
 export function useSymbols(): string[] {
   const [symbols, setSymbols] = useState<string[]>(['BTCUSDT'])
+  const lastJoined = useRef('')
 
   useEffect(() => {
     function load() {
-      fetch(`/symbols.json?t=${Date.now()}`)
+      fetch('/api/public-file?f=symbols.json')
         .then(r => r.json())
         .then(d => {
-          if (Array.isArray(d.symbols) && d.symbols.length > 0) {
+          if (!Array.isArray(d.symbols) || d.symbols.length === 0) return
+          const joined = (d.symbols as string[]).join(',')
+          if (joined !== lastJoined.current) {
+            lastJoined.current = joined
             setSymbols(d.symbols as string[])
           }
         })
-        .catch(() => { /* keep last */ })
+        .catch(() => {})
     }
 
     load()

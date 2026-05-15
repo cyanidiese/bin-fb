@@ -190,6 +190,7 @@ async def run() -> None:
         initial_balance=0.0,
         virtual_tracker=virtual_tracker,
         min_notionals=min_notionals,
+        get_allocation=risk_manager.get_symbol_allocation,
     )
 
     def _push_scenario_info() -> None:
@@ -601,6 +602,7 @@ async def run() -> None:
             initial_balance=0.0,
             virtual_tracker=virtual_tracker,
             min_notionals=min_notionals,
+            get_allocation=risk_manager.get_symbol_allocation,
         )
         switch_balance = await order_executor.fetch_account_balance()
         if switch_balance > 0:

@@ -40,6 +40,7 @@ class VirtualOrderSimulator:
         initial_balance: float,
         virtual_tracker: 'VirtualTracker',
         min_notionals: dict[str, float],
+        get_allocation: Optional[Callable[[str], float]] = None,
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
@@ -47,6 +48,7 @@ class VirtualOrderSimulator:
         self._get_leverage = get_leverage
         self._virtual_tracker = virtual_tracker
         self._min_notionals = min_notionals
+        self._get_allocation = get_allocation
         # symbol -> {preset_name: order_record_dict}
         self._open: dict[str, dict[str, dict]] = {}
         # symbol -> {preset_name: FakeOrder}
@@ -104,7 +106,7 @@ class VirtualOrderSimulator:
 
         lev = self._get_leverage(symbol)
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
-        margin = min_notional / lev if lev > 0 else min_notional
+        use_allocation = self._get_allocation is not None
 
         # Sort presets by efficiency descending — best preset gets capital first
         sorted_presets = sorted(
@@ -119,13 +121,17 @@ class VirtualOrderSimulator:
             if preset_name in open_for_symbol:
                 continue  # already open for this preset
 
-            available = self._virtual_balance - self._virtual_committed
-            if available < margin:
-                logger.debug(
-                    f"[{symbol}][{preset_name}] Virtual skip: "
-                    f"available={available:.2f} < margin={margin:.2f}"
-                )
-                continue
+            if use_allocation:
+                margin = self._get_allocation(symbol)  # type: ignore[misc]
+            else:
+                margin = min_notional / lev if lev > 0 else min_notional
+                available = self._virtual_balance - self._virtual_committed
+                if available < margin:
+                    logger.debug(
+                        f"[{symbol}][{preset_name}] Virtual skip: "
+                        f"available={available:.2f} < margin={margin:.2f}"
+                    )
+                    continue
 
             try:
                 preset_settings = dataclasses.replace(base_settings, **overrides)
@@ -144,11 +150,15 @@ class VirtualOrderSimulator:
             if entry <= 0 or tp <= 0:
                 continue
 
-            quantity = min_notional / entry if entry > 0 else 0.0
+            if use_allocation:
+                quantity = (margin * lev) / entry if entry > 0 else 0.0
+            else:
+                quantity = min_notional / entry if entry > 0 else 0.0
             if quantity <= 0:
                 continue
 
-            self._virtual_committed += margin
+            if not use_allocation:
+                self._virtual_committed += margin
             side = rec.getSide()
             partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
             trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
@@ -207,7 +217,8 @@ class VirtualOrderSimulator:
             pnl = self._calc_pnl(record, close_price)
 
             virtual_margin = record.get('virtual_margin', 0.0)
-            self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
+            if self._get_allocation is None:
+                self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
             self._virtual_balance += pnl
             self._save_virtual_balance()
 
@@ -250,7 +261,8 @@ class VirtualOrderSimulator:
                 row_close = close_price if close_price > 0 else record['entry_price']
                 pnl = self._calc_pnl(record, row_close) if close_price > 0 else 0.0
                 virtual_margin = record.get('virtual_margin', 0.0)
-                self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
+                if self._get_allocation is None:
+                    self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
                 self._virtual_balance += pnl
                 record.update({
                     'status': 'closed',

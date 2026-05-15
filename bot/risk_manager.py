@@ -152,6 +152,12 @@ class RiskManager:
             reserve = self._balance * (min_pct / 100.0) if min_pct > 0 else 0.0
             return max(0.0, self._balance - reserve) * tier["max_deploy_pct"] / 100.0
 
+    def get_symbol_allocation(self, symbol: str) -> float:
+        """Per-symbol deployable USDT margin, same formula as _calc_allocation."""
+        with self._lock:
+            cfg = self._load_config()
+            return self._calc_allocation(symbol, cfg)
+
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
             self._last_notify_event = event

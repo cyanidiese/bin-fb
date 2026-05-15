@@ -244,6 +244,7 @@ export interface TradesData {
   symbol: string;
   mode: string;
   best_preset: string | null;
+  all_preset_names: string[];
   real_orders: RealOrder[];
   virtual_summary: Record<string, VirtualSummaryEntry>;
   virtual_orders: VirtualOrder[];

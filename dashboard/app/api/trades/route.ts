@@ -12,9 +12,8 @@ function readJson(filePath: string, fallback: unknown) {
 }
 
 function currentMode(): string {
-  const modePath = path.join(BOT_ROOT, 'data', 'bot_mode.json')
-  const data = readJson(modePath, {})
-  return (data as Record<string, string>).mode ?? 'test'
+  const data = readJson(path.join(BOT_ROOT, 'data', 'bot_mode.json'), {}) as Record<string, string>
+  return data.mode ?? 'test'
 }
 
 export async function GET(req: NextRequest) {
@@ -26,15 +25,22 @@ export async function GET(req: NextRequest) {
 
   const mode = searchParams.get('mode') ?? currentMode()
 
-  const realOrdersPath = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
-  const efficiencyPath = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
+  const realOrdersPath    = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
+  const efficiencyPath    = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
   const virtualOrdersPath = path.join(BOT_ROOT, 'data', `virtual_orders_${symbol}_${mode}.json`)
+  const backtestPath      = path.join(BOT_ROOT, 'dashboard', 'public', `backtest_results_${symbol}.json`)
 
-  const realOrders = readJson(realOrdersPath, []) as unknown[]
-  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number }>>
+  const realOrders   = readJson(realOrdersPath, []) as unknown[]
+  const efficiency   = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }>>
   const virtualOrders = readJson(virtualOrdersPath, []) as unknown[]
+  const backtest     = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
 
   const symbolEfficiency = efficiency[symbol] ?? {}
+
+  // All known preset names: backtest results union efficiency keys
+  const allPresetNames: string[] = backtest?.presets
+    ? Array.from(new Set([...Object.keys(backtest.presets), ...Object.keys(symbolEfficiency)]))
+    : Object.keys(symbolEfficiency)
 
   // Determine best preset: max total_winning_usdt with >= 4 trades
   let bestPreset: string | null = null
@@ -50,6 +56,7 @@ export async function GET(req: NextRequest) {
     symbol,
     mode,
     best_preset: bestPreset,
+    all_preset_names: allPresetNames,
     real_orders: realOrders,
     virtual_summary: symbolEfficiency,
     virtual_orders: virtualOrders,

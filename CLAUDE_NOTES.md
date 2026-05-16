@@ -4,6 +4,36 @@
 
 ---
 
+## Server access
+
+| | |
+|---|---|
+| **Host** | 185.237.14.105 (Kamatera VPS) |
+| **User** | root |
+| **SSH key** | `~/.ssh/id_ed25519` |
+| **Bot directory** | `/opt/bot` |
+| **Logs** | `/opt/bot/logs/bot.log`, `/opt/bot/logs/trades.log` |
+| **Deploy script** | `bash scripts/push.sh` (reads `SERVER_HOST/USER/DIR` from `.env`) |
+
+```bash
+# Connect
+ssh -i ~/.ssh/id_ed25519 root@185.237.14.105
+
+# Check logs
+ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "tail -100 /opt/bot/logs/bot.log"
+
+# Check errors
+ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "grep -E 'ERROR|WARNING' /opt/bot/logs/bot.log | tail -30"
+
+# Check if bot is running
+ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "ps aux | grep main.py | grep -v grep"
+
+# Restart (Docker)
+ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "cd /opt/bot && docker compose restart"
+```
+
+---
+
 ## ⟳ RESUME POINT — session 18 ended here (2026-05-16)
 
 **What was completed this session:**
@@ -28,6 +58,46 @@
 - User needs to manually reset via dashboard Risk page after verifying testnet account state
 
 **Immediate next action**: Tester to update `test_virtual_order_simulator.py` to match new rank-based design. Then user to restart bot on server to pick up new VirtualOrderSimulator.
+
+---
+
+## Bugs fixed — session 19 (2026-05-16)
+
+1. **Datetime pickers showing UTC instead of local time** (`create/page.tsx`, `PresetResultsPanel.tsx`)
+   - **Cause**: `toDateStr(unixSec)` used `.toISOString().slice(0, 16)` which always returns UTC. `addDays()` appended `:00Z` treating local-time strings as UTC.
+   - **Effect**: For users in non-UTC timezones (e.g. UTC+3), pickers showed times 3 hours behind actual local time; ← Back / Fwd → buttons shifted by the timezone offset.
+   - **Fix**: `toDateStr` now uses `getHours()`/`getMinutes()` (local time), same pattern as the already-correct strategy page. `addDays` uses `new Date(dateStr)` + `setDate()` (local arithmetic). Both files updated identically.
+
+2. **Preset efficiency seeding used Win% instead of Profit%** (`bot/virtual_tracker.py` — `seed_from_backtest`)
+   - **Cause**: Seeding summed only `profit_pct > 0` trades (win-only), matching Win% not Profit%.
+   - **Effect**: Identical preset rankings across all symbols (scores differed only by win rates, not net profitability); seeded score did not match Backtest page "Profit%" column.
+   - **Fix**: Now reads `total_profit_pct` (net) from preset-level backtest JSON first; falls back to summing all trade `profit_pct` values including losses.
+
+3. **Live virtual trades dropped losses from efficiency score** (`bot/virtual_tracker.py` — `record_closed_trade`)
+   - **Cause**: Used `profit_usdt if profit_usdt > 0 else 0.0` — losses were silently ignored.
+   - **Effect**: `total_winning_usdt` only grew, never shrank; efficiency rankings never penalised losing presets.
+   - **Fix**: Now accumulates raw `profit_usdt` (positive or negative).
+
+4. **`get_preset_efficiency` never used seeded fallback** (`bot/virtual_tracker.py`)
+   - **Cause**: Read only `total_winning_usdt` (always 0 before `_MIN_TRADES=8` live trades).
+   - **Effect**: All presets scored 0 → arbitrary sort order → identical rankings for every symbol.
+   - **Fix**: Same `_MIN_TRADES` fallback logic as `best_preset()`: if `trade_count < 8`, return `seeded_winning_usdt`.
+
+5. **Trades API route used raw score instead of effective score** (`dashboard/app/api/trades/route.ts`)
+   - **Cause**: `bestPreset` selection and `presetRanks` sort used `total_winning_usdt` directly, ignoring `seeded_winning_usdt`.
+   - **Effect**: Dashboard showed the same arbitrary preset order that the bot computed.
+   - **Fix**: Added `effectiveScore()` helper mirroring Python `_MIN_TRADES` logic; used in both sort and best-preset selection.
+
+6. **Per-rank symbol disable not implemented** (new feature)
+   - `bot/symbol_registry.py`: added `disabled_ranks` dict + `is_rank_disabled`, `disable_rank`, `enable_rank` methods; persists to `symbol_registry.json`.
+   - `bot/virtual_order_simulator.py`: added `is_rank_disabled` callable param; `on_candle_close` evicts and skips disabled ranks.
+   - `main.py`: both simulator constructions now pass `is_rank_disabled=symbol_registry.is_rank_disabled`.
+   - Dashboard: new `PATCH /api/symbols/[symbol]/rank-disable` endpoint; trades page shows × / ↑ toggle per rank row.
+
+7. **Server klines stale — bot shut down at 17:40 UTC** (diagnosed, not a code bug)
+   - Bot stopped cleanly (SIGTERM). Kline refreshes stopped. `results_SYMBOL.json` frozen at last candle before shutdown.
+   - **Root cause of stale display**: Bot not running, not a fetch error or testnet issue.
+   - **Also found**: 1,672 `APIError(-1111) Precision is over the maximum` errors for DOGEUSDT, 1000PEPEUSDT, TIAUSDT, REZUSDT — order quantity not rounded to symbol `stepSize`. Needs fix in order sizing.
 
 ---
 

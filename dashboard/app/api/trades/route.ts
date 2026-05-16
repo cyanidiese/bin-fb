@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../_utils'
+import { REGISTRY_PATH } from '../symbols/_registry'
 
 function readJson(filePath: string, fallback: unknown) {
   try {
@@ -80,6 +81,10 @@ export async function GET(req: NextRequest) {
     rankBalances[String(rank)] = balData.balance ?? 0
   }
 
+  // Read disabled_ranks for this symbol from the registry
+  const registry = readJson(REGISTRY_PATH, {}) as { disabled_ranks?: Record<string, number[]> }
+  const disabledRanks: number[] = registry.disabled_ranks?.[symbol] ?? []
+
   return NextResponse.json({
     symbol,
     mode,
@@ -89,5 +94,6 @@ export async function GET(req: NextRequest) {
     rank_orders: rankOrders,
     rank_balances: rankBalances,
     preset_ranks: presetRanks,
+    disabled_ranks: disabledRanks,
   })
 }

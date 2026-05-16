@@ -189,6 +189,7 @@ async def run() -> None:
         get_allocation=risk_manager.get_symbol_allocation,
         get_scenario=lambda: _active_scenario_name,
         rank_max=int(risk_cfg.get("virtual_rank_max", 6)),
+        is_rank_disabled=symbol_registry.is_rank_disabled,
     )
 
     def _push_scenario_info() -> None:
@@ -466,13 +467,15 @@ async def run() -> None:
         settings = sym_settings[symbol]
         analyzer = analyzers[symbol]
 
-        recs = analyzer.add_candle(kline)
-        best_for_this = analyzer.get_best_recommendation()
-
         try:
-            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 10)
+            refreshed = await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 20)
         except Exception as e:
-            logger.warning(f"[{symbol}] Kline refresh failed: {e}")
+            logger.warning(f"[{symbol}] Kline refresh failed, using WebSocket candle: {e}")
+            refreshed = None
+
+        candle_to_add = refreshed[-1] if refreshed else kline
+        recs = analyzer.add_candle(candle_to_add)
+        best_for_this = analyzer.get_best_recommendation()
 
         # Fetch balance once per candle batch (5s TTL shared across all symbols)
         balance = await _get_fresh_balance()
@@ -604,6 +607,8 @@ async def run() -> None:
             min_notionals=min_notionals,
             get_allocation=risk_manager.get_symbol_allocation,
             get_scenario=lambda: _active_scenario_name,
+            rank_max=int(risk_cfg.get("virtual_rank_max", 6)),
+            is_rank_disabled=symbol_registry.is_rank_disabled,
         )
         switch_balance = await order_executor.fetch_account_balance()
         if switch_balance > 0:

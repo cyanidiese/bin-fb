@@ -19,6 +19,7 @@ export interface RegistryFile {
   symbols: string[]
   updated_at: string
   status: Record<string, SymbolStatus>
+  disabled_ranks?: Record<string, number[]>
 }
 
 export function readRegistry(): RegistryFile {

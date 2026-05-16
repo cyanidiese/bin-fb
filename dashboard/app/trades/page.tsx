@@ -135,6 +135,7 @@ export default function TradesPage() {
   const [symbolsWithOrders, setSymbolsWithOrders] = useState<string[]>([])
   const [realBalance, setRealBalance] = useState<number | null>(null)
   const [rankBalances, setRankBalances] = useState<Record<string, number>>({})
+  const [disabledRanks, setDisabledRanks] = useState<number[]>([])
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -153,7 +154,10 @@ export default function TradesPage() {
     setSortDir('asc')
     fetch(`/api/trades?symbol=${symbol}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(setData)
+      .then((d: TradesData) => {
+        setData(d)
+        setDisabledRanks(d.disabled_ranks ?? [])
+      })
       .catch(e => setError(String(e)))
   }, [symbol])
 
@@ -235,6 +239,24 @@ export default function TradesPage() {
 
   function handlePresetClick(name: string) {
     setSelectedPreset(prev => prev === name ? null : name)
+  }
+
+  async function handleRankToggle(rank: number, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!symbol) return
+    const willDisable = !disabledRanks.includes(rank)
+    // Optimistic update
+    setDisabledRanks(prev => willDisable ? [...prev, rank] : prev.filter(r => r !== rank))
+    try {
+      await fetch(`/api/symbols/${symbol}/rank-disable`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rank, disabled: willDisable }),
+      })
+    } catch {
+      // Revert on error
+      setDisabledRanks(prev => willDisable ? prev.filter(r => r !== rank) : [...prev, rank])
+    }
   }
 
   if (error) return (
@@ -385,7 +407,24 @@ export default function TradesPage() {
                       {row.isBest && <span className="ml-2 text-[10px] text-indigo-400">BEST</span>}
                     </td>
                     <td className={`py-1.5 pr-4 text-left text-xs ${row.rank === 1 ? 'text-indigo-400' : row.rank != null ? 'text-gray-400' : 'text-gray-600'}`}>
-                      {rankLabel}
+                      <span className="flex items-center gap-1.5">
+                        <span className={row.rank != null && row.rank >= 2 && disabledRanks.includes(row.rank) ? 'line-through opacity-40' : ''}>
+                          {rankLabel}
+                        </span>
+                        {row.rank != null && row.rank >= 2 && (
+                          <button
+                            onClick={e => handleRankToggle(row.rank!, e)}
+                            title={disabledRanks.includes(row.rank) ? `Re-enable rank ${row.rank} virtual pool for ${symbol}` : `Disable rank ${row.rank} virtual pool for ${symbol}`}
+                            className={`text-[9px] leading-none px-1 py-0.5 rounded transition-colors ${
+                              disabledRanks.includes(row.rank)
+                                ? 'text-gray-500 hover:text-green-400 border border-gray-700 hover:border-green-600'
+                                : 'text-gray-600 hover:text-red-400 border border-gray-800 hover:border-red-700'
+                            }`}
+                          >
+                            {disabledRanks.includes(row.rank) ? '↑' : '×'}
+                          </button>
+                        )}
+                      </span>
                     </td>
                     <td className={`py-1.5 pr-4 text-right text-xs ${row.rank != null && row.rank >= 2 ? 'text-gray-300' : 'text-gray-600'}`}>
                       {vBalLabel}

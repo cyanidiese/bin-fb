@@ -28,6 +28,7 @@ Keep it updated with:
 - Agreed config/toggle approach (testnet vs live)
 - Deployment notes and environment requirements
 - Next steps — what to tackle in the next session
+- **Every bug that was found and fixed**: what the bug was, what caused it, and how it was fixed. This gives future sessions full context on what has already been diagnosed and resolved, preventing the same issues from being re-investigated or reintroduced.
 
 Also maintain a `TODO.md` with a prioritized task list. Mark items as [ ] pending, [~] in progress, [x] done.
 
@@ -42,6 +43,7 @@ Also maintain a `TODO.md` with a prioritized task list. Mark items as [ ] pendin
 - **Explain every change** — not just what, but why. If there's a tradeoff, name it.
 - **Flag anything risky** explicitly before touching it. Especially anything related to order execution, position sizing, or live mode.
 - **Never switch to live mode** or remove testnet guards without my explicit instruction.
+- **Never implement based on an assumption you have not verified.** If you are not certain how an external system behaves (API, library, protocol), say so explicitly and verify first — run a test, check the docs, or ask me. Do not write or revert code based on guesses.
 
 ---
 

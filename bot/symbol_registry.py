@@ -68,6 +68,25 @@ class SymbolRegistry:
     def is_disabled(self, symbol: str) -> bool:
         return symbol in self._disabled
 
+    def is_rank_disabled(self, symbol: str, rank: int) -> bool:
+        return rank in self._disabled_ranks.get(symbol, [])
+
+    def disable_rank(self, symbol: str, rank: int) -> None:
+        with self._lock:
+            ranks = self._disabled_ranks.setdefault(symbol, [])
+            if rank not in ranks:
+                ranks.append(rank)
+            self._persist()
+
+    def enable_rank(self, symbol: str, rank: int) -> None:
+        with self._lock:
+            ranks = self._disabled_ranks.get(symbol, [])
+            if rank in ranks:
+                ranks.remove(rank)
+            if not ranks:
+                self._disabled_ranks.pop(symbol, None)
+            self._persist()
+
     def disable(self, symbol: str, reason: str) -> None:
         with self._lock:
             self._disabled[symbol] = {
@@ -115,6 +134,7 @@ class SymbolRegistry:
                 self._status = data.get('status', {})
                 self._weights = data.get('weights', {})
                 self._disabled = data.get('disabled', {})
+                self._disabled_ranks: dict[str, list[int]] = data.get('disabled_ranks', {})
                 logger.info(
                     f"SymbolRegistry: loaded {len(self._symbols)} symbol(s) from {self._path}"
                 )
@@ -128,6 +148,7 @@ class SymbolRegistry:
         self._status = {s: {'backtest': 'none', 'pid': None} for s in self._symbols}
         self._weights = {s: 1.0 / len(self._symbols) for s in self._symbols} if self._symbols else {}
         self._disabled: dict[str, dict] = {}
+        self._disabled_ranks: dict[str, list[int]] = {}
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
@@ -138,6 +159,7 @@ class SymbolRegistry:
             'status': self._status,
             'weights': self._weights,
             'disabled': self._disabled,
+            'disabled_ranks': self._disabled_ranks,
         }
         self._path.write_text(json.dumps(data, indent=2))
 

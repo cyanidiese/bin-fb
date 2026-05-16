@@ -272,4 +272,5 @@ export interface TradesData {
   rank_orders: Record<string, RankOrder[]>;   // key = rank number as string e.g. "2", "3"
   rank_balances: Record<string, number>;       // key = rank number as string
   preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
+  disabled_ranks: number[];                    // ranks disabled for this symbol
 }

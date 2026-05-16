@@ -53,6 +53,7 @@ class VirtualOrderSimulator:
         get_allocation: Optional[Callable[[str], float]] = None,
         get_scenario: Optional[Callable[[], str]] = None,
         rank_max: int = _DEFAULT_RANK_MAX,
+        is_rank_disabled: Optional[Callable[[str, int], bool]] = None,
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
@@ -63,6 +64,7 @@ class VirtualOrderSimulator:
         self._get_allocation = get_allocation
         self._get_scenario = get_scenario
         self._rank_max = rank_max
+        self._is_rank_disabled = is_rank_disabled
         self._initial_balance = initial_balance
 
         # rank -> symbol -> open order record
@@ -141,6 +143,12 @@ class VirtualOrderSimulator:
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
 
         for rank in range(2, self._rank_max + 1):
+            # Skip this rank if it has been disabled for this symbol
+            if self._is_rank_disabled and self._is_rank_disabled(symbol, rank):
+                if symbol in self._rank_open[rank]:
+                    await self._evict(symbol, rank, current_price, 'rank_disabled')
+                continue
+
             rank_idx = rank - 1  # 0-based: rank 1 = idx 0 (best), rank 2 = idx 1, …
             if rank_idx >= len(sorted_presets):
                 # Not enough presets → evict if anything open

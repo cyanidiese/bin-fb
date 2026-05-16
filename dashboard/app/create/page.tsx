@@ -11,13 +11,17 @@ import { useSymbolContext } from '@/lib/SymbolContext'
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function toDateStr(unixSec: number): string {
-  return new Date(unixSec * 1000).toISOString().slice(0, 16)
+  const d = new Date(unixSec * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + ':00Z')
-  d.setUTCDate(d.getUTCDate() + days)
-  return d.toISOString().slice(0, 16)
+  if (!dateStr) return dateStr
+  const d = new Date(dateStr)
+  d.setDate(d.getDate() + days)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 const NAME_ABBREV: Record<string, string> = {

@@ -55,6 +55,15 @@ def test_record_closed_trade(tmp_path):
     tracker.record_closed_trade("BTCUSDT", "p1", profit_usdt=50.0)
     eff = tracker.get_efficiency("BTCUSDT", "p1")
     assert eff["total_winning_usdt"] == 150.0
+
+
+def test_record_closed_trade_loss_reduces_score(tmp_path):
+    tracker = _make_tracker(tmp_path)
+    tracker._set_efficiency("BTCUSDT", "p1", total_winning=100.0, count=4)
+    tracker.record_closed_trade("BTCUSDT", "p1", profit_usdt=-30.0)
+    eff = tracker.get_efficiency("BTCUSDT", "p1")
+    assert eff["total_winning_usdt"] == pytest.approx(70.0)
+    assert eff["trade_count"] == 5
     assert eff["trade_count"] == 5
 
 

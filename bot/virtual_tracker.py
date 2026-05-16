@@ -98,8 +98,7 @@ class VirtualTracker:
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)
-        new_winning = eff["total_winning_usdt"] + (profit_usdt if profit_usdt > 0 else 0.0)
-        self._set_efficiency(symbol, preset, total_winning=new_winning, count=eff["trade_count"] + 1)
+        self._set_efficiency(symbol, preset, total_winning=eff["total_winning_usdt"] + profit_usdt, count=eff["trade_count"] + 1)
 
     def _set_efficiency(self, symbol: str, preset: str, total_winning: float, count: int) -> None:
         self._efficiency.setdefault(symbol, {})[preset] = {

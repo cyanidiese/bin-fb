@@ -36,7 +36,7 @@ def test_get_open_orders_empty():
 @pytest.mark.asyncio
 async def test_round_quantity_applies_step():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
     qty = await ex.round_quantity('BTCUSDT', 0.0057)
     assert qty == pytest.approx(0.005)
 
@@ -44,7 +44,7 @@ async def test_round_quantity_applies_step():
 @pytest.mark.asyncio
 async def test_round_quantity_below_min_returns_zero():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
     qty = await ex.round_quantity('BTCUSDT', 0.0009)
     assert qty == 0.0
 
@@ -54,7 +54,7 @@ async def test_round_quantity_below_min_returns_zero():
 @pytest.mark.asyncio
 async def test_place_order_happy_path():
     ex = make_executor(with_feed=True)
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return 'order123'
@@ -69,7 +69,7 @@ async def test_place_order_happy_path():
 @pytest.mark.asyncio
 async def test_place_order_exchange_failure_sets_idle():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def failing_submit(*a, **kw):
         raise RuntimeError("network error")
@@ -85,7 +85,7 @@ async def test_place_order_exchange_failure_sets_idle():
 @pytest.mark.asyncio
 async def test_check_all_orders_sl_hit():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id1'
@@ -109,7 +109,7 @@ async def test_check_all_orders_sl_hit():
 @pytest.mark.asyncio
 async def test_check_all_orders_tp_hit():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id2'
@@ -132,7 +132,7 @@ async def test_check_all_orders_tp_hit():
 @pytest.mark.asyncio
 async def test_close_all_clears_fake_orders():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(*a):
         return 'id3'
@@ -156,7 +156,7 @@ async def test_close_all_clears_fake_orders():
 @pytest.mark.asyncio
 async def test_check_symbol_price_sl_hit():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id_sl'
@@ -179,7 +179,7 @@ async def test_check_symbol_price_sl_hit():
 @pytest.mark.asyncio
 async def test_check_symbol_price_tp_hit():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id_tp'
@@ -204,7 +204,7 @@ async def test_check_symbol_price_scope_isolation():
     """Price update for BTCUSDT must not affect ETHUSDT's open order."""
     ex = make_executor()
     for sym in ('BTCUSDT', 'ETHUSDT'):
-        ex._lot_cache[sym] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+        ex._lot_cache[sym] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def fake_submit(symbol, side, quantity, leverage):
         return f'id_{symbol}'
@@ -232,7 +232,7 @@ async def test_check_symbol_price_scope_isolation():
 @pytest.mark.asyncio
 async def test_consecutive_failures_trigger_notify():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     async def failing_submit(*a):
         raise RuntimeError("fail")
@@ -294,7 +294,7 @@ def test_get_bracket_max_defaults_to_20_when_unknown():
 @pytest.mark.asyncio
 async def test_funds_error_does_not_increment_failure_counter():
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
 
     from bot.order_executor import FundsError
 
@@ -311,7 +311,7 @@ async def test_symbol_error_calls_auto_disable():
     from bot.order_executor import SymbolError
 
     ex = make_executor()
-    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+    ex._lot_cache['BTCUSDT'] = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.01}
     ex._auto_disable = AsyncMock()
 
     async def symbol_failing_submit(symbol, *a, **kw):

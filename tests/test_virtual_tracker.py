@@ -32,14 +32,18 @@ def test_seed_from_backtest(tmp_path):
     tracker = _make_tracker(tmp_path)
     tracker.seed_from_backtest("BTCUSDT", tmp_path / "backtest_results_BTCUSDT.json")
     eff = tracker.get_efficiency("BTCUSDT", "preset_a")
-    assert eff["total_winning_usdt"] == pytest.approx(38.0)  # (1.0 + 2.0 + 0.8) / 100 * 1000
-    assert eff["trade_count"] == 4
+    # seed_from_backtest stores the backtest score under seeded_winning_usdt;
+    # total_winning_usdt and trade_count stay at 0 so UI won't confuse backtest
+    # history with live virtual trades.
+    assert eff["seeded_winning_usdt"] == pytest.approx(38.0)  # (1.0 + 2.0 + 0.8) / 100 * 1000
+    assert eff["trade_count"] == 0
 
 
 def test_best_preset_selection(tmp_path):
     tracker = _make_tracker(tmp_path)
-    tracker._set_efficiency("BTCUSDT", "slow", total_winning=100.0, count=5)
-    tracker._set_efficiency("BTCUSDT", "fast", total_winning=250.0, count=6)
+    # _MIN_TRADES = 8; counts below that fall back to seeded_winning_usdt (0)
+    tracker._set_efficiency("BTCUSDT", "slow", total_winning=100.0, count=8)
+    tracker._set_efficiency("BTCUSDT", "fast", total_winning=250.0, count=9)
     tracker._set_efficiency("BTCUSDT", "too_few", total_winning=999.0, count=2)
     best = tracker.best_preset("BTCUSDT")
     assert best == "fast"

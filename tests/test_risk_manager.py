@@ -92,6 +92,7 @@ import time as _time
 def test_warning_fires_at_threshold(tmp_path, capsys):
     rm = make_rm(tmp_path, balance=1000.0)
     rm._perf_cache["BTCUSDT"] = (0.5, 9999999999.0, 2.0)
+    rm.seed_real_balance(1000.0)  # anchor peak before any update
     # Drop balance 11% from peak (warning=10%)
     rm.update_balance(890.0)
     captured = capsys.readouterr()
@@ -103,6 +104,7 @@ def test_warning_fires_at_threshold(tmp_path, capsys):
 def test_hard_stop_latches(tmp_path, capsys):
     rm = make_rm(tmp_path, balance=1000.0)
     rm._perf_cache["BTCUSDT"] = (0.5, 9999999999.0, 2.0)
+    rm.seed_real_balance(1000.0)  # anchor peak before any update
     # Drop 21% (hard stop=20%)
     rm.update_balance(790.0)
     captured = capsys.readouterr()
@@ -115,6 +117,7 @@ def test_hard_stop_latches(tmp_path, capsys):
 
 def test_reset_hard_stop(tmp_path):
     rm = make_rm(tmp_path, balance=1000.0)
+    rm.seed_real_balance(1000.0)  # anchor peak before any update
     rm.update_balance(790.0)
     assert rm._hard_stop_active is True
     rm.reset_hard_stop()
@@ -126,6 +129,7 @@ def test_reset_hard_stop(tmp_path):
 
 def test_warning_auto_resets_on_recovery(tmp_path):
     rm = make_rm(tmp_path, balance=1000.0)
+    rm.seed_real_balance(1000.0)  # anchor peak before any update
     rm.update_balance(890.0)   # triggers warning
     assert rm._warning_active is True
     rm.update_balance(960.0)   # recovers above warning level (dd < 10%)

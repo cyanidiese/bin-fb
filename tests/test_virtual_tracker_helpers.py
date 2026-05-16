@@ -8,12 +8,12 @@ def tracker(tmp_path):
     eff_path = tmp_path / 'eff.json'
     eff_data = {
         "BTCUSDT": {
-            "preset_a": {"total_winning_usdt": 10.0, "trade_count": 5},
-            "preset_b": {"total_winning_usdt": 25.0, "trade_count": 6},
-            "preset_c": {"total_winning_usdt": 50.0, "trade_count": 2},  # ineligible: < 4 trades
+            "preset_a": {"total_winning_usdt": 10.0, "trade_count": 8},
+            "preset_b": {"total_winning_usdt": 25.0, "trade_count": 9},
+            "preset_c": {"total_winning_usdt": 50.0, "trade_count": 2},  # ineligible: < _MIN_TRADES (8)
         },
         "ETHUSDT": {
-            "preset_a": {"total_winning_usdt": 8.0, "trade_count": 4},
+            "preset_a": {"total_winning_usdt": 8.0, "trade_count": 8},
         },
     }
     eff_path.write_text(json.dumps(eff_data))

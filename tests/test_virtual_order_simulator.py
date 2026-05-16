@@ -1,10 +1,12 @@
 # tests/test_virtual_order_simulator.py
 import json
-import json as _json
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from bot.virtual_tracker import VirtualTracker
+
+
+# ── VirtualTracker tests (unchanged) ──────────────────────────────────────
 
 
 def make_tracker(tmp_path):
@@ -47,19 +49,20 @@ def test_seed_from_backtest_populates_efficiency(tmp_path):
     bt_path = make_backtest_file(tmp_path)
     tracker.seed_from_backtest('BTCUSDT', bt_path)
     eff = tracker.get_efficiency('BTCUSDT', 'preset_a')
-    assert eff['trade_count'] == 3
-    assert eff['total_winning_usdt'] == pytest.approx(30.0)  # (1.0 + 2.0) / 100 * 1000
+    # seed_from_backtest stores backtest score in seeded_winning_usdt;
+    # trade_count stays 0 so UI won't show backtest history as live trades.
+    assert eff['trade_count'] == 0
+    assert eff['seeded_winning_usdt'] == pytest.approx(30.0)  # (1.0 + 2.0) / 100 * 1000
 
 
 def test_seed_from_backtest_skips_if_symbol_already_seeded(tmp_path):
     tracker = make_tracker(tmp_path)
     bt_path = make_backtest_file(tmp_path)
     tracker.seed_from_backtest('BTCUSDT', bt_path)
-    # Corrupt the backtest file — should not be read again
-    bt_path.write_text('{"presets": {}}')
+    bt_path.write_text('{"presets": {}}')  # empty presets — nothing to overwrite
     tracker.seed_from_backtest('BTCUSDT', bt_path)
     eff = tracker.get_efficiency('BTCUSDT', 'preset_a')
-    assert eff['trade_count'] == 3  # still the original value
+    assert eff['seeded_winning_usdt'] == pytest.approx(30.0)  # original value preserved
 
 
 def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
@@ -68,27 +71,38 @@ def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
     bt_path_eth = make_backtest_file(tmp_path, 'ETHUSDT')
     tracker.seed_from_backtest('BTCUSDT', bt_path_btc)
     tracker.seed_from_backtest('ETHUSDT', bt_path_eth)
-    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['trade_count'] == 3
+    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['seeded_winning_usdt'] == pytest.approx(30.0)
 
 
-# ---------------------------------------------------------------------------
-# VirtualOrderSimulator tests
-# ---------------------------------------------------------------------------
+# ── VirtualOrderSimulator rank-based tests ────────────────────────────────
+
 from bot.virtual_order_simulator import VirtualOrderSimulator
 
 
-def make_simulator(tmp_path, mode='test'):
-    all_presets = {'preset_x': {}, 'preset_y': {}}
+def make_vt_with_scores(scores: dict):
+    """Return a VirtualTracker mock that returns per-preset efficiency scores."""
     vt = MagicMock()
-    vt.get_preset_efficiency.return_value = 0.0
+    vt.get_preset_efficiency.side_effect = lambda symbol, name: scores.get(name, 0.0)
+    return vt
+
+
+def make_simulator(tmp_path, initial_balance=1000.0, rank_max=4, scores=None):
+    """
+    3 presets ranked preset_a > preset_b > preset_c by default.
+    rank_max=4 means we track ranks 2, 3, 4 (rank 1 = real, not tracked here).
+    """
+    if scores is None:
+        scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
+    vt = make_vt_with_scores(scores)
     return VirtualOrderSimulator(
-        mode=mode,
-        all_presets=all_presets,
+        mode='test',
+        all_presets={'preset_a': {}, 'preset_b': {}, 'preset_c': {}},
         project_root=tmp_path,
         get_leverage=lambda sym: 1,
-        initial_balance=1000.0,
+        initial_balance=initial_balance,
         virtual_tracker=vt,
         min_notionals={'BTCUSDT': 5.0},
+        rank_max=rank_max,
     )
 
 
@@ -103,256 +117,310 @@ def make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0):
     return rec
 
 
-def make_analyzer_mock(price=50000.0, rec=None):
-    analyzer = MagicMock()
-    analyzer.get_current_price.return_value = price
-    analyzer.get_trend.return_value = MagicMock()
-    analyzer.get_recommendation_for_preset.return_value = rec
-    return analyzer
+def make_analyzer(price=50000.0):
+    a = MagicMock()
+    a.get_current_price.return_value = price
+    a.get_trend.return_value = MagicMock()
+    return a
 
+
+# ── balance initialisation ─────────────────────────────────────────────────
+
+def test_rank_balances_initialised(tmp_path):
+    sim = make_simulator(tmp_path, initial_balance=500.0, rank_max=3)
+    balances = sim.get_rank_balances()
+    assert set(balances.keys()) == {2, 3}
+    assert all(v == 500.0 for v in balances.values())
+
+
+def test_apply_real_balance_seeds_rank_files(tmp_path):
+    sim = make_simulator(tmp_path, initial_balance=0.0, rank_max=3)
+    sim.apply_real_balance_if_fresh(777.0)
+    for rank in (2, 3):
+        path = tmp_path / 'data' / f'virtual_balance_rank{rank}_test.json'
+        assert path.exists()
+        data = json.loads(path.read_text())
+        assert data['balance'] == 777.0
+
+
+def test_apply_real_balance_skips_if_file_exists(tmp_path):
+    sim = make_simulator(tmp_path, initial_balance=100.0, rank_max=3)
+    # Pre-create rank-2 file with a specific value
+    (tmp_path / 'data').mkdir(parents=True, exist_ok=True)
+    (tmp_path / 'data' / 'virtual_balance_rank2_test.json').write_text('{"balance": 999.0}')
+    sim2 = make_simulator(tmp_path, initial_balance=100.0, rank_max=3)
+    sim2.apply_real_balance_if_fresh(500.0)
+    # rank-2 already had a file — should NOT be overwritten
+    assert sim2._rank_balance[2] == 999.0
+
+
+def test_rank_balance_persists_to_disk(tmp_path):
+    sim = make_simulator(tmp_path, initial_balance=200.0, rank_max=3)
+    sim._rank_balance[2] = 250.0
+    sim._save_rank_balance(2)
+    path = tmp_path / 'data' / 'virtual_balance_rank2_test.json'
+    data = json.loads(path.read_text())
+    assert data['balance'] == 250.0
+
+
+def test_rank_balance_loads_from_disk(tmp_path):
+    # First instance persists rank-2 balance
+    sim1 = make_simulator(tmp_path, initial_balance=200.0, rank_max=3)
+    sim1._rank_balance[2] = 350.0
+    sim1._save_rank_balance(2)
+    # Second instance should load that value
+    sim2 = make_simulator(tmp_path, initial_balance=999.0, rank_max=3)
+    assert sim2._rank_balance[2] == 350.0
+
+
+# ── candle close — opening positions ──────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_virtual_order_opens_on_signal(tmp_path):
-    """Virtual order opens when a preset gets a recommendation signal."""
-    sim = make_simulator(tmp_path)
+async def test_on_candle_close_opens_rank2_and_rank3(tmp_path):
+    """Rank-2 slot gets preset_b, rank-3 gets preset_c (preset_a is best/real)."""
+    sim = make_simulator(tmp_path, rank_max=4)
     rec = make_rec()
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-
-    # Should have opened virtual orders for preset_x and preset_y
-    assert len(sim._open.get('BTCUSDT', {})) == 2
+    assert 'BTCUSDT' in sim._rank_open[2]
+    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_b'
+    assert 'BTCUSDT' in sim._rank_open[3]
+    assert sim._rank_open[3]['BTCUSDT']['preset_name'] == 'preset_c'
 
 
 @pytest.mark.asyncio
-async def test_virtual_order_dedup_no_double_open(tmp_path):
-    """Calling on_candle_close twice doesn't double-open already-open positions."""
-    sim = make_simulator(tmp_path)
+async def test_on_candle_close_does_not_double_open(tmp_path):
+    """Calling on_candle_close twice does not open a second position at the same rank."""
+    sim = make_simulator(tmp_path, rank_max=3)
     rec = make_rec()
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+        after_first = dict(sim._rank_open[2])
 
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-            count_after_first = len(sim._open.get('BTCUSDT', {}))
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+        after_second = dict(sim._rank_open[2])
 
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-            count_after_second = len(sim._open.get('BTCUSDT', {}))
-
-    assert count_after_first == 2
-    assert count_after_first == count_after_second  # no double-open
+    assert after_first.keys() == after_second.keys()
 
 
 @pytest.mark.asyncio
-async def test_virtual_order_closes_on_tp(tmp_path):
-    """Virtual order closes with result 'win' when price crosses TP."""
-    sim = make_simulator(tmp_path)
+async def test_no_signal_leaves_slot_empty(tmp_path):
+    """If RecommendationEngine returns None, the rank slot stays empty."""
+    sim = make_simulator(tmp_path, rank_max=3)
+
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = None
+        mock_dc.replace.return_value = MagicMock()
+
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+
+    assert 'BTCUSDT' not in sim._rank_open[2]
+
+
+# ── price checks — TP / SL ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_prices_closes_on_tp(tmp_path):
+    """Rank-2 position closes as 'win' when price crosses TP."""
+    sim = make_simulator(tmp_path, rank_max=3)
     rec = make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0)
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
-
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-
-    assert len(sim._open.get('BTCUSDT', {})) > 0
-    preset_name = next(iter(sim._open.get('BTCUSDT', {})))
-
-    closed = await sim.check_prices('BTCUSDT', 55001.0)  # above TP
-    assert len(closed) >= 1
-    assert closed[0]['result'] in ('win', 'trail', 'partial')
-    assert preset_name not in sim._open.get('BTCUSDT', {})
+    closed = await sim.check_prices('BTCUSDT', 55001.0)
+    results = [c['result'] for c in closed]
+    assert any(r in ('win', 'trail', 'partial') for r in results)
+    assert 'BTCUSDT' not in sim._rank_open[2]
 
 
 @pytest.mark.asyncio
-async def test_virtual_order_closes_on_sl(tmp_path):
-    """Virtual order closes with result 'loss' when price crosses SL."""
-    sim = make_simulator(tmp_path)
+async def test_check_prices_closes_on_sl(tmp_path):
+    """Rank-2 position closes as 'loss' when price crosses SL."""
+    sim = make_simulator(tmp_path, rank_max=3)
     rec = make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0)
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
-
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-
-    closed = await sim.check_prices('BTCUSDT', 47999.0)  # below SL
-    assert len(closed) >= 1
-    assert closed[0]['result'] == 'loss'
+    closed = await sim.check_prices('BTCUSDT', 47999.0)
+    assert any(c['result'] == 'loss' for c in closed)
+    assert 'BTCUSDT' not in sim._rank_open[2]
 
 
 @pytest.mark.asyncio
-async def test_close_all_open_marks_closed_early(tmp_path):
-    """close_all_open clears all open orders and marks them closed_early."""
-    sim = make_simulator(tmp_path)
-    rec = make_rec()
+async def test_check_prices_updates_rank_balance(tmp_path):
+    """Winning trade increases the rank-2 pool balance."""
+    sim = make_simulator(tmp_path, initial_balance=1000.0, rank_max=3)
+    rec = make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0)
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
-
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-
-    assert len(sim._open.get('BTCUSDT', {})) > 0
-
-    feed_mock = MagicMock()
-    feed_mock.client.futures_symbol_ticker.return_value = {'price': '51000.0'}
-
-    await sim.close_all_open(['BTCUSDT'], feed_mock)
-    assert len(sim._open.get('BTCUSDT', {})) == 0
+    balance_before = sim._rank_balance[2]
+    await sim.check_prices('BTCUSDT', 55001.0)  # TP hit → win
+    assert sim._rank_balance[2] > balance_before
 
 
 @pytest.mark.asyncio
-async def test_virtual_order_persists_to_file(tmp_path):
-    """Closed virtual order is persisted to the JSON file."""
-    sim = make_simulator(tmp_path)
-    rec = make_rec()
+async def test_check_prices_returns_rank_in_closed_dict(tmp_path):
+    """check_prices return dicts include a 'rank' key."""
+    sim = make_simulator(tmp_path, rank_max=3)
+    rec = make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0)
 
-    from unittest.mock import patch
-    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEngine:
-        instance = MockEngine.return_value
-        instance.generate.return_value = rec
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-        analyzer = make_analyzer_mock(rec=rec)
-        base_settings = MagicMock()
-        with patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
-            mock_dc.replace.return_value = base_settings
-
-            await sim.on_candle_close('BTCUSDT', analyzer, 'some_best_preset', base_settings)
-
-    # Close via price above TP
-    await sim.check_prices('BTCUSDT', 55001.0)
-
-    file = tmp_path / 'data' / 'virtual_orders_BTCUSDT_test.json'
-    assert file.exists()
-    records = _json.loads(file.read_text())
-    closed = [r for r in records if r['status'] == 'closed']
-    assert len(closed) >= 1
+    closed = await sim.check_prices('BTCUSDT', 55001.0)
+    for c in closed:
+        assert 'rank' in c
+        assert c['rank'] in (2, 3, 4, 5, 6)
 
 
-# ---------------------------------------------------------------------------
-# New virtual balance pool tests (Task 6)
-# ---------------------------------------------------------------------------
-from bot.leverage_tracker import LeverageTracker
+# ── rank eviction ─────────────────────────────────────────────────────────
 
-
-def make_lt(tmp_path, symbols=None):
-    return LeverageTracker(
-        mode='test',
-        active_symbols=symbols or ['BTCUSDT'],
-        data_path=tmp_path / 'lev.json',
-    )
-
-
-def make_vt():
-    vt = MagicMock()
-    vt.get_preset_efficiency.return_value = 0.0
-    return vt
-
-
-def make_sim(tmp_path, initial_balance=100.0, presets=None):
-    lt = make_lt(tmp_path)
-    vt = make_vt()
+@pytest.mark.asyncio
+async def test_rank_change_evicts_old_preset(tmp_path):
+    """When the rank-2 preset changes, the old position is evicted."""
+    # Start: preset_a best, preset_b rank-2
+    scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
+    vt = make_vt_with_scores(scores)
     sim = VirtualOrderSimulator(
         mode='test',
-        all_presets=presets or {'preset_a': {}, 'preset_b': {}},
+        all_presets={'preset_a': {}, 'preset_b': {}, 'preset_c': {}},
         project_root=tmp_path,
-        get_leverage=lambda sym: lt.get_current_level(),
-        initial_balance=initial_balance,
+        get_leverage=lambda sym: 1,
+        initial_balance=1000.0,
         virtual_tracker=vt,
         min_notionals={'BTCUSDT': 5.0},
+        rank_max=3,
     )
-    return sim, lt, vt
+
+    rec = make_rec()
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+
+    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_b'
+
+    # Rankings shift: preset_c now rank-2
+    vt.get_preset_efficiency.side_effect = lambda s, n: {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0)
+
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
+
+    # preset_b evicted, preset_c now in rank-2 slot
+    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_c'
 
 
-def test_initial_balance_set(tmp_path):
-    sim, *_ = make_sim(tmp_path, initial_balance=200.0)
-    assert sim._virtual_balance == 200.0
-    assert sim._virtual_committed == 0.0
+@pytest.mark.asyncio
+async def test_evicted_order_written_to_rank_file(tmp_path):
+    """Evicted position is persisted to virtual_orders_rank2_{symbol}_{mode}.json."""
+    scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
+    vt = make_vt_with_scores(scores)
+    sim = VirtualOrderSimulator(
+        mode='test',
+        all_presets={'preset_a': {}, 'preset_b': {}, 'preset_c': {}},
+        project_root=tmp_path,
+        get_leverage=lambda sym: 1,
+        initial_balance=1000.0,
+        virtual_tracker=vt,
+        min_notionals={'BTCUSDT': 5.0},
+        rank_max=3,
+    )
+
+    rec = make_rec()
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+
+    # Shift rankings to trigger eviction
+    vt.get_preset_efficiency.side_effect = lambda s, n: {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0)
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
+
+    rank_file = tmp_path / 'data' / 'virtual_orders_rank2_BTCUSDT_test.json'
+    assert rank_file.exists()
+    records = json.loads(rank_file.read_text())
+    evicted = [r for r in records if r.get('result') == 'rank_change']
+    assert len(evicted) == 1
+    assert evicted[0]['preset_name'] == 'preset_b'
 
 
-def test_virtual_balance_persists_to_disk(tmp_path):
-    sim, *_ = make_sim(tmp_path, initial_balance=100.0)
-    sim._virtual_balance = 150.0
-    sim._virtual_committed = 10.0
-    sim._save_virtual_balance()
-    path = tmp_path / 'data' / 'virtual_balance_test.json'
-    data = _json.loads(path.read_text())
-    assert data['virtual_balance'] == 150.0
-    assert data['virtual_committed'] == 10.0
+# ── close_all_open ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_close_all_open_clears_all_ranks(tmp_path):
+    """close_all_open removes positions from all rank slots for all symbols."""
+    sim = make_simulator(tmp_path, rank_max=3)
+    rec = make_rec()
+
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+
+    feed = MagicMock()
+    feed.client.futures_symbol_ticker = MagicMock(return_value={'price': '51000.0'})
+
+    await sim.close_all_open(['BTCUSDT'], feed)
+
+    for rank in (2, 3):
+        assert 'BTCUSDT' not in sim._rank_open[rank]
 
 
-def test_virtual_balance_loads_from_disk(tmp_path):
-    # First instance persists
-    sim1, *_ = make_sim(tmp_path, initial_balance=100.0)
-    sim1._virtual_balance = 150.0
-    sim1._virtual_committed = 10.0
-    sim1._save_virtual_balance()
-    # Second instance should load disk state, not use initial_balance
-    sim2, *_ = make_sim(tmp_path, initial_balance=999.0)
-    assert sim2._virtual_balance == 150.0
-    assert sim2._virtual_committed == 10.0
+@pytest.mark.asyncio
+async def test_close_all_open_writes_closed_early_to_file(tmp_path):
+    """close_all_open records closed_early result in the rank order file."""
+    sim = make_simulator(tmp_path, rank_max=3)
+    rec = make_rec()
 
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        MockEng.return_value.generate.return_value = rec
+        mock_dc.replace.return_value = MagicMock()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
-def test_margin_formula_uses_leverage_level(tmp_path):
-    # margin = min_notional / leverage = 5.0 / 1 = 5.0 at level 1
-    sim, lt, _ = make_sim(tmp_path, initial_balance=100.0)
-    assert lt.get_current_level() == 1
-    margin = 5.0 / lt.get_current_level()
-    assert margin == 5.0
+    feed = MagicMock()
+    feed.client.futures_symbol_ticker = MagicMock(return_value={'price': '51000.0'})
+    await sim.close_all_open(['BTCUSDT'], feed)
 
-
-def test_skips_open_when_balance_insufficient(tmp_path):
-    sim, lt, _ = make_sim(tmp_path, initial_balance=3.0)
-    # min_notional=5, leverage=1 → margin=5 > balance=3
-    available = sim._virtual_balance - sim._virtual_committed
-    margin = 5.0 / lt.get_current_level()
-    assert available < margin  # confirms the skip condition
-
-
-def test_close_releases_committed_and_updates_balance(tmp_path):
-    sim, *_ = make_sim(tmp_path, initial_balance=100.0)
-    margin = 5.0
-    pnl = 2.0
-    sim._virtual_committed = margin
-    sim._virtual_balance = 100.0
-    # Simulate close logic
-    sim._virtual_committed -= margin
-    sim._virtual_committed = max(0.0, sim._virtual_committed)
-    sim._virtual_balance += pnl
-    assert sim._virtual_committed == 0.0
-    assert sim._virtual_balance == 102.0
+    rank_file = tmp_path / 'data' / 'virtual_orders_rank2_BTCUSDT_test.json'
+    assert rank_file.exists()
+    records = json.loads(rank_file.read_text())
+    assert any(r.get('result') == 'closed_early' for r in records)

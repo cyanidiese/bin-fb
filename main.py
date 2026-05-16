@@ -113,6 +113,8 @@ async def run() -> None:
         telegram_token=risk_cfg.get("telegram", {}).get("token", ""),
         telegram_chat_id=risk_cfg.get("telegram", {}).get("chat_id", ""),
         min_interval_s=float(risk_cfg.get("telegram_notify_interval_s", 120)),
+        emergency_repeat_interval_s=float(risk_cfg.get("emergency_repeat_interval_s", 1800)),
+        warning_repeat_interval_s=float(risk_cfg.get("warning_repeat_interval_s", 14400)),
     )
     mode_manager = ModeManager(notifier=notifier)
     current_mode = mode_manager.current_mode
@@ -186,6 +188,7 @@ async def run() -> None:
         min_notionals=min_notionals,
         get_allocation=risk_manager.get_symbol_allocation,
         get_scenario=lambda: _active_scenario_name,
+        rank_max=int(risk_cfg.get("virtual_rank_max", 6)),
     )
 
     def _push_scenario_info() -> None:

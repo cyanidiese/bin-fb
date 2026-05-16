@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
-import type { TradesData, RealOrder, VirtualOrder, Kline } from '@/lib/types'
+import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
@@ -25,11 +25,12 @@ function pnlFmt(v: number) {
 
 // ── Preset Efficiency ──────────────────────────────────────────────────────
 
-type SortKey = 'preset' | 'trades' | 'wins' | 'partials' | 'trails' | 'losses' | 'winPct' | 'profitPct' | 'gained'
+type SortKey = 'preset' | 'trades' | 'wins' | 'partials' | 'trails' | 'losses' | 'winPct' | 'profitPct' | 'gained' | 'rank'
 
 interface PresetRow {
   name: string
   isBest: boolean
+  rank: number | null
   realCount: number
   virtualCount: number
   wins: number
@@ -45,21 +46,21 @@ interface PresetRow {
 function buildPresetRows(data: TradesData): PresetRow[] {
   const presetNames = data.all_preset_names.length > 0
     ? data.all_preset_names
-    : Array.from(new Set([
-        ...data.real_orders.map(o => o.preset_name),
-        ...data.virtual_orders.map(o => o.preset_name),
-      ]))
+    : data.real_orders.map(o => o.preset_name)
+
+  // Flatten all rank orders into a single list for easy lookup per preset
+  const allRankOrders: RankOrder[] = Object.values(data.rank_orders).flat() as RankOrder[]
 
   return presetNames.map(name => {
     const real = data.real_orders.filter(o => o.preset_name === name)
-    const virt = data.virtual_orders.filter(
+    const virt = allRankOrders.filter(
       o => o.preset_name === name && o.status === 'closed' && o.result != null,
     )
 
-    const wins    = real.filter(o => o.result === 'win').length    + virt.filter(o => o.result === 'win').length
+    const wins     = real.filter(o => o.result === 'win').length    + virt.filter(o => o.result === 'win').length
     const partials = real.filter(o => o.result === 'partial').length + virt.filter(o => o.result === 'partial').length
-    const trails  = real.filter(o => o.result === 'trail').length  + virt.filter(o => o.result === 'trail').length
-    const losses  = real.filter(o => o.result === 'loss').length   + virt.filter(o => o.result === 'loss').length
+    const trails   = real.filter(o => o.result === 'trail').length  + virt.filter(o => o.result === 'trail').length
+    const losses   = real.filter(o => o.result === 'loss').length   + virt.filter(o => o.result === 'loss').length
 
     const totalPnl        = real.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
     const totalVirtualPnl = virt.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
@@ -69,11 +70,9 @@ function buildPresetRows(data: TradesData): PresetRow[] {
     const totalTrades  = realCount + virtualCount
     const winPct       = totalTrades > 0 ? ((wins + partials + trails) / totalTrades) * 100 : null
 
-    // Sum of per-trade profit%: pnl_usdt / margin * 100
-    const sumPct = (orders: { entry_price: number; quantity: number; leverage: number; pnl_usdt: number; virtual_margin?: number | null }[]) =>
+    const sumPct = (orders: { entry_price: number; quantity: number; leverage: number; pnl_usdt: number }[]) =>
       orders.reduce((s, o) => {
-        const margin = (o as { virtual_margin?: number | null }).virtual_margin
-          ?? (o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0)
+        const margin = o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0
         return s + (margin > 0 ? (o.pnl_usdt / margin) * 100 : 0)
       }, 0)
 
@@ -81,9 +80,12 @@ function buildPresetRows(data: TradesData): PresetRow[] {
       ? sumPct(real) + sumPct(virt.map(o => ({ ...o, pnl_usdt: o.pnl_usdt ?? 0 })))
       : null
 
+    const rank = data.preset_ranks[name] ?? null
+
     return {
       name,
       isBest: name === data.best_preset,
+      rank,
       realCount,
       virtualCount,
       wins,
@@ -132,7 +134,7 @@ export default function TradesPage() {
   const [klines, setKlines] = useState<Kline[]>([])
   const [symbolsWithOrders, setSymbolsWithOrders] = useState<string[]>([])
   const [realBalance, setRealBalance] = useState<number | null>(null)
-  const [virtualBalance, setVirtualBalance] = useState<number | null>(null)
+  const [rankBalances, setRankBalances] = useState<Record<string, number>>({})
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -174,7 +176,7 @@ export default function TradesPage() {
       .then(d => {
         if (!d) return
         setRealBalance(d.realBalance ?? null)
-        setVirtualBalance(d.virtualBalance ?? null)
+        setRankBalances(d.rankBalances ?? {})
       })
       .catch(() => {})
   }, [data])
@@ -194,6 +196,7 @@ export default function TradesPage() {
         }
         let av: number, bv: number
         switch (sortKey) {
+          case 'rank':      av = a.rank ?? 999; bv = b.rank ?? 999; break
           case 'trades':    av = a.realCount + a.virtualCount; bv = b.realCount + b.virtualCount; break
           case 'wins':      av = a.wins;      bv = b.wins;      break
           case 'partials':  av = a.partials;  bv = b.partials;  break
@@ -249,18 +252,27 @@ export default function TradesPage() {
     </div>
   )
 
-  const tradingOrders: (RealOrder | VirtualOrder)[] = selectedPreset
+  // Flatten rank orders for the selected preset (or all) for the orders table and chart
+  const allRankOrdersFlat: RankOrder[] = Object.values(data.rank_orders).flat() as RankOrder[]
+  const filteredRankOrders: RankOrder[] = selectedPreset
+    ? allRankOrdersFlat.filter(o => o.preset_name === selectedPreset)
+    : allRankOrdersFlat
+
+  const tradingOrders: (RealOrder | RankOrder)[] = selectedPreset
     ? [
         ...data.real_orders.filter(o => o.preset_name === selectedPreset),
-        ...data.virtual_orders.filter(o => o.preset_name === selectedPreset),
+        ...filteredRankOrders,
       ]
-    : [...data.real_orders, ...data.virtual_orders]
+    : [...data.real_orders, ...allRankOrdersFlat]
 
   const tradingOrdersLabel = selectedPreset
     ? `Trading Orders — ${selectedPreset} (${tradingOrders.length})`
-    : `Trading Orders (${data.real_orders.length} real · ${data.virtual_orders.length} virtual)`
+    : `Trading Orders (${data.real_orders.length} real · ${allRankOrdersFlat.length} rank virtual)`
 
   const thProps = { sortKey, sortDir, onSort: handleSort }
+
+  // Cast rank orders to the shape TradesChart expects for virtual orders
+  const chartVirtualOrders = filteredRankOrders as unknown as VirtualOrder[]
 
   return (
     <div className="pt-14 p-4 space-y-6 max-w-7xl mx-auto">
@@ -279,13 +291,6 @@ export default function TradesPage() {
           {realBalance !== null && (
             <span className="text-xs text-gray-400">
               Real: <span className="text-white font-semibold">${realBalance.toFixed(2)}</span>
-            </span>
-          )}
-          {virtualBalance !== null && (
-            <span className="text-xs text-gray-400">
-              Virtual: <span className={`font-semibold ${virtualBalance < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                ${virtualBalance.toFixed(2)}
-              </span>
             </span>
           )}
         </div>
@@ -322,6 +327,8 @@ export default function TradesPage() {
             <thead>
               <tr className="border-b border-gray-700">
                 <SortTh label="Preset"   col="preset"    align="left" {...thProps} />
+                <SortTh label="Rank"     col="rank"      align="left" {...thProps} />
+                <SortTh label="V.Bal"    col="gained"    align="right" {...thProps} />
                 <SortTh label="Trades"   col="trades"               {...thProps} />
                 <SortTh label="Wins"     col="wins"                 {...thProps} />
                 <SortTh label="Part"     col="partials"             {...thProps} />
@@ -347,6 +354,20 @@ export default function TradesPage() {
                   tradesLabel = `${row.virtualCount}v`
                 }
 
+                // Rank label: "★ Real" for rank 1, "#N" for others, "—" if unranked
+                let rankLabel = '—'
+                if (row.rank === 1) rankLabel = '★ Real'
+                else if (row.rank != null) rankLabel = `#${row.rank}`
+
+                // V.Bal: show the rank pool balance for ranks 2+; real balance for rank 1; "—" otherwise
+                let vBalLabel = '—'
+                if (row.rank === 1 && realBalance !== null) {
+                  vBalLabel = `$${realBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                } else if (row.rank != null && row.rank >= 2) {
+                  const bal = rankBalances[String(row.rank)]
+                  vBalLabel = bal != null ? `$${bal.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'
+                }
+
                 return (
                   <tr
                     key={row.name}
@@ -360,6 +381,12 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-4 text-white">
                       {row.name}
                       {row.isBest && <span className="ml-2 text-[10px] text-indigo-400">BEST</span>}
+                    </td>
+                    <td className={`py-1.5 pr-4 text-left text-xs ${row.rank === 1 ? 'text-indigo-400' : row.rank != null ? 'text-gray-400' : 'text-gray-600'}`}>
+                      {rankLabel}
+                    </td>
+                    <td className={`py-1.5 pr-4 text-right text-xs ${row.rank != null && row.rank >= 2 ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {vBalLabel}
                     </td>
                     <td className={`py-1.5 pr-4 text-right ${totalCount > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
                       {tradesLabel}
@@ -406,7 +433,7 @@ export default function TradesPage() {
           <TradesChart
             klines={klines}
             realOrders={selectedPreset ? data.real_orders.filter(o => o.preset_name === selectedPreset) : data.real_orders}
-            virtualOrders={selectedPreset ? data.virtual_orders.filter(o => o.preset_name === selectedPreset) : data.virtual_orders}
+            virtualOrders={chartVirtualOrders}
           />
         </CollapsibleSection>
       )}
@@ -442,19 +469,20 @@ export default function TradesPage() {
                 {tradingOrders.map((order, i) => {
                   const isReal = !('status' in order)
                   const realOrder = isReal ? (order as RealOrder) : null
-                  const virtOrder = !isReal ? (order as VirtualOrder) : null
-                  const pnl = realOrder?.pnl_usdt ?? virtOrder?.pnl_usdt ?? null
-                  const entryPrice = realOrder?.entry_price ?? virtOrder?.entry_price ?? 0
-                  const closePrice = realOrder?.close_price ?? virtOrder?.close_price ?? null
-                  const closedAt = realOrder?.close_time ?? virtOrder?.close_time ?? null
-                  const result = realOrder?.result ?? virtOrder?.result ?? ''
+                  const rankOrder = !isReal ? (order as RankOrder) : null
+                  const pnl = realOrder?.pnl_usdt ?? rankOrder?.pnl_usdt ?? null
+                  const entryPrice = realOrder?.entry_price ?? rankOrder?.entry_price ?? 0
+                  const closePrice = realOrder?.close_price ?? rankOrder?.close_price ?? null
+                  const closedAt = realOrder?.close_time ?? rankOrder?.close_time ?? null
+                  const result = realOrder?.result ?? rankOrder?.result ?? ''
                   const leverage = order.leverage ?? null
-                  const scenario = realOrder?.scenario ?? virtOrder?.scenario ?? null
+                  const scenario = realOrder?.scenario ?? rankOrder?.scenario ?? null
+                  const rankLabel = rankOrder?.rank != null ? `Rank #${rankOrder.rank}` : 'Virtual'
                   return (
                     <tr key={i} className="border-b border-gray-800">
                       <td className="py-1.5 pr-3 font-mono text-xs text-white">{order.preset_name}</td>
                       <td className={`py-1.5 pr-3 text-xs ${realOrder ? 'text-green-400' : 'text-gray-500'}`}>
-                        {realOrder ? 'Real' : 'Virtual'}
+                        {realOrder ? 'Real' : rankLabel}
                       </td>
                       <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>
                         {order.side}
@@ -472,7 +500,7 @@ export default function TradesPage() {
                       <td className={`py-1.5 pr-3 text-right font-medium ${pnl != null ? pnlClass(pnl) : 'text-gray-600'}`}>
                         {pnl != null ? pnlFmt(pnl) : '—'}
                       </td>
-                      <td className={`py-1.5 pr-3 capitalize ${resultColor(result)}`}>{result || '—'}</td>
+                      <td className={`py-1.5 pr-3 capitalize ${resultColor(String(result))}`}>{result || '—'}</td>
                       <td className="py-1.5 text-right text-gray-500 text-xs">
                         {closedAt ? new Date(closedAt).toLocaleString() : '—'}
                       </td>

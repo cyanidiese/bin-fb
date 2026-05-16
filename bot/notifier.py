@@ -19,13 +19,6 @@ logger = logging.getLogger(__name__)
 
 _ALERT_LEVELS = {"warning", "emergency"}
 
-# How long to suppress re-sending the *same* message (same title+body) to Telegram.
-_CONTENT_REPEAT_INTERVAL: dict[str, float] = {
-    "emergency": 30 * 60,   # 30 min — urgent but don't spam every candle close
-    "warning":   4 * 3600,  # 4 h   — repeated warnings are noise
-    "info":      60,         # 1 min — covered by category rate limit anyway
-}
-
 _TEST_SAMPLES: dict[str, tuple[str, bool]] = {
     "connection": (
         "ℹ️ <b>Test notification</b>\nBot notifier is working.",
@@ -68,12 +61,16 @@ class Notifier:
         telegram_token: str,
         telegram_chat_id: str,
         min_interval_s: float = 120.0,
+        emergency_repeat_interval_s: float = 1800.0,
+        warning_repeat_interval_s: float = 14400.0,
     ) -> None:
         self._log_path = log_path
         self._alert_path = alert_path
         self._token = telegram_token
         self._chat_id = telegram_chat_id
         self._min_interval_s = min_interval_s
+        self._emergency_repeat_s = emergency_repeat_interval_s
+        self._warning_repeat_s = warning_repeat_interval_s
         self._last_sent: dict[str, float] = {}
         # content-hash → last monotonic time sent, so the same message is never spammed
         self._last_sent_content: dict[str, float] = {}
@@ -190,7 +187,10 @@ class Notifier:
     def _content_rate_limit_ok(self, level: str, title: str, body: str) -> bool:
         """True if this exact (title, body) hasn't been sent recently."""
         key = hashlib.md5(f"{title}\x00{body}".encode()).hexdigest()
-        interval = _CONTENT_REPEAT_INTERVAL.get(level, self._min_interval_s)
+        interval = {
+            "emergency": self._emergency_repeat_s,
+            "warning": self._warning_repeat_s,
+        }.get(level, self._min_interval_s)
         now = time.monotonic()
         if now - self._last_sent_content.get(key, 0.0) < interval:
             return False

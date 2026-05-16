@@ -1,25 +1,49 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-14 (session 16)
+## Last updated: 2026-05-16 (session 18)
 
 ---
 
-## ⟳ RESUME POINT — session 16 ended here (2026-05-14)
-
-**Branch**: `feature/test-live-preparation` (awaiting user test confirmation on server before merge)
+## ⟳ RESUME POINT — session 18 ended here (2026-05-16)
 
 **What was completed this session:**
-1. Virtual tracker `seed_from_backtest()` redesigned — no longer copies backtest trade counts; stores `trade_count: 0` and `seeded_winning_usdt` (backtest score as fallback)
-2. `_MIN_TRADES` raised from 4 to **8** — bot waits for 8 combined real + virtual closed trades per preset before switching from backtest-seeded score to live score
-3. Real order closes (line 527 in main.py) and virtual order closes (line 549) both call `virtual_tracker.record_closed_trade` so counter accumulates correctly
-4. Real orders archive on bot restart — `real_orders_{sym}_{mode}.json` is archived to `real_orders_{sym}_{mode}_archive_{YYYYMMDDTHHMMSSZ}.json`; Trades page shows only current session
-5. Trades page: "Hide virtual-only" checkbox added to Preset Efficiency section header (checked by default) — hides all Virtual rows where `tradeCount === 0` (seeded with no runtime trades)
-6. `CollapsibleSection` gained `headerExtra?: React.ReactNode` prop with click-isolation from toggle
-7. UI fixes (pre-existing, same session): AlertBanner moved inside `pt-11`, Run Backtest non-blocking with polling, Stop Bot returns ok when bot already stopped, Logs+Log pages merged, scenario added to decision log
+1. **Rank-based virtual pools** — `VirtualOrderSimulator` completely rewritten. Replaced the single shared balance pool with 5 independent rank pools (ranks 2–6). Each pool tracks "whichever preset currently holds that rank for a symbol" — when efficiency rankings shift and the preset at rank N changes, the old position is evicted at current price (`rank_change` result) and a new one opens for the newly ranked preset. One position per symbol per rank. Max 1 per symbol per rank by design, so `_MAX_PER_DIRECTION` guard and `_loss_cooldowns` are gone.
+2. **Real/virtual balance strict separation** — virtual pools never write to anything `RiskManager` reads. `apply_real_balance_if_fresh` seeds each rank pool from real balance only on first start (when no file exists). After that, rank pools are fully independent.
+3. **Configurable Telegram cooldowns** — `emergency_repeat_interval_s` (default 1800s / 30 min) and `warning_repeat_interval_s` (default 14400s / 4h) added to `risk_config.json` DEFAULT_CONFIG and passed as constructor params to `Notifier`. The hardcoded `_CONTENT_REPEAT_INTERVAL` dict is gone.
+4. **Dashboard: trades page** — Virtual balance removed from header (real balance remains). Preset table has two new columns: "Rank" (shows "★ Real" for rank 1, "#2"–"#6" for ranked presets, "—" for unranked) and "V.Bal" (shows the rank pool balance for that rank, or real balance for rank-1 preset).
+5. **Dashboard: API routes updated** — `/api/trades` returns `rank_orders`, `rank_balances`, `preset_ranks` instead of `virtual_orders`/`virtual_summary`. `/api/trades/balances` returns `rankBalances` instead of `virtualBalance`.
+6. **TypeScript: clean build** — `npx tsc --noEmit` passes with zero errors.
 
-**Immediate next action**: User to test session-clearing + virtual tracker on server; then merge to main
+**Known test breakage (for Tester to fix):**
+- `tests/test_virtual_order_simulator.py` — 9 tests inspect old internals (`_open`, `_virtual_balance`, `_virtual_committed`, `_save_virtual_balance`) that the rewrite removes. These tests need to be rewritten against the new rank-based API (`_rank_open`, `_rank_balance`, `get_rank_balances()`).
+- 3 VirtualTracker tests (`test_seed_from_backtest_*`) were already failing before this session (pre-existing unrelated failure).
+- All 16 notifier tests pass.
+- `_open` attribute no longer exists — tests should check `sim._rank_open[rank][symbol]`
+- `_virtual_balance` no longer exists — tests should check `sim._rank_balance[rank]` or `sim.get_rank_balances()`
+- File paths changed: `virtual_orders_{symbol}_{mode}.json` → `virtual_orders_rank{N}_{symbol}_{mode}.json`
 
-**Key state**: All Phase 3.10 design decisions from session 13 are now fully implemented. Virtual balance seeds from real at mode start, trades page ready for evaluation.
+**Hard stop status (from session 17):**
+- `risk_state.json` shows `peak_balance=10000, balance=5000, hard_stop_active=true`
+- This is a real testnet balance drop, not a code bug
+- User needs to manually reset via dashboard Risk page after verifying testnet account state
+
+**Immediate next action**: Tester to update `test_virtual_order_simulator.py` to match new rank-based design. Then user to restart bot on server to pick up new VirtualOrderSimulator.
+
+---
+
+## ⟳ RESUME POINT — session 17 ended here (2026-05-14)
+
+**Branch**: `feature/test-live-preparation` (ready for merge to main after user testing)
+
+**What was completed this session:**
+1. **Critical bug fixed: RiskManager hard stop on every bot restart** — `_peak_balance` was always initialized with hardcoded `test_starting_balance_usdt=10000` on startup, ignoring persisted virtual balance. Now reads `data/virtual_balance_{mode}.json` before creating RiskManager; if it exists, uses persisted balance as initial_balance → peak starts at current balance → zero drawdown on startup. Prevents 50% hard stop after running session that dropped balance to 5000 USDT. (commit `1d25608`)
+2. **Virtual balance persistence working** — bot on server (185.237.14.105) virtual balance was reset to 10,000 USDT; bot now running in TEST mode. Can evaluate multi-session behavior.
+3. **Infrastructure updated** — Server migrated to 185.237.14.105 (Kamatera) with SSH key ~/.ssh/id_ed25519. `scripts/push.sh` deploy script created.
+4. **API route for runtime-generated files** — Previous session created `/api/public-file` route in Next.js to bypass build manifest; all dynamic file fetches migrated (bot_state, risk_state, alert_state, backtest_results, results).
+
+**Immediate next action**: User to verify bot stability on server over next 1–2 sessions; then evaluate results and decide next feature work.
+
+**Key state**: Phase 3.10 fully implemented. Bot can track balance across restarts. Server infra ready for live testing.
 
 ---
 
@@ -238,6 +262,7 @@ Solution: `Analyzer` maintains `_all_points` — a list that accumulates every d
 - **Testnet price spikes**: Testnet produces artificial prices (e.g. 83,000 when real BTC ~75,000). These form valid-looking L2 swing points in history. Dashboard shows them accurately.
 - **Multiple bot instances**: Two concurrent `python main.py` processes race to write `results.json` and the kline cache. Always kill old process before starting new one.
 - **Cache corruption**: If a bot instance is killed mid-write, the cache JSON can truncate. Next run logs "No cache found" and re-fetches 1000 klines from testnet automatically.
+- **RiskManager peak_balance persistence (FIXED in session 17)**: Was being reset to hardcoded value on every restart, triggering hard stops. Now initializes from persisted virtual balance file.
 
 ---
 

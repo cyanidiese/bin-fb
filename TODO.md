@@ -195,12 +195,29 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] SL order cancelled before any software-triggered market close
 - [x] All order closes (TP/SL, bulk-close, single-close) recorded to `real_orders_{symbol}_{mode}.json`
 - [x] `seed_from_backtest` skips symbol if already in efficiency file
+- [x] RiskManager peak_balance persistence bug fix — initialize from `data/virtual_balance_{mode}.json`
+- [x] `/api/public-file` route for runtime-generated JSON files (bypass Next.js build manifest)
 - [ ] Allocation weight step 0.01 + initial rebalance on symbol add
 - [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
 - [ ] Fix `.env` — change `TRADING_MODE=testnet` → `TRADING_MODE=test` (currently warns on startup)
 - [ ] Apply Global Capital Rules recommendation to risk_config.json (user has proposal, not yet applied)
-- [ ] Deploy session-clearing + virtual tracker changes to server (pending user test confirmation)
 - [ ] Archive viewer in dashboard (possible future: browse archived sessions)
+
+## Phase 3.9+ — Rank-Based Virtual Pools & Telegram Cooldown Config (session 18)
+
+- [x] Rank-based virtual pools: ranks 2–6, one balance per rank (independent), evict on rank change
+- [x] Real/virtual balance strict separation (virtual pools never touch RiskManager)
+- [x] Remove `_MAX_PER_DIRECTION` guard and `_loss_cooldowns` (no longer needed)
+- [x] Configurable Telegram cooldowns: `emergency_repeat_interval_s` + `warning_repeat_interval_s` in risk_config
+- [x] Notifier: emergency/warning repeat intervals as constructor params (not hardcoded)
+- [x] TelegramSettings widget: two new dropdowns for emergency/warning cooldowns
+- [x] Trades page: "Rank" + "V.Bal" columns in preset table
+- [x] Trades page: virtualBalance removed from header
+- [x] `/api/trades` returns rank_orders, rank_balances, preset_ranks
+- [x] `/api/trades/balances` returns rankBalances (no virtualBalance)
+- [ ] Reset hard stop on server (manual: user must dismiss via Risk page dashboard)
+- [ ] Update `test_virtual_order_simulator.py` for new rank-based internals (Tester task)
+- [ ] Consider XAUUSDT removal (gold is highly correlated to USD macro, may not fit bot strategy)
 
 ## Phase 3.9 — Trades Page & Virtual Order Simulation
 
@@ -229,11 +246,13 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 **Tests:**
 - [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
 
-**Session 2026-05-14 refinements:**
+**Session 2026-05-14 refinements (session 16–17):**
 - [x] Virtual tracker `seed_from_backtest` redesign — trade_count vs seeded_winning_usdt separation
 - [x] Raise `_MIN_TRADES` from 4 to 8 — more conservative maturation threshold
 - [x] Session data clearing on bot start — archive old real_orders files instead of delete
 - [x] Hide virtual-only checkbox on Trades page — hide seeded orders with no runtime trades
+- [x] Fix RiskManager hard stop on restart — read persisted balance before initializing peak
+- [x] Cross-Symbol Comparison showing only 5 symbols (caused by 404 on runtime files) — fixed with /api/public-file route
 
 ## Phase 3.10 — Balance & Leverage Progression ✅ COMPLETE (2026-05-10)
 

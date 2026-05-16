@@ -243,12 +243,33 @@ export interface VirtualSummaryEntry {
   trade_count: number;
 }
 
+export interface RankOrder {
+  preset_name: string;
+  rank: number;
+  side: 'BUY' | 'SELL';
+  entry_price: number;
+  tp: number;
+  sl: number;
+  quantity: number;
+  leverage: number;
+  scenario: string | null;
+  open_time: string;
+  status: 'open' | 'closed';
+  close_price: number | null;
+  close_time: string | null;
+  pnl_usdt: number | null;
+  result: 'win' | 'loss' | 'partial' | 'trail' | 'rank_change' | 'insufficient_presets' | 'closed_early' | null;
+  rank_balance_at_open: number | null;
+  rank_balance_after: number | null;
+}
+
 export interface TradesData {
   symbol: string;
   mode: string;
   best_preset: string | null;
   all_preset_names: string[];
   real_orders: RealOrder[];
-  virtual_summary: Record<string, VirtualSummaryEntry>;
-  virtual_orders: VirtualOrder[];
+  rank_orders: Record<string, RankOrder[]>;   // key = rank number as string e.g. "2", "3"
+  rank_balances: Record<string, number>;       // key = rank number as string
+  preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
 }

@@ -7,6 +7,8 @@ export default function TelegramSettings() {
   const [telegramStatus, setTelegramStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [telegramError, setTelegramError] = useState('')
   const [notifyInterval, setNotifyInterval] = useState(120)
+  const [emergencyRepeat, setEmergencyRepeat] = useState(1800)
+  const [warningRepeat, setWarningRepeat] = useState(14400)
   const [testMsgType, setTestMsgType] = useState('connection')
 
   useEffect(() => {
@@ -15,6 +17,8 @@ export default function TelegramSettings() {
       if (d.config?.telegram_notify_interval_s != null) {
         setNotifyInterval(Number(d.config.telegram_notify_interval_s))
       }
+      if (d.config?.emergency_repeat_interval_s != null) setEmergencyRepeat(Number(d.config.emergency_repeat_interval_s))
+      if (d.config?.warning_repeat_interval_s != null) setWarningRepeat(Number(d.config.warning_repeat_interval_s))
     }).catch(() => {})
   }, [])
 
@@ -34,6 +38,16 @@ export default function TelegramSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ telegram_notify_interval_s: value }),
     })
+  }
+
+  async function saveEmergencyRepeat(value: number) {
+    await fetch('/api/risk', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emergency_repeat_interval_s: value }) })
+  }
+
+  async function saveWarningRepeat(value: number) {
+    await fetch('/api/risk', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ warning_repeat_interval_s: value }) })
   }
 
   async function testTelegram() {
@@ -96,6 +110,26 @@ export default function TelegramSettings() {
             <option value={120}>2 minutes</option>
             <option value={300}>5 minutes</option>
             <option value={600}>10 minutes</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Emergency repeat cooldown (same message)</label>
+          <select value={emergencyRepeat} onChange={e => { const v = Number(e.target.value); setEmergencyRepeat(v); saveEmergencyRepeat(v) }}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500">
+            <option value={300}>5 minutes</option>
+            <option value={900}>15 minutes</option>
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>1 hour</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Warning repeat cooldown (same message)</label>
+          <select value={warningRepeat} onChange={e => { const v = Number(e.target.value); setWarningRepeat(v); saveWarningRepeat(v) }}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-indigo-500">
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>1 hour</option>
+            <option value={7200}>2 hours</option>
+            <option value={14400}>4 hours</option>
           </select>
         </div>
         <div>

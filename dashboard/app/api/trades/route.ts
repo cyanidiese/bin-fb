@@ -16,6 +16,8 @@ function currentMode(): string {
   return data.mode ?? 'test'
 }
 
+const RANK_MAX = 6
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const symbol = searchParams.get('symbol')?.toUpperCase()
@@ -25,15 +27,13 @@ export async function GET(req: NextRequest) {
 
   const mode = searchParams.get('mode') ?? currentMode()
 
-  const realOrdersPath    = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
-  const efficiencyPath    = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
-  const virtualOrdersPath = path.join(BOT_ROOT, 'data', `virtual_orders_${symbol}_${mode}.json`)
-  const backtestPath      = path.join(BOT_ROOT, 'dashboard', 'public', `backtest_results_${symbol}.json`)
+  const realOrdersPath = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
+  const efficiencyPath = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
+  const backtestPath   = path.join(BOT_ROOT, 'dashboard', 'public', `backtest_results_${symbol}.json`)
 
-  const realOrders   = readJson(realOrdersPath, []) as unknown[]
-  const efficiency   = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }>>
-  const virtualOrders = readJson(virtualOrdersPath, []) as unknown[]
-  const backtest     = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
+  const realOrders = readJson(realOrdersPath, []) as unknown[]
+  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }>>
+  const backtest   = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
 
   const symbolEfficiency = efficiency[symbol] ?? {}
 
@@ -52,13 +52,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Compute preset ranks for this symbol (sorted by efficiency descending)
+  const presetRanks: Record<string, number> = {}
+  const sortedByEff = Object.entries(symbolEfficiency)
+    .sort(([, a], [, b]) => b.total_winning_usdt - a.total_winning_usdt)
+  sortedByEff.forEach(([name], idx) => {
+    presetRanks[name] = idx + 1  // rank 1 = best
+  })
+
+  // Read rank orders (ranks 2–RANK_MAX) for this symbol
+  const rankOrders: Record<string, unknown[]> = {}
+  const rankBalances: Record<string, number> = {}
+  for (let rank = 2; rank <= RANK_MAX; rank++) {
+    const ordersPath = path.join(BOT_ROOT, 'data', `virtual_orders_rank${rank}_${symbol}_${mode}.json`)
+    rankOrders[String(rank)] = readJson(ordersPath, []) as unknown[]
+    const balPath = path.join(BOT_ROOT, 'data', `virtual_balance_rank${rank}_${mode}.json`)
+    const balData = readJson(balPath, {}) as Record<string, number>
+    rankBalances[String(rank)] = balData.balance ?? 0
+  }
+
   return NextResponse.json({
     symbol,
     mode,
     best_preset: bestPreset,
     all_preset_names: allPresetNames,
     real_orders: realOrders,
-    virtual_summary: symbolEfficiency,
-    virtual_orders: virtualOrders,
+    rank_orders: rankOrders,
+    rank_balances: rankBalances,
+    preset_ranks: presetRanks,
   })
 }

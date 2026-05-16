@@ -10,6 +10,8 @@ function currentMode(): string {
   } catch { return 'test' }
 }
 
+const RANK_MAX = 6
+
 export async function GET() {
   const mode = currentMode()
 
@@ -21,13 +23,15 @@ export async function GET() {
     realBalance = typeof d.balance === 'number' ? d.balance : null
   } catch { /* no risk_state yet */ }
 
-  let virtualBalance: number | null = null
-  try {
-    const d = JSON.parse(
-      fs.readFileSync(path.join(BOT_ROOT, 'data', `virtual_balance_${mode}.json`), 'utf8'),
-    )
-    virtualBalance = typeof d.virtual_balance === 'number' ? d.virtual_balance : null
-  } catch { /* no virtual balance yet */ }
+  const rankBalances: Record<string, number> = {}
+  for (let rank = 2; rank <= RANK_MAX; rank++) {
+    try {
+      const d = JSON.parse(
+        fs.readFileSync(path.join(BOT_ROOT, 'data', `virtual_balance_rank${rank}_${mode}.json`), 'utf8'),
+      )
+      rankBalances[String(rank)] = typeof d.balance === 'number' ? d.balance : 0
+    } catch { /* no file yet */ }
+  }
 
-  return NextResponse.json({ mode, realBalance, virtualBalance })
+  return NextResponse.json({ mode, realBalance, rankBalances })
 }

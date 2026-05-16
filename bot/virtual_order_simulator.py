@@ -21,16 +21,24 @@ logger = logging.getLogger(__name__)
 
 _MAX_CLOSED = 500
 _DEFAULT_MIN_NOTIONAL = 5.0
-_LOSS_COOLDOWN_SECONDS = 2 * 3600   # 2 hours before same preset+direction can re-enter
-_MAX_PER_DIRECTION = 5              # max concurrent virtual orders per direction per symbol
+_DEFAULT_RANK_MAX = 6   # track ranks 2 through 6 (rank 1 = real order)
 
 
 class VirtualOrderSimulator:
     """
-    Tracks virtual positions for all non-best presets.
-    Uses a shared virtual balance pool sized by Option A: min_notional / leverage.
-    Presets are sorted by efficiency before opening so capital goes to best performers first.
-    Persists virtual_orders_{symbol}_{mode}.json and virtual_balance_{mode}.json.
+    Tracks rank-based virtual positions for the top N non-best presets per symbol.
+
+    Rank 1 = best preset → real order (not tracked here).
+    Ranks 2..rank_max → each rank has one independent balance pool shared across
+    all symbols.  At any candle close, each symbol contributes at most one open
+    position per rank.
+
+    When the preset holding rank N for a symbol changes (efficiency rankings
+    shift), the existing position is evicted at the current price and the new
+    rank-N preset opens fresh.  This means the rank-N pool always tracks
+    "how would you do if you always traded whichever preset is currently rank N?"
+
+    Real balance (RiskManager) is never touched here.
     """
 
     def __init__(
@@ -44,6 +52,7 @@ class VirtualOrderSimulator:
         min_notionals: dict[str, float],
         get_allocation: Optional[Callable[[str], float]] = None,
         get_scenario: Optional[Callable[[], str]] = None,
+        rank_max: int = _DEFAULT_RANK_MAX,
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
@@ -53,45 +62,67 @@ class VirtualOrderSimulator:
         self._min_notionals = min_notionals
         self._get_allocation = get_allocation
         self._get_scenario = get_scenario
-        # symbol -> {preset_name: order_record_dict}
-        self._open: dict[str, dict[str, dict]] = {}
-        # symbol -> {preset_name: FakeOrder}
-        self._fake_orders: dict[str, dict[str, FakeOrder]] = {}
-        # per-symbol write locks to prevent concurrent _append_closed races
-        self._write_locks: dict[str, asyncio.Lock] = {}
-        # symbol -> {preset_name: {side, expires_at}} — loss cooldown state
-        self._loss_cooldowns: dict[str, dict[str, dict]] = {}
+        self._rank_max = rank_max
+        self._initial_balance = initial_balance
 
-        self._virtual_balance: float = initial_balance
-        self._virtual_committed: float = 0.0
-        self._balance_path = project_root / 'data' / f'virtual_balance_{mode}.json'
-        self._load_virtual_balance()
+        # rank -> symbol -> open order record
+        self._rank_open: dict[int, dict[str, dict]] = {}
+        # rank -> symbol -> FakeOrder
+        self._rank_fake: dict[int, dict[str, FakeOrder]] = {}
+        # rank -> current balance
+        self._rank_balance: dict[int, float] = {}
+        # rank -> asyncio.Lock (for file writes)
+        self._rank_locks: dict[int, asyncio.Lock] = {}
 
-    def _load_virtual_balance(self) -> None:
-        if not self._balance_path.exists():
+        for r in range(2, self._rank_max + 1):
+            self._rank_open[r] = {}
+            self._rank_fake[r] = {}
+            self._rank_balance[r] = initial_balance
+            self._rank_locks[r] = asyncio.Lock()
+            self._load_rank_balance(r)
+
+    # ------------------------------------------------------------------ #
+    # Balance persistence                                                  #
+    # ------------------------------------------------------------------ #
+
+    def _rank_balance_path(self, rank: int) -> Path:
+        return self._project_root / 'data' / f'virtual_balance_rank{rank}_{self._mode}.json'
+
+    def _rank_orders_path(self, rank: int, symbol: str) -> Path:
+        return self._project_root / 'data' / f'virtual_orders_rank{rank}_{symbol}_{self._mode}.json'
+
+    def _load_rank_balance(self, rank: int) -> None:
+        path = self._rank_balance_path(rank)
+        if not path.exists():
             return
         try:
-            data = json.loads(self._balance_path.read_text())
-            self._virtual_balance = float(data.get('virtual_balance', self._virtual_balance))
-            self._virtual_committed = float(data.get('virtual_committed', 0.0))
+            data = json.loads(path.read_text())
+            self._rank_balance[rank] = float(data.get('balance', self._rank_balance[rank]))
         except Exception as exc:
-            logger.warning(f"VirtualOrderSimulator: failed to load balance state: {exc}")
+            logger.warning(f"Rank-{rank} balance load failed: {exc}")
 
-    def _save_virtual_balance(self) -> None:
-        self._balance_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._balance_path.with_suffix('.json.tmp')
-        tmp.write_text(json.dumps({
-            'virtual_balance': self._virtual_balance,
-            'virtual_committed': self._virtual_committed,
-        }))
-        tmp.replace(self._balance_path)
+    def _save_rank_balance(self, rank: int) -> None:
+        path = self._rank_balance_path(rank)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps({'balance': self._rank_balance[rank]}))
+        tmp.replace(path)
+
+    def get_rank_balances(self) -> dict[int, float]:
+        """Return a snapshot of all rank pool balances."""
+        return dict(self._rank_balance)
 
     def apply_real_balance_if_fresh(self, balance: float) -> None:
-        """Seed virtual balance from real account balance on first start for this mode."""
-        if not self._balance_path.exists() and balance > 0:
-            self._virtual_balance = balance
-            self._save_virtual_balance()
-            logger.info(f"Virtual balance seeded from real account: {balance:.2f} USDT")
+        """Seed each rank pool from the real account balance on first start."""
+        for rank in range(2, self._rank_max + 1):
+            if not self._rank_balance_path(rank).exists() and balance > 0:
+                self._rank_balance[rank] = balance
+                self._save_rank_balance(rank)
+                logger.info(f"Rank-{rank} virtual balance seeded from real account: {balance:.2f} USDT")
+
+    # ------------------------------------------------------------------ #
+    # Candle close — open / evict rank positions                          #
+    # ------------------------------------------------------------------ #
 
     async def on_candle_close(
         self,
@@ -100,158 +131,154 @@ class VirtualOrderSimulator:
         best_preset_name: Optional[str],
         base_settings: 'Settings',
     ) -> None:
-        open_for_symbol = self._open.setdefault(symbol, {})
-        fake_for_symbol = self._fake_orders.setdefault(symbol, {})
-
-        lev = self._get_leverage(symbol)
-        min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
-        use_allocation = self._get_allocation is not None
-
-        # Sort presets by efficiency descending — best preset gets capital first
         sorted_presets = sorted(
             self._all_presets.items(),
             key=lambda kv: self._virtual_tracker.get_preset_efficiency(symbol, kv[0]),
             reverse=True,
         )
+        current_price = analyzer.get_current_price()
+        lev = self._get_leverage(symbol)
+        min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
 
-        for preset_name, overrides in sorted_presets:
-            if preset_name == best_preset_name:
-                continue  # handled as real order
-            if preset_name in open_for_symbol:
-                continue  # already open for this preset
-
-            if use_allocation:
-                margin = self._get_allocation(symbol)  # type: ignore[misc]
-            else:
-                margin = min_notional / lev if lev > 0 else min_notional
-                available = self._virtual_balance - self._virtual_committed
-                if available < margin:
-                    logger.debug(
-                        f"[{symbol}][{preset_name}] Virtual skip: "
-                        f"available={available:.2f} < margin={margin:.2f}"
-                    )
-                    continue
-
-            try:
-                preset_settings = dataclasses.replace(base_settings, **overrides)
-                engine = RecommendationEngine(preset_settings)
-                rec = engine.generate(analyzer.get_trend(), analyzer.get_current_price())
-            except Exception as exc:
-                logger.debug(f"[{symbol}][{preset_name}] Recommendation error: {exc}")
+        for rank in range(2, self._rank_max + 1):
+            rank_idx = rank - 1  # 0-based: rank 1 = idx 0 (best), rank 2 = idx 1, …
+            if rank_idx >= len(sorted_presets):
+                # Not enough presets → evict if anything open
+                if symbol in self._rank_open[rank]:
+                    await self._evict(symbol, rank, current_price, 'insufficient_presets')
                 continue
 
-            if rec is None:
-                continue
+            preset_name, overrides = sorted_presets[rank_idx]
 
-            side = rec.getSide()
-            now_ts = datetime.now(timezone.utc).timestamp()
+            # Evict if the preset at this rank changed
+            existing = self._rank_open[rank].get(symbol)
+            if existing and existing['preset_name'] != preset_name:
+                await self._evict(symbol, rank, current_price, 'rank_change')
 
-            # Loss cooldown: skip if this preset lost in the same direction recently
-            cd = self._loss_cooldowns.get(symbol, {}).get(preset_name)
-            if cd and cd['expires_at'] > now_ts and cd['side'] == side:
-                logger.debug(
-                    f"[{symbol}][{preset_name}] Skipping: loss cooldown for {side} "
-                    f"({int((cd['expires_at'] - now_ts) / 60)}m remaining)"
+            # Open if slot is empty
+            if symbol not in self._rank_open[rank]:
+                await self._try_open(
+                    symbol, rank, preset_name, overrides,
+                    base_settings, lev, min_notional, analyzer,
                 )
-                continue
 
-            # Per-direction cap: no more than _MAX_PER_DIRECTION open virtuals per direction
-            side_count = sum(1 for r in open_for_symbol.values() if r.get('side') == side)
-            if side_count >= _MAX_PER_DIRECTION:
-                logger.debug(
-                    f"[{symbol}] Skipping {preset_name}: {side} full "
-                    f"({side_count}/{_MAX_PER_DIRECTION})"
-                )
-                continue
+    async def _evict(self, symbol: str, rank: int, price: float, reason: str) -> None:
+        record = self._rank_open[rank].pop(symbol, None)
+        fake = self._rank_fake[rank].pop(symbol, None)
+        if record is None:
+            return
+        close_price = (fake.close_price if fake and fake.close_price else None) or price
+        pnl = self._calc_pnl(record, close_price)
+        self._rank_balance[rank] += pnl
+        self._save_rank_balance(rank)
+        record.update({
+            'status': 'closed',
+            'close_price': close_price,
+            'close_time': datetime.now(timezone.utc).isoformat(),
+            'pnl_usdt': pnl,
+            'result': reason,
+            'rank_balance_after': self._rank_balance[rank],
+        })
+        await self._append_rank_closed(symbol, rank, record)
+        logger.info(
+            f"[{symbol}] Rank-{rank} evicted ({reason}): "
+            f"{record['preset_name']} pnl={pnl:.2f} bal={self._rank_balance[rank]:.2f}"
+        )
 
-            entry = rec.getEntryPrice()
-            tp = rec.getTarget()
-            sl = rec.getStop() or 0.0
-            if entry <= 0 or tp <= 0:
-                continue
+    async def _try_open(
+        self,
+        symbol: str,
+        rank: int,
+        preset_name: str,
+        overrides: dict,
+        base_settings: 'Settings',
+        lev: int,
+        min_notional: float,
+        analyzer: 'Analyzer',
+    ) -> None:
+        try:
+            preset_settings = dataclasses.replace(base_settings, **overrides)
+            engine = RecommendationEngine(preset_settings)
+            rec = engine.generate(analyzer.get_trend(), analyzer.get_current_price())
+        except Exception as exc:
+            logger.debug(f"[{symbol}][{preset_name}] Rank-{rank} rec error: {exc}")
+            return
 
-            if use_allocation:
-                quantity = (margin * lev) / entry if entry > 0 else 0.0
-            else:
-                quantity = min_notional / entry if entry > 0 else 0.0
-            if quantity <= 0:
-                continue
+        if rec is None:
+            return
 
-            if not use_allocation:
-                self._virtual_committed += margin
-            partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
-            trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
+        entry = rec.getEntryPrice()
+        tp = rec.getTarget()
+        sl = rec.getStop() or 0.0
+        if entry <= 0 or tp <= 0:
+            return
 
-            record = {
-                'preset_name': preset_name,
-                'side': side,
-                'entry_price': entry,
-                'tp': tp,
-                'sl': sl,
-                'quantity': quantity,
-                'leverage': lev,
-                'virtual_margin': margin,
-                'scenario': self._get_scenario() if self._get_scenario else '',
-                'virtual_balance_at_open': self._virtual_balance,
-                'open_time': datetime.now(timezone.utc).isoformat(),
-                'status': 'open',
-                'close_price': None,
-                'close_time': None,
-                'pnl_usdt': None,
-                'result': None,
-            }
-            self._save_virtual_balance()
-            open_for_symbol[preset_name] = record
-            fake_for_symbol[preset_name] = FakeOrder(
-                side=side,
-                entry_price=entry,
-                tp=tp,
-                sl=sl if sl else entry * (0.99 if side == 'BUY' else 1.01),
-                level=rec.getLevel(),
-                signal_type=rec.getType().value,
-                candle_index=0,
-                partial_take_pct=partial_pct,
-                trailing_stop_pct=trail_pct,
-            )
-            logger.debug(f"[{symbol}] Virtual order opened: {preset_name} {side} @ {entry}")
+        quantity = min_notional / entry if entry > 0 else 0.0
+        if quantity <= 0:
+            return
+
+        side = rec.getSide()
+        partial_pct = float(getattr(base_settings, 'partial_take_pct', 0.0))
+        trail_pct = float(getattr(base_settings, 'trailing_stop_pct', 0.0))
+
+        record = {
+            'preset_name': preset_name,
+            'rank': rank,
+            'side': side,
+            'entry_price': entry,
+            'tp': tp,
+            'sl': sl,
+            'quantity': quantity,
+            'leverage': lev,
+            'scenario': self._get_scenario() if self._get_scenario else '',
+            'rank_balance_at_open': self._rank_balance[rank],
+            'open_time': datetime.now(timezone.utc).isoformat(),
+            'status': 'open',
+            'close_price': None,
+            'close_time': None,
+            'pnl_usdt': None,
+            'result': None,
+        }
+        self._rank_open[rank][symbol] = record
+        self._rank_fake[rank][symbol] = FakeOrder(
+            side=side,
+            entry_price=entry,
+            tp=tp,
+            sl=sl if sl else entry * (0.99 if side == 'BUY' else 1.01),
+            level=rec.getLevel(),
+            signal_type=rec.getType().value,
+            candle_index=0,
+            partial_take_pct=partial_pct,
+            trailing_stop_pct=trail_pct,
+        )
+        logger.debug(
+            f"[{symbol}] Rank-{rank} opened: {preset_name} {side} @ {entry} "
+            f"bal={self._rank_balance[rank]:.2f}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Price tick — check TP/SL                                            #
+    # ------------------------------------------------------------------ #
 
     async def check_prices(self, symbol: str, price: float) -> list[dict]:
-        closed = []
-        open_for_symbol = self._open.get(symbol, {})
-        fake_for_symbol = self._fake_orders.get(symbol, {})
-
-        for preset_name in list(open_for_symbol.keys()):
-            fake = fake_for_symbol.get(preset_name)
-            if fake is None:
-                open_for_symbol.pop(preset_name, None)
+        closed: list[dict] = []
+        for rank in range(2, self._rank_max + 1):
+            fake = self._rank_fake[rank].get(symbol)
+            record = self._rank_open[rank].get(symbol)
+            if fake is None or record is None:
                 continue
 
             result = fake.check_price(price)
             if result is None:
                 continue
 
-            record = open_for_symbol.pop(preset_name)
-            fake_for_symbol.pop(preset_name, None)
+            self._rank_open[rank].pop(symbol)
+            self._rank_fake[rank].pop(symbol)
 
             close_price = fake.close_price or price
             pnl = self._calc_pnl(record, close_price)
-
-            virtual_margin = record.get('virtual_margin', 0.0)
-            if self._get_allocation is None:
-                self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
-            self._virtual_balance += pnl
-            self._save_virtual_balance()
-
-            if result == 'loss':
-                expires = datetime.now(timezone.utc).timestamp() + _LOSS_COOLDOWN_SECONDS
-                self._loss_cooldowns.setdefault(symbol, {})[preset_name] = {
-                    'side': record['side'],
-                    'expires_at': expires,
-                }
-                logger.info(
-                    f"[{symbol}][{preset_name}] Loss cooldown set for {record['side']} "
-                    f"(2 h)"
-                )
+            self._rank_balance[rank] += pnl
+            self._save_rank_balance(rank)
 
             record.update({
                 'status': 'closed',
@@ -259,56 +286,64 @@ class VirtualOrderSimulator:
                 'close_time': datetime.now(timezone.utc).isoformat(),
                 'pnl_usdt': pnl,
                 'result': result,
-                'virtual_balance_after_close': self._virtual_balance,
+                'rank_balance_after': self._rank_balance[rank],
             })
-            await self._append_closed(symbol, record)
+            await self._append_rank_closed(symbol, rank, record)
             closed.append({
-                'preset_name': preset_name,
+                'preset_name': record['preset_name'],
+                'rank': rank,
                 'pnl_usdt': pnl,
                 'result': result,
                 'entry_price': record['entry_price'],
                 'close_price': close_price,
                 'side': record['side'],
             })
-            logger.debug(f"[{symbol}] Virtual order closed: {preset_name} {result} pnl={pnl:.2f}")
-
+            logger.debug(
+                f"[{symbol}] Rank-{rank} closed: {record['preset_name']} "
+                f"{result} pnl={pnl:.2f} bal={self._rank_balance[rank]:.2f}"
+            )
         return closed
 
-    async def close_all_open(self, symbols: list[str], feed: 'DataFeed') -> None:
-        for symbol in symbols:
-            open_for_symbol = self._open.get(symbol, {})
-            if not open_for_symbol:
-                continue
-            try:
-                ticker = await asyncio.to_thread(
-                    feed.client.futures_symbol_ticker, symbol=symbol
-                )
-                close_price = float(ticker.get('price', 0) or 0)
-            except Exception as exc:
-                logger.warning(f"[{symbol}] Failed to fetch price for virtual close: {exc}")
-                close_price = 0.0
+    # ------------------------------------------------------------------ #
+    # Shutdown — close all open positions at market                       #
+    # ------------------------------------------------------------------ #
 
-            for preset_name, record in list(open_for_symbol.items()):
-                row_close = close_price if close_price > 0 else record['entry_price']
-                pnl = self._calc_pnl(record, row_close) if close_price > 0 else 0.0
-                virtual_margin = record.get('virtual_margin', 0.0)
-                if self._get_allocation is None:
-                    self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
-                self._virtual_balance += pnl
+    async def close_all_open(self, symbols: list[str], feed: 'DataFeed') -> None:
+        price_cache: dict[str, float] = {}
+        for symbol in symbols:
+            for rank in range(2, self._rank_max + 1):
+                if symbol not in self._rank_open[rank]:
+                    continue
+                if symbol not in price_cache:
+                    try:
+                        ticker = await asyncio.to_thread(
+                            feed.client.futures_symbol_ticker, symbol=symbol
+                        )
+                        price_cache[symbol] = float(ticker.get('price', 0) or 0)
+                    except Exception as exc:
+                        logger.warning(f"[{symbol}] Price fetch for rank-{rank} close failed: {exc}")
+                        price_cache[symbol] = 0.0
+                price = price_cache[symbol]
+                record = self._rank_open[rank].pop(symbol)
+                self._rank_fake[rank].pop(symbol, None)
+                close_price = price if price > 0 else record['entry_price']
+                pnl = self._calc_pnl(record, close_price) if price > 0 else 0.0
+                self._rank_balance[rank] += pnl
                 record.update({
                     'status': 'closed',
-                    'close_price': row_close,
+                    'close_price': close_price,
                     'close_time': datetime.now(timezone.utc).isoformat(),
                     'pnl_usdt': pnl,
                     'result': 'closed_early',
-                    'virtual_balance_after_close': self._virtual_balance,
+                    'rank_balance_after': self._rank_balance[rank],
                 })
-                await self._append_closed(symbol, record)
+                await self._append_rank_closed(symbol, rank, record)
+        self._save_all_rank_balances()
+        logger.info("All rank virtual positions closed (shutdown)")
 
-            self._save_virtual_balance()
-            open_for_symbol.clear()
-            self._fake_orders.get(symbol, {}).clear()
-            logger.info(f"[{symbol}] All virtual orders closed (bot stop/mode switch)")
+    # ------------------------------------------------------------------ #
+    # Helpers                                                              #
+    # ------------------------------------------------------------------ #
 
     def _calc_pnl(self, record: dict, close_price: float) -> float:
         entry = record['entry_price']
@@ -317,17 +352,13 @@ class VirtualOrderSimulator:
             return (close_price - entry) * qty
         return (entry - close_price) * qty
 
-    def _path(self, symbol: str) -> Path:
-        return self._project_root / 'data' / f'virtual_orders_{symbol}_{self._mode}.json'
+    def _save_all_rank_balances(self) -> None:
+        for rank in range(2, self._rank_max + 1):
+            self._save_rank_balance(rank)
 
-    def _get_write_lock(self, symbol: str) -> asyncio.Lock:
-        if symbol not in self._write_locks:
-            self._write_locks[symbol] = asyncio.Lock()
-        return self._write_locks[symbol]
-
-    async def _append_closed(self, symbol: str, record: dict) -> None:
-        async with self._get_write_lock(symbol):
-            path = self._path(symbol)
+    async def _append_rank_closed(self, symbol: str, rank: int, record: dict) -> None:
+        async with self._rank_locks[rank]:
+            path = self._rank_orders_path(rank, symbol)
             path.parent.mkdir(parents=True, exist_ok=True)
             existing: list = []
             if path.exists():
@@ -335,11 +366,10 @@ class VirtualOrderSimulator:
                     existing = json.loads(path.read_text())
                 except Exception:
                     existing = []
-            open_records = [r for r in existing if r.get('status') == 'open']
-            closed_records = [r for r in existing if r.get('status') != 'open']
-            closed_records.append(record)
-            if len(closed_records) > _MAX_CLOSED:
-                closed_records = closed_records[-_MAX_CLOSED:]
+            closed = [r for r in existing if r.get('status') != 'open']
+            closed.append(record)
+            if len(closed) > _MAX_CLOSED:
+                closed = closed[-_MAX_CLOSED:]
             tmp = path.with_suffix('.json.tmp')
-            tmp.write_text(json.dumps(open_records + closed_records))
+            tmp.write_text(json.dumps(closed))
             tmp.replace(path)

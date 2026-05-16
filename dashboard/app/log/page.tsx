@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react'
 
 type LogEntry = { id: string; timestamp: string; level: string; title: string; detail: string; source: string }
+type Alert = { id: string; level: string }
+type AlertState = { alerts: Alert[]; dismissed_ids: string[] }
 
 interface LogFile {
   name: string
@@ -30,13 +32,22 @@ export default function LogPage() {
   const [keepInput, setKeepInput] = useState('50')
   const [trimming, setTrimming] = useState(false)
   const [files, setFiles] = useState<LogFile[]>([])
+  const [alertState, setAlertState] = useState<AlertState>({ alerts: [], dismissed_ids: [] })
+  const [clearing, setClearing] = useState(false)
 
   const reload = () =>
     fetch('/api/log').then(r => r.json()).then(setEntries).catch(() => {})
 
+  const reloadAlerts = () =>
+    fetch('/api/public-file?f=alert_state.json')
+      .then(r => r.ok ? r.json() : { alerts: [], dismissed_ids: [] })
+      .then(setAlertState)
+      .catch(() => {})
+
   useEffect(() => {
     localStorage.setItem('log_last_read', new Date().toISOString())
     reload()
+    reloadAlerts()
     fetch('/api/logs')
       .then(r => r.json())
       .then(d => setFiles(d.files ?? []))
@@ -58,6 +69,17 @@ export default function LogPage() {
     setTrimming(false)
   }
 
+  const handleClearAlerts = async () => {
+    setClearing(true)
+    await fetch('/api/alerts/dismiss-all', { method: 'POST' }).catch(() => {})
+    await reloadAlerts()
+    setClearing(false)
+  }
+
+  const activeAlertCount = alertState.alerts.filter(
+    a => !alertState.dismissed_ids.includes(a.id) && ['warning', 'emergency'].includes(a.level)
+  ).length
+
   const visible = entries.filter(e => levels.has(e.level))
 
   return (
@@ -72,6 +94,15 @@ export default function LogPage() {
               {l.toUpperCase()}
             </button>
           ))}
+          {activeAlertCount > 0 && (
+            <button
+              onClick={handleClearAlerts}
+              disabled={clearing}
+              className="px-3 py-1 text-xs font-bold rounded bg-red-900 hover:bg-red-800 text-red-200 border border-red-700 disabled:opacity-50"
+            >
+              {clearing ? 'Clearing…' : `Clear ${activeAlertCount} alert${activeAlertCount !== 1 ? 's' : ''}`}
+            </button>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-slate-400">Keep latest</span>
             <input

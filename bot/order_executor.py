@@ -432,6 +432,7 @@ class OrderExecutor:
         Uses MARK_PRICE to avoid wick-triggered false SLs."""
         if self._feed is None or sl_price <= 0:
             return None
+        sl_price = await self.round_price(symbol, sl_price)
         client = self._feed.client
         close_side = 'SELL' if side == 'BUY' else 'BUY'
         try:
@@ -671,10 +672,18 @@ class OrderExecutor:
         rounded = float(d_qty.quantize(d_step, rounding=ROUND_DOWN))
         return max(rounded, min_qty) if rounded >= min_qty else 0.0
 
+    async def round_price(self, symbol: str, price: float) -> float:
+        """Round price to the symbol's PRICE_FILTER tick size."""
+        lot = await self._ensure_lot_size(symbol)
+        tick = lot['tick_size']
+        d_price = Decimal(str(price))
+        d_tick = Decimal(str(tick))
+        return float(d_price.quantize(d_tick, rounding=ROUND_DOWN))
+
     async def _ensure_lot_size(self, symbol: str) -> dict:
         if symbol in self._lot_cache:
             return self._lot_cache[symbol]
-        default = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0}
+        default = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.00001}
         if self._feed is None:
             return default
         try:
@@ -687,16 +696,26 @@ class OrderExecutor:
                     if ft == 'LOT_SIZE':
                         entry['step_size'] = float(f['stepSize'])
                         entry['min_qty'] = float(f['minQty'])
+                    elif ft == 'PRICE_FILTER':
+                        ts = float(f.get('tickSize', 0) or 0)
+                        if ts > 0:
+                            entry['tick_size'] = ts
                     elif ft == 'MIN_NOTIONAL':
                         entry['min_notional'] = float(f.get('notional') or f.get('minNotional') or 0)
                 self._lot_cache[sym] = {
-                    'step_size': entry.get('step_size', 0.001),
-                    'min_qty': entry.get('min_qty', 0.001),
+                    'step_size':   entry.get('step_size', 0.001),
+                    'min_qty':     entry.get('min_qty', 0.001),
                     'min_notional': entry.get('min_notional', 0.0),
+                    'tick_size':   entry.get('tick_size', 0.00001),
                 }
         except Exception as exc:
             logger.warning(f"Failed to fetch exchange info: {exc}")
-        return self._lot_cache.get(symbol, default)
+        cached = self._lot_cache.get(symbol, default)
+        logger.debug(
+            f"[{symbol}] lot filters: step={cached['step_size']} "
+            f"minQty={cached['min_qty']} tick={cached['tick_size']}"
+        )
+        return cached
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #

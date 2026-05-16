@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_CLOSED = 500
 _DEFAULT_MIN_NOTIONAL = 5.0
+_LOSS_COOLDOWN_SECONDS = 2 * 3600   # 2 hours before same preset+direction can re-enter
+_MAX_PER_DIRECTION = 5              # max concurrent virtual orders per direction per symbol
 
 
 class VirtualOrderSimulator:
@@ -57,6 +59,8 @@ class VirtualOrderSimulator:
         self._fake_orders: dict[str, dict[str, FakeOrder]] = {}
         # per-symbol write locks to prevent concurrent _append_closed races
         self._write_locks: dict[str, asyncio.Lock] = {}
+        # symbol -> {preset_name: {side, expires_at}} — loss cooldown state
+        self._loss_cooldowns: dict[str, dict[str, dict]] = {}
 
         self._virtual_balance: float = initial_balance
         self._virtual_committed: float = 0.0
@@ -139,6 +143,27 @@ class VirtualOrderSimulator:
             if rec is None:
                 continue
 
+            side = rec.getSide()
+            now_ts = datetime.now(timezone.utc).timestamp()
+
+            # Loss cooldown: skip if this preset lost in the same direction recently
+            cd = self._loss_cooldowns.get(symbol, {}).get(preset_name)
+            if cd and cd['expires_at'] > now_ts and cd['side'] == side:
+                logger.debug(
+                    f"[{symbol}][{preset_name}] Skipping: loss cooldown for {side} "
+                    f"({int((cd['expires_at'] - now_ts) / 60)}m remaining)"
+                )
+                continue
+
+            # Per-direction cap: no more than _MAX_PER_DIRECTION open virtuals per direction
+            side_count = sum(1 for r in open_for_symbol.values() if r.get('side') == side)
+            if side_count >= _MAX_PER_DIRECTION:
+                logger.debug(
+                    f"[{symbol}] Skipping {preset_name}: {side} full "
+                    f"({side_count}/{_MAX_PER_DIRECTION})"
+                )
+                continue
+
             entry = rec.getEntryPrice()
             tp = rec.getTarget()
             sl = rec.getStop() or 0.0
@@ -154,7 +179,6 @@ class VirtualOrderSimulator:
 
             if not use_allocation:
                 self._virtual_committed += margin
-            side = rec.getSide()
             partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
             trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
 
@@ -217,6 +241,17 @@ class VirtualOrderSimulator:
                 self._virtual_committed = max(0.0, self._virtual_committed - virtual_margin)
             self._virtual_balance += pnl
             self._save_virtual_balance()
+
+            if result == 'loss':
+                expires = datetime.now(timezone.utc).timestamp() + _LOSS_COOLDOWN_SECONDS
+                self._loss_cooldowns.setdefault(symbol, {})[preset_name] = {
+                    'side': record['side'],
+                    'expires_at': expires,
+                }
+                logger.info(
+                    f"[{symbol}][{preset_name}] Loss cooldown set for {record['side']} "
+                    f"(2 h)"
+                )
 
             record.update({
                 'status': 'closed',

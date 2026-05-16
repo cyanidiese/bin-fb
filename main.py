@@ -480,6 +480,8 @@ async def run() -> None:
         candle_ts = int(kline[0]) if kline else 0
         candidates = []
         for sym in symbol_registry.get_symbols():
+            if symbol_registry.is_disabled(sym):
+                continue
             if order_executor.get_state(sym) != OrderState.IDLE:
                 continue
             best_sym = (

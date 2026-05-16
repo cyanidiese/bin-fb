@@ -131,6 +131,8 @@ export default function TradesPage() {
   const [error, setError] = useState<string | null>(null)
   const [klines, setKlines] = useState<Kline[]>([])
   const [symbolsWithOrders, setSymbolsWithOrders] = useState<string[]>([])
+  const [realBalance, setRealBalance] = useState<number | null>(null)
+  const [virtualBalance, setVirtualBalance] = useState<number | null>(null)
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -164,6 +166,18 @@ export default function TradesPage() {
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.symbols) setSymbolsWithOrders(d.symbols) })
       .catch(() => {})
+    const loadBalances = () =>
+      fetch('/api/trades/balances')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return
+          setRealBalance(d.realBalance ?? null)
+          setVirtualBalance(d.virtualBalance ?? null)
+        })
+        .catch(() => {})
+    loadBalances()
+    const interval = setInterval(loadBalances, 15_000)
+    return () => clearInterval(interval)
   }, [])
 
   const allRows = useMemo(() => data ? buildPresetRows(data) : [], [data])
@@ -254,7 +268,7 @@ export default function TradesPage() {
       {symbolsWithOrders.length > 0 && (
         <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
       )}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-white">{symbol} — Trades</h1>
         <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400">{data.mode}</span>
         {data.best_preset && (
@@ -262,6 +276,20 @@ export default function TradesPage() {
             Best: {data.best_preset}
           </span>
         )}
+        <div className="ml-auto flex items-center gap-3">
+          {realBalance !== null && (
+            <span className="text-xs text-gray-400">
+              Real: <span className="text-white font-semibold">${realBalance.toFixed(2)}</span>
+            </span>
+          )}
+          {virtualBalance !== null && (
+            <span className="text-xs text-gray-400">
+              Virtual: <span className={`font-semibold ${virtualBalance < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                ${virtualBalance.toFixed(2)}
+              </span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Preset Efficiency ── */}

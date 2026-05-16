@@ -90,7 +90,10 @@ class VirtualTracker:
         return best
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
-        return self._efficiency.get(symbol, {}).get(preset_name, {}).get('total_winning_usdt', 0.0)
+        stats = self._efficiency.get(symbol, {}).get(preset_name, {})
+        if stats.get('trade_count', 0) >= _MIN_TRADES:
+            return stats.get('total_winning_usdt', 0.0)
+        return stats.get('seeded_winning_usdt', 0.0)
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)

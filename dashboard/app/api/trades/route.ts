@@ -42,20 +42,29 @@ export async function GET(req: NextRequest) {
     ? Array.from(new Set([...Object.keys(backtest.presets), ...Object.keys(symbolEfficiency)]))
     : Object.keys(symbolEfficiency)
 
-  // Determine best preset: max total_winning_usdt with >= 4 trades
+  // Mirror VirtualTracker._MIN_TRADES: use live score once enough trades exist,
+  // otherwise fall back to the backtest-seeded score so ranking works from day 1.
+  const MIN_TRADES = 8
+  function effectiveScore(stats: { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }): number {
+    if ((stats.trade_count ?? 0) >= MIN_TRADES) return stats.total_winning_usdt
+    return stats.seeded_winning_usdt ?? 0
+  }
+
+  // Determine best preset: highest effective score > 0
   let bestPreset: string | null = null
-  let bestWinning = -Infinity
+  let bestScore = 0
   for (const [name, stats] of Object.entries(symbolEfficiency)) {
-    if (stats.trade_count >= 4 && stats.total_winning_usdt > bestWinning) {
-      bestWinning = stats.total_winning_usdt
+    const score = effectiveScore(stats)
+    if (score > bestScore) {
+      bestScore = score
       bestPreset = name
     }
   }
 
-  // Compute preset ranks for this symbol (sorted by efficiency descending)
+  // Compute preset ranks for this symbol (sorted by effective score descending)
   const presetRanks: Record<string, number> = {}
   const sortedByEff = Object.entries(symbolEfficiency)
-    .sort(([, a], [, b]) => b.total_winning_usdt - a.total_winning_usdt)
+    .sort(([, a], [, b]) => effectiveScore(b) - effectiveScore(a))
   sortedByEff.forEach(([name], idx) => {
     presetRanks[name] = idx + 1  // rank 1 = best
   })

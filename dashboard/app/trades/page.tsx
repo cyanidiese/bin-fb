@@ -149,6 +149,8 @@ export default function TradesPage() {
     setData(null)
     setError(null)
     setSelectedPreset(null)
+    setSortKey('rank')
+    setSortDir('asc')
     fetch(`/api/trades?symbol=${symbol}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(setData)

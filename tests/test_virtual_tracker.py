@@ -35,7 +35,7 @@ def test_seed_from_backtest(tmp_path):
     # seed_from_backtest stores the backtest score under seeded_winning_usdt;
     # total_winning_usdt and trade_count stay at 0 so UI won't confuse backtest
     # history with live virtual trades.
-    assert eff["seeded_winning_usdt"] == pytest.approx(38.0)  # (1.0 + 2.0 + 0.8) / 100 * 1000
+    assert eff["seeded_winning_usdt"] == pytest.approx(33.0)  # (1.0 - 0.5 + 2.0 + 0.8) / 100 * 1000 net
     assert eff["trade_count"] == 0
 
 

@@ -44,17 +44,18 @@ class VirtualTracker:
         try:
             data = json.loads(backtest_path.read_text())
             for name, preset_data in data.get("presets", {}).items():
-                trades = preset_data.get("trades", [])
-                balance_start = preset_data.get("balance_start", 0.0)
-                winning_usdt = sum(
-                    t.get("profit_pct", 0.0) / 100.0 * balance_start
-                    for t in trades
-                    if t.get("profit_pct", 0.0) > 0
-                )
+                balance_start = preset_data.get("balance_start", 1000.0)
+                # Use net total_profit_pct (matches Backtest page Profit% column).
+                # Falls back to summing all trade profits if preset-level field is absent.
+                if "total_profit_pct" in preset_data:
+                    seeded = preset_data["total_profit_pct"] / 100.0 * balance_start
+                else:
+                    trades = preset_data.get("trades", [])
+                    seeded = sum(t.get("profit_pct", 0.0) / 100.0 * balance_start for t in trades)
                 self._efficiency.setdefault(symbol, {})[name] = {
                     "total_winning_usdt": 0.0,
                     "trade_count": 0,
-                    "seeded_winning_usdt": winning_usdt,
+                    "seeded_winning_usdt": seeded,
                 }
             self._save_efficiency()
         except Exception as exc:

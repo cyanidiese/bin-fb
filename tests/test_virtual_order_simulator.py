@@ -52,7 +52,7 @@ def test_seed_from_backtest_populates_efficiency(tmp_path):
     # seed_from_backtest stores backtest score in seeded_winning_usdt;
     # trade_count stays 0 so UI won't show backtest history as live trades.
     assert eff['trade_count'] == 0
-    assert eff['seeded_winning_usdt'] == pytest.approx(30.0)  # (1.0 + 2.0) / 100 * 1000
+    assert eff['seeded_winning_usdt'] == pytest.approx(25.0)  # (1.0 - 0.5 + 2.0) / 100 * 1000 net
 
 
 def test_seed_from_backtest_skips_if_symbol_already_seeded(tmp_path):
@@ -62,7 +62,7 @@ def test_seed_from_backtest_skips_if_symbol_already_seeded(tmp_path):
     bt_path.write_text('{"presets": {}}')  # empty presets — nothing to overwrite
     tracker.seed_from_backtest('BTCUSDT', bt_path)
     eff = tracker.get_efficiency('BTCUSDT', 'preset_a')
-    assert eff['seeded_winning_usdt'] == pytest.approx(30.0)  # original value preserved
+    assert eff['seeded_winning_usdt'] == pytest.approx(25.0)  # original net value preserved
 
 
 def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
@@ -71,7 +71,7 @@ def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
     bt_path_eth = make_backtest_file(tmp_path, 'ETHUSDT')
     tracker.seed_from_backtest('BTCUSDT', bt_path_btc)
     tracker.seed_from_backtest('ETHUSDT', bt_path_eth)
-    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['seeded_winning_usdt'] == pytest.approx(30.0)
+    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['seeded_winning_usdt'] == pytest.approx(25.0)
 
 
 # ── VirtualOrderSimulator rank-based tests ────────────────────────────────

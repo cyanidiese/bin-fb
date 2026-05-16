@@ -16,6 +16,7 @@ export interface RiskConfig {
   max_leverage_level: number
   use_allocation_weighting: boolean
   min_balance_pct: number
+  virtual_rank_max: number
   scenario?: string
 }
 

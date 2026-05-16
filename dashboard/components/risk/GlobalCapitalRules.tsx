@@ -128,6 +128,14 @@ export default function GlobalCapitalRules({ config, state, patchConfig }: Props
           onChange={v => patchConfig({ backtest_initial_balance_usdt: Number(v) })}
           min={10} step={100}
         />
+
+        <LabeledInput
+          label="Virtual rank pools"
+          tooltip="How many preset ranks to track with virtual capital. Rank 1 = real orders. Ranks 2–N each get their own independent virtual balance pool. Changes take effect on the next candle close."
+          value={config.virtual_rank_max ?? 6}
+          onChange={v => patchConfig({ virtual_rank_max: Math.max(2, Math.min(20, Number(v))) })}
+          min={2} max={20} step={1}
+        />
       </div>
     </section>
   )

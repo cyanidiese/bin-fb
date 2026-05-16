@@ -1,6 +1,7 @@
 # bot/notifier.py
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import logging
@@ -17,6 +18,13 @@ from bot.system_log import append_entry
 logger = logging.getLogger(__name__)
 
 _ALERT_LEVELS = {"warning", "emergency"}
+
+# How long to suppress re-sending the *same* message (same title+body) to Telegram.
+_CONTENT_REPEAT_INTERVAL: dict[str, float] = {
+    "emergency": 30 * 60,   # 30 min — urgent but don't spam every candle close
+    "warning":   4 * 3600,  # 4 h   — repeated warnings are noise
+    "info":      60,         # 1 min — covered by category rate limit anyway
+}
 
 _TEST_SAMPLES: dict[str, tuple[str, bool]] = {
     "connection": (
@@ -67,6 +75,8 @@ class Notifier:
         self._chat_id = telegram_chat_id
         self._min_interval_s = min_interval_s
         self._last_sent: dict[str, float] = {}
+        # content-hash → last monotonic time sent, so the same message is never spammed
+        self._last_sent_content: dict[str, float] = {}
 
     def notify(
         self,
@@ -88,7 +98,7 @@ class Notifier:
 
         if self._token and self._chat_id:
             is_emergency = level == "emergency"
-            if is_emergency or self._rate_limit_ok("system"):
+            if self._content_rate_limit_ok(level, title, body):
                 emoji = {"info": "ℹ️", "warning": "⚠️", "emergency": "🚨"}.get(level, "")
                 text = f"{emoji} <b>{html.escape(title)}</b>\n{html.escape(body)}"
                 try:
@@ -177,8 +187,27 @@ class Notifier:
         self._last_sent[category] = now
         return True
 
+    def _content_rate_limit_ok(self, level: str, title: str, body: str) -> bool:
+        """True if this exact (title, body) hasn't been sent recently."""
+        key = hashlib.md5(f"{title}\x00{body}".encode()).hexdigest()
+        interval = _CONTENT_REPEAT_INTERVAL.get(level, self._min_interval_s)
+        now = time.monotonic()
+        if now - self._last_sent_content.get(key, 0.0) < interval:
+            return False
+        self._last_sent_content[key] = now
+        return True
+
     def _append_alert(self, level: str, title: str, body: str, source: str) -> None:
         state = self._read_alert_state()
+        dismissed = set(state.get("dismissed_ids", []))
+        # Skip if an identical active (not dismissed) alert already exists
+        for existing in state["alerts"]:
+            if (
+                existing.get("id") not in dismissed
+                and existing.get("title") == title
+                and existing.get("body") == body
+            ):
+                return
         state["alerts"].append({
             "id": str(uuid.uuid4()),
             "level": level,

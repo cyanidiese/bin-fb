@@ -166,19 +166,18 @@ export default function TradesPage() {
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.symbols) setSymbolsWithOrders(d.symbols) })
       .catch(() => {})
-    const loadBalances = () =>
-      fetch('/api/trades/balances')
-        .then(r => r.ok ? r.json() : null)
-        .then(d => {
-          if (!d) return
-          setRealBalance(d.realBalance ?? null)
-          setVirtualBalance(d.virtualBalance ?? null)
-        })
-        .catch(() => {})
-    loadBalances()
-    const interval = setInterval(loadBalances, 15_000)
-    return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    fetch('/api/trades/balances')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return
+        setRealBalance(d.realBalance ?? null)
+        setVirtualBalance(d.virtualBalance ?? null)
+      })
+      .catch(() => {})
+  }, [data])
 
   const allRows = useMemo(() => data ? buildPresetRows(data) : [], [data])
 

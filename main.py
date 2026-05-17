@@ -3,6 +3,7 @@ import dataclasses
 import json
 import logging
 import logging.handlers
+import math
 import os
 import subprocess
 import sys
@@ -356,6 +357,31 @@ async def run() -> None:
         margin = min_notional / actual_lev
         eff_score = virtual_tracker.get_efficiency_score(symbol)
 
+        # When balance can't fund the minimum margin at the scenario leverage,
+        # try the lowest leverage that brings the margin within balance.
+        if balance < margin and min_notional > 0 and balance > 0:
+            lev_needed = math.ceil(min_notional / balance)
+            if lev_needed <= bracket_max:
+                actual_lev = lev_needed
+                margin = min_notional / actual_lev
+                logger.info(
+                    f"[{symbol}] Leverage bumped to {actual_lev}x to meet min notional "
+                    f"(balance={balance:.2f}, min_notional={min_notional:.2f})"
+                )
+            else:
+                dl_record(
+                    dl_path, candle_ts=candle_ts, symbol=symbol,
+                    decision='skip_min_notional',
+                    reason=(
+                        f'balance={balance:.2f} too small for min_notional={min_notional:.2f} '
+                        f'even at bracket_max={bracket_max}x'
+                    ),
+                    balance=balance, leverage=bracket_max, efficiency_score=eff_score,
+                    preset_name=preset_name, scenario=_active_scenario_name,
+                )
+                logger.info(f"[{symbol}] Balance too small for min notional at any leverage — skipping")
+                return 0.0
+
         if balance < margin:
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
@@ -385,7 +411,8 @@ async def run() -> None:
             if order_executor.get_state(symbol) != OrderState.IDLE:
                 return 0.0
 
-        quantity = (margin * actual_lev) / entry
+        # 2% buffer ensures step-rounding never drops notional below the exchange floor (-4164 guard).
+        quantity = min_notional * 1.02 / entry
 
         bh_record(bh_path, balance=balance, trigger='order_open',
                   symbol=symbol, leverage=actual_lev)

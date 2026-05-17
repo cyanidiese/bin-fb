@@ -116,9 +116,10 @@ class TelegramMenu:
         role = self._resolve_role(chat_id)
         if role == "unknown":
             await self._send(chat_id, "🔒 Access request sent to the bot owner.")
-            self._pending[chat_id] = username
-            req_text, req_kb = render_access_request(username, chat_id)
-            await self._send(self._owner_id, req_text, req_kb)
+            if chat_id not in self._pending:
+                self._pending[chat_id] = username
+                req_text, req_kb = render_access_request(username, chat_id)
+                await self._send(self._owner_id, req_text, req_kb)
             return
         t, kb = render_main_menu(is_owner=(role == "owner"))
         await self._send(chat_id, t, kb)
@@ -142,7 +143,7 @@ class TelegramMenu:
             t, kb = self._screen_symbols()
         elif data.startswith("sym:"):
             symbol = data[4:]
-            t, kb = self._screen_symbol_detail(symbol, is_owner)
+            t, kb = await asyncio.to_thread(self._screen_symbol_detail, symbol, is_owner)
         elif data.startswith("confirm_pause:"):
             t, kb = render_confirm_pause(data[14:])
         elif data == "trades":
@@ -173,7 +174,7 @@ class TelegramMenu:
             paused = list(self._registry.get_paused_symbols().keys())
             t, kb = render_paused_for_resume(paused)
         elif data == "viewers":
-            t, kb = render_manage_viewers(self._load_viewers())
+            t, kb = render_manage_viewers(await asyncio.to_thread(self._load_viewers))
         elif data.startswith("do_enable:"):
             symbol = data[10:]
             self._registry.reenable(symbol)
@@ -192,17 +193,17 @@ class TelegramMenu:
         elif data.startswith("allow:"):
             requester_id = int(data[6:])
             uname = self._pending.pop(requester_id, "")
-            self._approve_viewer(requester_id, uname)
+            await asyncio.to_thread(self._approve_viewer, requester_id, uname)
             await self._send(requester_id, "✅ Access granted. You have view-only access.")
             viewer_menu, viewer_kb = render_main_menu(is_owner=False)
             await self._send(requester_id, viewer_menu, viewer_kb)
-            t, kb = render_manage_viewers(self._load_viewers())
+            t, kb = render_manage_viewers(await asyncio.to_thread(self._load_viewers))
         elif data.startswith("deny:"):
             self._pending.pop(int(data[5:]), None)
             t, kb = render_main_menu(is_owner=True)
         elif data.startswith("revoke:"):
-            self._revoke_viewer(int(data[7:]))
-            t, kb = render_manage_viewers(self._load_viewers())
+            await asyncio.to_thread(self._revoke_viewer, int(data[7:]))
+            t, kb = render_manage_viewers(await asyncio.to_thread(self._load_viewers))
         else:
             return
 

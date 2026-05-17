@@ -374,6 +374,44 @@ Top nav bar with symbol switcher, mode badge, alert count, links to Strategy / B
 
 ---
 
+## Telegram Interactive Menu
+
+### Three-Tier Access Control
+Users interact with a Telegram bot via button-driven menu (no text commands required beyond first message). Access levels: owner (full menu + write actions), viewer (read-only, added by owner), unknown (blocked until owner approves via Telegram).
+
+**Files**: `bot/telegram_menu.py`, `bot/telegram_views.py`
+**Key details**:
+- Menu is button-driven; users navigate by tapping inline keyboards
+- Owner can approve/deny access requests; viewers persistent in `data/telegram_viewers.json` (atomic write)
+- Pending requests stored in memory only (cleared on bot restart)
+- Write actions (pause symbol, enable symbol, reset hard stop, manage viewers) available to owner only; read-only menu for viewers
+
+### Available Screens
+- **Status**: mode (test/live), balance, symbol counts (active/disabled/paused), hard stop state, uptime, last candle time
+- **Symbols**: list with active/disabled/paused state, tap any symbol for detail
+- **Trades → Real Orders**: open positions and recent closed trade history
+- **Trades → Virtual Orders**: per-symbol rank 2–6 open positions and recent closed history
+- **Backtest**: per-symbol top-5 best presets by profit %
+- **Controls** (owner only): reset hard stop, resume paused symbols, manage viewer access requests/list
+
+### Write Actions (Owner Only)
+- Pause symbol (blocks new orders on next candle; open positions unaffected)
+- Resume paused symbol
+- Enable disabled symbol
+- Reset hard stop
+- Approve/deny viewer access requests
+- Revoke existing viewer
+
+### Polling & Message Rendering
+- Async long-polling with 30s timeout via `asyncio.to_thread(requests.get, ...)` — no new dependencies
+- All user-supplied and bot-internal strings HTML-escaped before Telegram HTML parse mode
+- Viewer management persistent in `data/telegram_viewers.json`; requests are in-memory only
+
+### Symbol Pause (Distinct from Disable)
+New `SymbolRegistry` methods: `pause_symbol()`, `resume_symbol()`, `is_symbol_paused()`, `get_paused_symbols()`. Pause does NOT redistribute weights (unlike disable); paused symbols skipped in real order candidate loop, but open positions remain unaffected.
+
+---
+
 ## Bot Runtime & Operations
 
 ### Mode Management
@@ -562,4 +600,4 @@ If `data/STOP` file exists, main loop checks and halts gracefully.
 
 ---
 
-**Last updated**: Session 19 (2026-05-16) — Rank-based virtual pools, per-rank symbol disable, preset efficiency improvements, datetime picker fixes.
+**Last updated**: Session 21 (2026-05-17) — Telegram interactive menu (3-tier access, pause/resume symbols, view trades/backtest, owner controls).

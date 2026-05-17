@@ -219,6 +219,18 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [ ] Update `test_virtual_order_simulator.py` for new rank-based internals (Tester task)
 - [ ] Consider XAUUSDT removal (gold is highly correlated to USD macro, may not fit bot strategy)
 
+## Phase 3.11 — Telegram Interactive Menu (session 21)
+
+- [x] `bot/telegram_menu.py` — TelegramMenu class with async polling, button dispatch, persistence
+- [x] `bot/telegram_views.py` — pure HTML-escaped rendering functions for all screens
+- [x] Three-tier access control: owner (full), viewer (read-only), unknown (blocked)
+- [x] All screens: Status, Symbols, Trades (Real/Virtual), Backtest, Controls
+- [x] Write actions (owner only): pause, resume, enable, reset hard stop, manage viewers
+- [x] Viewer management: persistent JSON + in-memory pending requests with dedup
+- [x] Async long-polling (30s timeout) with `asyncio.to_thread(requests.get, ...)`
+- [x] Symbol pause feature: `SymbolRegistry.pause_symbol()`, `resume_symbol()`, `is_symbol_paused()`, `get_paused_symbols()`
+- [x] All tests passing (191 total)
+
 ## Phase 3.9 — Trades Page & Virtual Order Simulation
 
 See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-design.md`
@@ -277,6 +289,12 @@ Design approved + implemented in session 14.
 - [ ] Design order placement logic based on Recommendation
 - [ ] Order manager (market/limit, SL, TP)
 - [ ] Position state tracker
+
+## Open investigations (pending session)
+
+- [ ] SOLUSDT -4164 notional error (order quantity precision)
+- [ ] Hard stop still active after restart (balance recovery edge case)
+- [ ] XAUUSDT zero signals (strategy fit or data issue)
 
 ## Phase 5 — Deployment
 

@@ -1,6 +1,27 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-16 (session 20)
+## Last updated: 2026-05-17 (session 21)
+
+---
+
+## ⟳ RESUME POINT — session 21 ended here (2026-05-17)
+
+**What was completed this session:**
+1. **Telegram interactive menu** — complete 5-commit implementation delivered (commits `8e63298` through `36feaff`). Full button-driven Telegram UI with three-tier access control (owner/viewer/unknown), persistence, all required screens (Status, Symbols with detail, Trades, Backtest, Controls), and write actions. Async long-polling (30s timeout) with no new dependencies. All 191 tests pass. FEATURES.md updated with full feature spec.
+
+**Bugs fixed**:
+1. **HTML escaping in telegram_views.py** — unescaped `side` fields and status strings would have caused Telegram `Bad Request` errors.
+2. **Blocking I/O in telegram_menu.py** — file reads/writes and approval/revocation operations were blocking event loop; fixed by wrapping in `asyncio.to_thread`.
+3. **Pending request spam** — unknown users could spam owner with repeated access notifications; fixed with `if chat_id not in self._pending` dedup guard.
+
+**Key design decisions added**:
+- Telegram polling uses `asyncio.to_thread(requests.get, ...)` — no new dependencies, fits existing asyncio loop.
+- Pause is distinct from disable: no weight redistribution, manual/temporary, skipped in candidate loop.
+- Three-tier access: owner/viewer/unknown — viewers get full read menu, write actions absent from their messages.
+- HTML escaping: all user-supplied and bot-internal strings passed through `html.escape()` before Telegram HTML parse mode.
+- Blocking I/O: wrapped in `asyncio.to_thread` to avoid event loop blocking.
+
+**Immediate next action**: User testing of Telegram menu on live server; next planned work is investigative (SOLUSDT notional error, hard stop reset, XAUUSDT zero signals).
 
 ---
 
@@ -237,6 +258,10 @@ Design consequences — apply these in every session without being asked:
 | `dashboard/components/NavBar.tsx` — Risk nav link | **done** |
 | Risk management module | **done** |
 | Tests (risk module — 21 tests) | **done** |
+| **Telegram interactive menu** — 3-tier access, all screens, write actions | **done** |
+| `bot/telegram_menu.py` — TelegramMenu class with async polling + dispatch | **done** |
+| `bot/telegram_views.py` — pure rendering functions with HTML escaping | **done** |
+| `SymbolRegistry` pause/resume methods | **done** |
 | `bot/symbol_discovery.py` — SymbolDiscovery class + CandidateResult | **done** |
 | `discover.py` — CLI entry point for discovery subprocess | **done** |
 | `dashboard/app/api/discovery/run/route.ts` — POST spawn discover.py | **done** |

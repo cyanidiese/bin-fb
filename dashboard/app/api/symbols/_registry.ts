@@ -15,10 +15,16 @@ export interface SymbolStatus {
   pid: number | null
 }
 
+export interface DisabledEntry {
+  reason: string
+  disabled_at: string
+}
+
 export interface RegistryFile {
   symbols: string[]
   updated_at: string
   status: Record<string, SymbolStatus>
+  disabled?: Record<string, DisabledEntry>
   disabled_ranks?: Record<string, number[]>
 }
 

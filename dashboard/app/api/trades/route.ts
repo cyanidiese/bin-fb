@@ -81,9 +81,13 @@ export async function GET(req: NextRequest) {
     rankBalances[String(rank)] = balData.balance ?? 0
   }
 
-  // Read disabled_ranks for this symbol from the registry
-  const registry = readJson(REGISTRY_PATH, {}) as { disabled_ranks?: Record<string, number[]> }
+  // Read disabled_ranks and disabled symbols from the registry
+  const registry = readJson(REGISTRY_PATH, {}) as {
+    disabled_ranks?: Record<string, number[]>
+    disabled?: Record<string, { reason: string; disabled_at: string }>
+  }
   const disabledRanks: number[] = registry.disabled_ranks?.[symbol] ?? []
+  const disabledSymbols: Record<string, { reason: string; disabled_at: string }> = registry.disabled ?? {}
 
   return NextResponse.json({
     symbol,
@@ -95,5 +99,6 @@ export async function GET(req: NextRequest) {
     rank_balances: rankBalances,
     preset_ranks: presetRanks,
     disabled_ranks: disabledRanks,
+    disabled_symbols: disabledSymbols,
   })
 }

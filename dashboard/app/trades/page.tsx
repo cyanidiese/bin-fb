@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
-import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline } from '@/lib/types'
+import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
@@ -136,6 +136,7 @@ export default function TradesPage() {
   const [realBalance, setRealBalance] = useState<number | null>(null)
   const [rankBalances, setRankBalances] = useState<Record<string, number>>({})
   const [disabledRanks, setDisabledRanks] = useState<number[]>([])
+  const [disabledSymbols, setDisabledSymbols] = useState<Record<string, DisabledSymbolEntry>>({})
 
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
@@ -157,6 +158,7 @@ export default function TradesPage() {
       .then((d: TradesData) => {
         setData(d)
         setDisabledRanks(d.disabled_ranks ?? [])
+        setDisabledSymbols(d.disabled_symbols ?? {})
       })
       .catch(e => setError(String(e)))
   }, [symbol])
@@ -241,6 +243,24 @@ export default function TradesPage() {
     setSelectedPreset(prev => prev === name ? null : name)
   }
 
+  async function handleEnableSymbol(sym: string) {
+    setDisabledSymbols(prev => { const n = { ...prev }; delete n[sym]; return n })
+    try {
+      await fetch(`/api/symbols/${sym}/enable`, { method: 'PATCH' })
+    } catch {
+      // revert on failure — re-fetch would be needed but this is rare
+    }
+  }
+
+  async function handleEnableAll() {
+    setDisabledSymbols({})
+    try {
+      await fetch('/api/symbols/enable-all', { method: 'POST' })
+    } catch {
+      // revert
+    }
+  }
+
   async function handleRankToggle(rank: number, e: React.MouseEvent) {
     e.stopPropagation()
     if (!symbol) return
@@ -319,6 +339,44 @@ export default function TradesPage() {
           )}
         </div>
       </div>
+
+      {/* ── Disabled Symbols Banner ── */}
+      {Object.keys(disabledSymbols).length > 0 && (
+        <div className="rounded-lg border border-yellow-700/50 bg-yellow-950/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wide">
+              Auto-disabled symbols ({Object.keys(disabledSymbols).length})
+            </span>
+            <button
+              onClick={handleEnableAll}
+              className="text-xs px-2 py-0.5 rounded bg-yellow-800/60 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
+            >
+              Enable All
+            </button>
+          </div>
+          <div className="space-y-1">
+            {Object.entries(disabledSymbols).map(([sym, entry]) => (
+              <div key={sym} className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-yellow-200">{sym}</span>
+                  <span className="ml-2 text-xs text-gray-400 truncate">
+                    {entry.reason.replace('consecutive_failures: ', '')}
+                  </span>
+                  <span className="ml-2 text-xs text-gray-600">
+                    {new Date(entry.disabled_at).toLocaleString()}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleEnableSymbol(sym)}
+                  className="shrink-0 text-xs px-2 py-0.5 rounded bg-green-900/60 text-green-300 hover:bg-green-800/60 transition-colors"
+                >
+                  Enable
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Preset Efficiency ── */}
       <CollapsibleSection

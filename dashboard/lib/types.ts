@@ -263,6 +263,11 @@ export interface RankOrder {
   rank_balance_after: number | null;
 }
 
+export interface DisabledSymbolEntry {
+  reason: string;
+  disabled_at: string;
+}
+
 export interface TradesData {
   symbol: string;
   mode: string;
@@ -273,4 +278,5 @@ export interface TradesData {
   rank_balances: Record<string, number>;       // key = rank number as string
   preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
   disabled_ranks: number[];                    // ranks disabled for this symbol
+  disabled_symbols: Record<string, DisabledSymbolEntry>;  // globally disabled symbols
 }

@@ -32,6 +32,12 @@ Keep it updated with:
 
 Also maintain a `TODO.md` with a prioritized task list. Mark items as [ ] pending, [~] in progress, [x] done.
 
+Also maintain a `FEATURES.md` in the project root documenting every implemented feature. After completing any feature, update this file immediately — do not batch it. Each entry must describe: what the feature does, which files implement it, and any key configuration or behaviour details. This file is the authoritative reference for what the project can do, and must be kept accurate so future sessions do not re-implement existing functionality or miss available knobs.
+
+The Librarian agent (`/librarian`) is responsible for writing and updating `FEATURES.md`, `CLAUDE_NOTES.md`, and `TODO.md`. Use it at the end of every session and after any significant implementation.
+
+**Any change to existing functionality must be reflected in `FEATURES.md` immediately** — if a feature is modified, extended, removed, or its behaviour/config changes, update the relevant entry before closing the task. Outdated documentation is worse than no documentation.
+
 ---
 
 ## How to work with me

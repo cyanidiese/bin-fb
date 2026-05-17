@@ -1,6 +1,6 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-16 (session 18)
+## Last updated: 2026-05-16 (session 20)
 
 ---
 
@@ -31,6 +31,15 @@ ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "ps aux | grep main.py | grep -v gr
 # Restart (Docker)
 ssh -i ~/.ssh/id_ed25519 root@185.237.14.105 "cd /opt/bot && docker compose restart"
 ```
+
+---
+
+## ⟳ RESUME POINT — session 20 ended here (2026-05-16)
+
+**What was completed this session:**
+1. **FEATURES.md created** — comprehensive reference document listing all implemented features, grouped logically (Data Feed, Strategy & Analysis, Order Execution, Risk Management, Dashboard, Bot Runtime, etc.). Each feature includes what it does, key files, and important config/behaviour details. Replaces need to read source code for feature discovery.
+
+**Immediate next action**: Continue with next planned work. FEATURES.md serves as updated system reference for all sessions going forward.
 
 ---
 

@@ -68,6 +68,24 @@ class SymbolRegistry:
     def is_disabled(self, symbol: str) -> bool:
         return symbol in self._disabled
 
+    def is_symbol_paused(self, symbol: str) -> bool:
+        return symbol in self._paused
+
+    def pause_symbol(self, symbol: str) -> None:
+        with self._lock:
+            self._paused[symbol] = {
+                "paused_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._persist()
+
+    def resume_symbol(self, symbol: str) -> None:
+        with self._lock:
+            self._paused.pop(symbol, None)
+            self._persist()
+
+    def get_paused_symbols(self) -> dict:
+        return dict(self._paused)
+
     def is_rank_disabled(self, symbol: str, rank: int) -> bool:
         return rank in self._disabled_ranks.get(symbol, [])
 
@@ -135,6 +153,7 @@ class SymbolRegistry:
                 self._weights = data.get('weights', {})
                 self._disabled = data.get('disabled', {})
                 self._disabled_ranks: dict[str, list[int]] = data.get('disabled_ranks', {})
+                self._paused: dict[str, dict] = data.get('paused', {})
                 logger.info(
                     f"SymbolRegistry: loaded {len(self._symbols)} symbol(s) from {self._path}"
                 )
@@ -149,6 +168,7 @@ class SymbolRegistry:
         self._weights = {s: 1.0 / len(self._symbols) for s in self._symbols} if self._symbols else {}
         self._disabled: dict[str, dict] = {}
         self._disabled_ranks: dict[str, list[int]] = {}
+        self._paused: dict[str, dict] = {}
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
@@ -160,6 +180,7 @@ class SymbolRegistry:
             'weights': self._weights,
             'disabled': self._disabled,
             'disabled_ranks': self._disabled_ranks,
+            'paused': self._paused,
         }
         self._path.write_text(json.dumps(data, indent=2))
 

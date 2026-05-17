@@ -18,8 +18,7 @@ from pathlib import Path
 
 from config.settings import load_symbols
 from bot.symbol_discovery import SymbolDiscovery
-# Import preset dicts from backtest.py so discovery uses the same preset definitions.
-from backtest import PRESETS, LOCKED_PRESETS
+from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -117,10 +116,9 @@ def main() -> None:
         return
 
     # Fast preset subset.
-    all_preset_names = list({**LOCKED_PRESETS, **PRESETS}.keys())
+    all_preset_names = list(ALL_PRESETS.keys())
     fast_preset_names = discovery.get_fast_presets(active, preset_count, all_preset_names)
-    all_presets = {**LOCKED_PRESETS, **PRESETS}
-    preset_subset = {n: all_presets[n] for n in fast_preset_names if n in all_presets}
+    preset_subset = {n: ALL_PRESETS[n] for n in fast_preset_names if n in ALL_PRESETS}
     logger.info(f"Fast preset subset ({len(preset_subset)}): {list(preset_subset)}")
 
     baseline = discovery.compute_baseline(active)

@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backtest import PRESETS, LOCKED_PRESETS
+from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import load_settings
 from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
@@ -18,6 +18,7 @@ from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
 from bot.mode_manager import ModeManager
 from bot.notifier import Notifier
+from bot.telegram_menu import TelegramMenu
 from bot.order_executor import OrderExecutor, OrderState
 from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
@@ -165,7 +166,7 @@ async def run() -> None:
         max_level=risk_cfg.get("max_leverage_level", 5),
     )
 
-    all_presets = {**LOCKED_PRESETS, **PRESETS}
+    all_presets = ALL_PRESETS
 
     def _virtual_lev(sym: str) -> int:
         score = virtual_tracker.get_efficiency_score(sym)
@@ -190,6 +191,21 @@ async def run() -> None:
         get_scenario=lambda: _active_scenario_name,
         rank_max=int(risk_cfg.get("virtual_rank_max", 6)),
         is_rank_disabled=symbol_registry.is_rank_disabled,
+    )
+
+    _tg_cfg = risk_cfg.get("telegram", {})
+    _tg_token = _tg_cfg.get("token", "")
+    _tg_owner_id = int(_tg_cfg.get("chat_id", "0") or "0")
+    telegram_menu = TelegramMenu(
+        token=_tg_token,
+        owner_chat_id=_tg_owner_id,
+        risk_manager=risk_manager,
+        symbol_registry=symbol_registry,
+        project_root=_PROJECT_ROOT,
+        get_mode=lambda: mode_manager.current_mode,
+        get_active_symbols=symbol_registry.get_symbols,
+        get_open_orders=order_executor.get_open_orders,
+        rank_max=int(risk_cfg.get("virtual_rank_max", 6)),
     )
 
     def _push_scenario_info() -> None:
@@ -488,6 +504,8 @@ async def run() -> None:
         for sym in symbol_registry.get_symbols():
             if symbol_registry.is_disabled(sym):
                 continue
+            if symbol_registry.is_symbol_paused(sym):
+                continue
             if order_executor.get_state(sym) != OrderState.IDLE:
                 continue
             best_sym = (
@@ -639,6 +657,7 @@ async def run() -> None:
             on_price_update=on_price_update,
         )
     )
+    _menu_task = asyncio.create_task(telegram_menu.run())
 
     try:
         await feed.stream_combined(
@@ -648,9 +667,9 @@ async def run() -> None:
             on_price_update=on_price_update,
         )
     finally:
-        for t in [_poll_task, _hb_task, _watchdog_task]:
+        for t in [_poll_task, _hb_task, _watchdog_task, _menu_task]:
             t.cancel()
-        for t in [_poll_task, _hb_task, _watchdog_task]:
+        for t in [_poll_task, _hb_task, _watchdog_task, _menu_task]:
             try:
                 await t
             except asyncio.CancelledError:

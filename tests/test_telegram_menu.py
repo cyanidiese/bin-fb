@@ -79,6 +79,6 @@ def test_viewer_cannot_call_write_action(tmp_path):
     menu = _make_menu(tmp_path, owner_id=111)
     # Viewer trying do_reset should be silently ignored (no exception)
     asyncio.get_event_loop().run_until_complete(
-        menu._dispatch_callback(222, "viewer", "dummy_qid", "do_reset")
+        menu._dispatch_callback(222, 0, "viewer", "dummy_qid", "do_reset")
     )
     menu.risk_manager.reset_hard_stop.assert_not_called()

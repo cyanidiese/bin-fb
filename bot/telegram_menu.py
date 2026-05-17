@@ -118,12 +118,13 @@ class TelegramMenu:
         elif "callback_query" in update:
             cq = update["callback_query"]
             chat_id = cq["message"]["chat"]["id"]
+            message_id = cq["message"]["message_id"]
             username = cq.get("from", {}).get("username", "")
             qid = cq["id"]
             data = cq.get("data", "")
             await asyncio.to_thread(self._answer_callback, qid)
             role = self._resolve_role(chat_id)
-            await self._dispatch_callback(chat_id, role, qid, data)
+            await self._dispatch_callback(chat_id, message_id, role, qid, data)
 
     async def _handle_message(self, chat_id: int, username: str, text: str) -> None:
         role = self._resolve_role(chat_id)
@@ -140,7 +141,7 @@ class TelegramMenu:
     # ── Callback dispatch ───────────────────────────────────────────────────
 
     async def _dispatch_callback(
-        self, chat_id: int, role: str, qid: str, data: str
+        self, chat_id: int, message_id: int, role: str, qid: str, data: str
     ) -> None:
         action_prefix = data.split(":")[0]
         if action_prefix in _WRITE_CALLBACKS and role != "owner":
@@ -220,7 +221,7 @@ class TelegramMenu:
         else:
             return
 
-        await self._send(chat_id, t, kb)
+        await self._edit(chat_id, message_id, t, kb)
 
     # ── Screen data builders ─────────────────────────────────────────────────
 
@@ -302,9 +303,10 @@ class TelegramMenu:
             return None
 
     def _screen_symbols(self) -> tuple[str, dict]:
-        active = self._get_active_symbols()
+        all_syms = self._get_active_symbols()
         disabled = self._registry.get_disabled()
         paused = self._registry.get_paused_symbols()
+        active = [s for s in all_syms if s not in disabled and s not in paused]
         order_status = {s: v for s in active if (v := self._last_real_order_ago(s)) is not None}
         return render_symbols(active, disabled, paused, order_status or None)
 
@@ -487,6 +489,26 @@ class TelegramMenu:
         self._save_viewers(viewers)
 
     # ── Telegram API ────────────────────────────────────────────────────────
+
+    async def _edit(self, chat_id: int, message_id: int, text: str, reply_markup: dict | None = None) -> None:
+        payload: dict = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text[:4096],
+            "parse_mode": "HTML",
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        try:
+            await asyncio.to_thread(
+                requests.post,
+                f"https://api.telegram.org/bot{self._token}/editMessageText",
+                json=payload,
+                timeout=10,
+            )
+        except Exception as exc:
+            logger.warning(f"TelegramMenu edit failed {chat_id}/{message_id}: {exc}")
+            await self._send(chat_id, text, reply_markup)
 
     async def _send(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
         payload: dict = {

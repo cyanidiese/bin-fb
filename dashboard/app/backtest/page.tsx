@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import type { BacktestResults, BacktestPreset } from '@/lib/types'
+import type { BacktestResults, BacktestPreset, BacktestTrade } from '@/lib/types'
 import BacktestSummaryTable from '@/components/BacktestSummaryTable'
 import BacktestTradeList from '@/components/BacktestTradeList'
 import PresetSettingsPanel from '@/components/PresetSettingsPanel'
@@ -42,6 +42,7 @@ export default function BacktestPage() {
   const [runError, setRunError] = useState<string | null>(null)
   const { symbol, availableSymbols } = useSymbolContext()
   const [allSymbolData, setAllSymbolData] = useState<Record<string, BacktestResults | null>>({})
+  const [vizFilteredTrades, setVizFilteredTrades] = useState<BacktestTrade[] | null>(null)
 
   const [tableFilters, setTableFilters] = useLocalStorage('db:backtest:tableFilters', initTableFilters())
   const [tableFiltersOpen, setTableFiltersOpen] = useLocalStorage<boolean>('db:backtest:tableFiltersOpen', false)
@@ -193,6 +194,8 @@ export default function BacktestPage() {
     return data.presets[selectedPreset] ?? null
   }, [data, selectedPreset])
 
+  useEffect(() => { setVizFilteredTrades(null) }, [selectedPreset, symbol])
+
   if (error) {
     return (
       <main className="p-6 text-red-400 text-sm font-mono">
@@ -296,7 +299,7 @@ export default function BacktestPage() {
       </CollapsibleSection>
 
       {/* Visualize panel */}
-      <PresetResultsPanel preset={activePreset} symbol={symbol} />
+      <PresetResultsPanel preset={activePreset} symbol={symbol} onFilteredTradesChange={setVizFilteredTrades} />
 
       {/* Trade drill-down */}
       {activePreset && (
@@ -311,10 +314,15 @@ export default function BacktestPage() {
               <span className="text-red-400">{activePreset.losses}L</span>
             </span>
           </div>
-          <CollapsibleSection title={`Orders (${activePreset.total_trades})`} storageKey="db:backtest:s:trades">
+          <CollapsibleSection
+            title={vizFilteredTrades
+              ? `Orders (${vizFilteredTrades.length} of ${activePreset.total_trades})`
+              : `Orders (${activePreset.total_trades})`}
+            storageKey="db:backtest:s:trades"
+          >
             <BacktestTradeList
               presetName={activePreset.preset}
-              trades={activePreset.trades}
+              trades={vizFilteredTrades ?? activePreset.trades}
             />
           </CollapsibleSection>
 

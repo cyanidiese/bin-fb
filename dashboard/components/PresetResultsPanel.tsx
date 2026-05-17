@@ -8,6 +8,7 @@ import { useLocalStorage } from '@/lib/useLocalStorage'
 interface Props {
   preset: BacktestPreset | null
   symbol?: string
+  onFilteredTradesChange?: (trades: BacktestTrade[] | null) => void
 }
 
 function toDateStr(unixSec: number): string {
@@ -30,7 +31,7 @@ const DATE_INPUT_CLS =
 const NAV_BTN_CLS =
   'px-2 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 text-[11px] font-mono transition-colors'
 
-export default function PresetResultsPanel({ preset, symbol }: Props) {
+export default function PresetResultsPanel({ preset, symbol, onFilteredTradesChange }: Props) {
   const [open, setOpen] = useLocalStorage<boolean>('db:visualize:open', false)
   const [result, setResult] = useState<BacktestApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -112,6 +113,11 @@ export default function PresetResultsPanel({ preset, symbol }: Props) {
     })
     return trades
   }, [result, minIdx, maxIdx, displayKlines.length])
+
+  useEffect(() => {
+    if (!onFilteredTradesChange) return
+    onFilteredTradesChange(open && result ? displayTrades : null)
+  }, [open, result, displayTrades])
 
   const klineMinDate = result?.klines.length ? toDateStr(result.klines[0].time) : ''
   const klineMaxDate = result?.klines.length ? toDateStr(result.klines[result.klines.length - 1].time) : ''

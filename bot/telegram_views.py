@@ -56,14 +56,17 @@ def render_status(
     last_candle_sym: str | None,
     last_candle_ago: str | None,
 ) -> tuple[str, dict]:
-    hs = f"⛔ ACTIVE since {hard_stop_since}" if hard_stop_active else "✅ clear"
-    lc = f"{last_candle_sym} {last_candle_ago}" if last_candle_sym else "—"
+    hs_since = html.escape(hard_stop_since or "")
+    hs = f"⛔ ACTIVE since {hs_since}" if hard_stop_active else "✅ clear"
+    lc_sym = html.escape(last_candle_sym or "")
+    lc_ago = html.escape(last_candle_ago or "")
+    lc = f"{lc_sym} {lc_ago}" if last_candle_sym else "—"
     lines = [
         "📊 <b>Bot Status</b>",
         f"Mode: <b>{html.escape(mode)}</b>  |  Balance: <b>{balance:,.2f} USDT</b>",
         f"Symbols: {n_active} active, {n_disabled} disabled, {n_paused} paused",
         f"Hard stop: {hs}",
-        f"Uptime: {uptime_str}  |  Last candle: {lc}",
+        f"Uptime: {html.escape(uptime_str)}  |  Last candle: {lc}",
     ]
     return "\n".join(lines), _kb([[_back("menu")]])
 
@@ -88,11 +91,11 @@ def render_symbols(
     rows.append([_back("menu")])
     parts = ["🔤 <b>Symbols</b>"]
     if active:
-        parts.append(f"Active ({len(active)}): {', '.join(active)}")
+        parts.append(f"Active ({len(active)}): {', '.join(html.escape(s) for s in active)}")
     if disabled:
-        parts.append(f"Disabled ({len(disabled)}): {', '.join(disabled)}")
+        parts.append(f"Disabled ({len(disabled)}): {', '.join(html.escape(s) for s in disabled)}")
     if paused:
-        parts.append(f"Paused ({len(paused)}): {', '.join(paused)}")
+        parts.append(f"Paused ({len(paused)}): {', '.join(html.escape(s) for s in paused)}")
     return "\n".join(parts), _kb(rows)
 
 
@@ -178,7 +181,7 @@ def render_real_open(orders: list[dict]) -> tuple[str, dict]:
         lines = []
         for o in orders:
             lines.append(
-                f"<b>{html.escape(o['symbol'])}</b> {o['side']}  "
+                f"<b>{html.escape(o['symbol'])}</b> {html.escape(str(o.get('side', '')))}  "
                 f"@ {o['entry_price']:,.2f}  |  {html.escape(o.get('preset_name', ''))}"
             )
         body = "\n".join(lines)
@@ -195,7 +198,7 @@ def render_real_history(orders: list[dict]) -> tuple[str, dict]:
             sign = "+" if o.get("pnl_usdt", 0) >= 0 else ""
             ts = str(o.get("close_time", ""))[:16].replace("T", " ")
             lines.append(
-                f"{emoji} <b>{html.escape(o['symbol'])}</b> {o['side']}  "
+                f"{emoji} <b>{html.escape(o['symbol'])}</b> {html.escape(str(o.get('side', '')))}  "
                 f"{sign}{o.get('pnl_usdt', 0):.2f} USDT  {ts}"
             )
         body = "\n".join(lines)
@@ -219,7 +222,7 @@ def render_virtual_symbol(symbol: str, ranks: list[dict]) -> tuple[str, dict]:
             pct = f"{sign}{r['pnl_pct']:.2f}%" if r.get("pnl_pct") is not None else ""
             lines.append(
                 f"Rank {r['rank']}  {html.escape(r['preset_name'])}  "
-                f"{r['side']} {pct}  open"
+                f"{html.escape(str(r.get('side') or ''))} {pct}  open"
             )
         else:
             lines.append(f"Rank {r['rank']}  {html.escape(r['preset_name'])}  — no position")
@@ -240,7 +243,7 @@ def render_virtual_history(symbol: str, orders: list[dict]) -> tuple[str, dict]:
             pnl = f"{sign}{o.get('pnl_usdt', 0):.2f} USDT" if o.get("pnl_usdt") is not None else "—"
             lines.append(
                 f"{emoji} Rank{o['rank']}  {html.escape(o['preset_name'])}  "
-                f"{o['side']}  {pnl}"
+                f"{html.escape(str(o.get('side', '')))}  {pnl}"
             )
         body = "\n".join(lines)
     return f"📜 <b>{html.escape(symbol)}</b> recent virtual closes\n{body}", _kb([[_back(f"vsym:{symbol}")]])

@@ -27,6 +27,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _fmt_ago(ago_s: int) -> str:
+    if ago_s < 60:
+        return f"{ago_s}s"
+    if ago_s < 3600:
+        return f"{ago_s // 60}m"
+    h, m = divmod(ago_s // 60, 60)
+    if h < 24:
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 _WRITE_CALLBACKS = frozenset({
     "do_enable", "do_pause", "do_resume", "do_reset",
     "allow", "deny", "revoke",
@@ -263,11 +276,37 @@ class TelegramMenu:
             uptime_str=uptime_str, last_candle_sym=last_sym, last_candle_ago=last_ago,
         )
 
+    def _last_real_order_ago(self, symbol: str) -> str | None:
+        """Returns None if currently in an order, else formatted idle duration."""
+        open_orders = self._get_open_orders()
+        if any(o.symbol == symbol for o in open_orders.values()):
+            return None
+        mode = self._get_mode()
+        path = self._root / "data" / f"real_orders_{symbol}_{mode}.json"
+        if not path.exists():
+            return "no history"
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, list):
+                return "no history"
+            closed = [o for o in data if o.get("status") != "open" and o.get("close_time")]
+            if not closed:
+                return "no history"
+            latest = max(closed, key=lambda o: o["close_time"])
+            close_ts = datetime.fromisoformat(
+                latest["close_time"].replace("Z", "+00:00")
+            ).timestamp()
+            ago_s = int(time.time() - close_ts)
+            return _fmt_ago(max(0, ago_s))
+        except Exception:
+            return None
+
     def _screen_symbols(self) -> tuple[str, dict]:
         active = self._get_active_symbols()
         disabled = self._registry.get_disabled()
         paused = self._registry.get_paused_symbols()
-        return render_symbols(active, disabled, paused)
+        order_status = {s: v for s in active if (v := self._last_real_order_ago(s)) is not None}
+        return render_symbols(active, disabled, paused, order_status or None)
 
     def _screen_symbol_detail(self, symbol: str, is_owner: bool) -> tuple[str, dict]:
         disabled = self._registry.get_disabled()
@@ -296,7 +335,8 @@ class TelegramMenu:
                     best_preset = max(sym_eff, key=lambda k: sym_eff[k].get("total_winning_usdt", 0))
             except Exception:
                 pass
-        return render_symbol_active(symbol, price, best_preset, is_owner)
+        last_order_ago = self._last_real_order_ago(symbol)
+        return render_symbol_active(symbol, price, best_preset, is_owner, last_order_ago)
 
     def _screen_real_open(self) -> tuple[str, dict]:
         open_orders = self._get_open_orders()
@@ -336,6 +376,7 @@ class TelegramMenu:
             side = None
             pnl_pct = None
             status = "none"
+            last_close_ago: str | None = None
             if path.exists():
                 try:
                     data = json.loads(path.read_text())
@@ -349,10 +390,16 @@ class TelegramMenu:
                         else:
                             last = data[-1]
                             preset_name = last.get("preset_name", "—")
+                            ct = last.get("close_time")
+                            if ct:
+                                ago_s = int(time.time() - datetime.fromisoformat(
+                                    ct.replace("Z", "+00:00")
+                                ).timestamp())
+                                last_close_ago = _fmt_ago(max(0, ago_s))
                 except Exception:
                     pass
             ranks.append({"rank": rank, "preset_name": preset_name, "side": side,
-                          "pnl_pct": pnl_pct, "status": status})
+                          "pnl_pct": pnl_pct, "status": status, "last_close_ago": last_close_ago})
         return render_virtual_symbol(symbol, ranks)
 
     def _screen_virtual_history(self, symbol: str) -> tuple[str, dict]:

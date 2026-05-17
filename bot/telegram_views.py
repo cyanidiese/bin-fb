@@ -28,6 +28,18 @@ def _sym_rows(symbols: list[str], prefix: str, cols: int = 3) -> list[list[dict]
     return [btns[i:i + cols] for i in range(0, len(btns), cols)]
 
 
+def _fmt_ago(ago_s: int) -> str:
+    if ago_s < 60:
+        return f"{ago_s}s"
+    if ago_s < 3600:
+        return f"{ago_s // 60}m"
+    h, m = divmod(ago_s // 60, 60)
+    if h < 24:
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 # ── Main menu ──────────────────────────────────────────────────────────────
 
 
@@ -78,6 +90,7 @@ def render_symbols(
     active: list[str],
     disabled: dict[str, dict],
     paused: dict[str, dict],
+    order_status: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     rows: list[list[dict]] = []
     if active:
@@ -91,7 +104,14 @@ def render_symbols(
     rows.append([_back("menu")])
     parts = ["🔤 <b>Symbols</b>"]
     if active:
-        parts.append(f"Active ({len(active)}): {', '.join(html.escape(s) for s in active)}")
+        if order_status:
+            parts.append(f"Active ({len(active)}):")
+            for s in active:
+                st = order_status.get(s)
+                suffix = f" — {html.escape(st)}" if st else ""
+                parts.append(f"  {html.escape(s)}{suffix}")
+        else:
+            parts.append(f"Active ({len(active)}): {', '.join(html.escape(s) for s in active)}")
     if disabled:
         parts.append(f"Disabled ({len(disabled)}): {', '.join(html.escape(s) for s in disabled)}")
     if paused:
@@ -100,18 +120,21 @@ def render_symbols(
 
 
 def render_symbol_active(
-    symbol: str, price: float, best_preset: str, is_owner: bool
+    symbol: str, price: float, best_preset: str, is_owner: bool,
+    last_order_ago: str | None = None,
 ) -> tuple[str, dict]:
-    text = (
-        f"✅ <b>{html.escape(symbol)}</b>\n"
-        f"Price: {price:,.2f}  |  Status: active\n"
-        f"Best preset: {html.escape(best_preset)}"
-    )
+    lines = [
+        f"✅ <b>{html.escape(symbol)}</b>",
+        f"Price: {price:,.2f}  |  Status: active",
+        f"Best preset: {html.escape(best_preset)}",
+    ]
+    if last_order_ago is not None:
+        lines.append(f"No order for: {html.escape(last_order_ago)}")
     rows: list[list[dict]] = []
     if is_owner:
         rows.append([_btn("⏸ Pause", f"confirm_pause:{symbol}")])
     rows.append([_back("symbols")])
-    return text, _kb(rows)
+    return "\n".join(lines), _kb(rows)
 
 
 def render_symbol_disabled(
@@ -225,7 +248,8 @@ def render_virtual_symbol(symbol: str, ranks: list[dict]) -> tuple[str, dict]:
                 f"{html.escape(str(r.get('side') or ''))} {pct}  open"
             )
         else:
-            lines.append(f"Rank {r['rank']}  {html.escape(r['preset_name'])}  — no position")
+            idle = f"  idle {html.escape(r['last_close_ago'])}" if r.get("last_close_ago") else ""
+            lines.append(f"Rank {r['rank']}  {html.escape(r['preset_name'])}  — no position{idle}")
     rows = [
         [_btn("📜 Recent Closed", f"vhist:{symbol}"), _back("virtual")],
     ]

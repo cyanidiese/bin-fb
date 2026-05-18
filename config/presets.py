@@ -145,81 +145,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_swing_points': 4,
     },
 
-    # ── Earlier partial triggers ──────────────────────────────────────────────
-    'partial_40': {
-        'partial_take_pct': 0.40,
-    },
-    'partial_30': {
-        'partial_take_pct': 0.30,
-    },
-
-    # ── high_rr × partial combinations ───────────────────────────────────────
-    'high_rr_partial_50': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.50,
-    },
-    'high_rr_partial_40': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.40,
-    },
-
-    # ── Push RR selectivity further ───────────────────────────────────────────
-    'very_high_rr_partial_50': {
-        'min_profit_loss_ratio': 3.0,
-        'min_profit_pct': 1.5,
-        'partial_take_pct': 0.50,
-    },
-
-    # ── high_rr + tight entry zone ────────────────────────────────────────────
-    'high_rr_tight_partial_50': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'proximity_zone_pct': 5.0,
-        'partial_take_pct': 0.50,
-    },
-
-    # ── Medium RR + partial ───────────────────────────────────────────────────
-    'medium_rr_partial_50': {
-        'min_profit_loss_ratio': 2.0,
-        'min_profit_pct': 0.7,
-        'partial_take_pct': 0.50,
-    },
-    'partial_40_conservative': {
-        'partial_take_pct': 0.40,
-        'min_profit_loss_ratio': 2.0,
-        'min_swing_points': 4,
-    },
-
-    # ── All winning levers from round 1 combined ──────────────────────────────
-    'best_combo': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.50,
-        'min_swing_points': 4,
-    },
-
-    # ── Trailing stop — baseline ──────────────────────────────────────────────
-    'trail_30_from_50': {
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.30,
-    },
-    'trail_20_from_50': {
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.20,
-    },
-
-    # ── Trailing stop — arm earlier (30%) ─────────────────────────────────────
-    'trail_20_from_30': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-    },
-    'trail_30_from_30': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.30,
-    },
-
     # ── Old bot arm threshold (15% of TP) ─────────────────────────────────────
     'trail_20_from_15': {
         'partial_take_pct': 0.15,
@@ -232,14 +157,6 @@ PRESETS: dict[str, PresetOverrides] = {
     'trail_25_from_15': {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.25,
-    },
-
-    # ── Trailing stop × high RR filter ───────────────────────────────────────
-    'high_rr_trail_20': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.20,
     },
 
     # ── Old layer configs (from btcbt/db/trends.db) ───────────────────────────
@@ -275,13 +192,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
     },
 
-    # ── Conservative TP multiplier ────────────────────────────────────────────
-    'tp_90pct_trail_20': {
-        'tp_multiplier': 0.90,
-        'partial_take_pct': 0.50,
-        'trailing_stop_pct': 0.20,
-    },
-
     # ── SL distance filters ───────────────────────────────────────────────────
     'sl_filter_trail': {
         'min_sl_pct': 0.05,
@@ -290,28 +200,11 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.20,
     },
 
-    # ── Round 3: refined combinations ────────────────────────────────────────
-    'trail_20_from_30_rr3': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'min_profit_loss_ratio': 3.0,
-    },
-    'trail_20_from_30_tp95': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'tp_multiplier': 0.95,
-    },
     'trail_20_from_30_sl_filter': {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.20,
         'min_sl_pct': 0.05,
         'max_sl_pct': 1.50,
-    },
-    'trail_20_from_30_rr3_tp95': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'min_profit_loss_ratio': 3.0,
-        'tp_multiplier': 0.95,
     },
     'trail_20_from_30_full': {
         'partial_take_pct': 0.30,
@@ -321,26 +214,9 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_sl_pct': 0.05,
         'max_sl_pct': 1.50,
     },
-    'sl_adj_arm30_trail20': {
-        'sl_adjust_to_rr': True,
-        'min_profit_loss_ratio': 3.0,
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'tp_multiplier': 0.95,
-    },
     'trail_15_from_30': {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
-    },
-    'trail_20_from_30_wide': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'proximity_zone_pct': 20.0,
-    },
-    'trail_20_from_30_struct': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'min_swing_points': 4,
     },
     'trail_20_from_30_cooldown': {
         'partial_take_pct': 0.30,
@@ -350,13 +226,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'global_pause_trigger_candles': 3,
         'global_pause_candles': 10,
     },
-    'high_rr_arm30_trail20': {
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-    },
-
     # ── Round 4: best formula = arm-30, trail-15, tp×0.95, cooldown ──────────
     'trail_15_from_30_tp95': {
         'partial_take_pct': 0.30,
@@ -380,31 +249,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'global_pause_trigger_candles': 3,
         'global_pause_candles': 10,
     },
-    'trail_20_from_30_tp95_cooldown': {
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.20,
-        'tp_multiplier': 0.95,
-        'loss_streak_max': 2,
-        'loss_streak_cooldown_candles': 5,
-        'global_pause_trigger_candles': 3,
-        'global_pause_candles': 10,
-    },
-
-    # ── Candle-based directional cooldown ─────────────────────────────────────
-    'cooldown_2loss': {
-        'loss_streak_max': 2,
-        'loss_streak_cooldown_candles': 5,
-    },
-    'cooldown_3loss': {
-        'loss_streak_max': 3,
-        'loss_streak_cooldown_candles': 5,
-    },
-    'cooldown_global': {
-        'loss_streak_max': 2,
-        'loss_streak_cooldown_candles': 5,
-        'global_pause_trigger_candles': 3,
-        'global_pause_candles': 10,
-    },
     'db_clone_cooldown': {
         'min_profit_loss_ratio': 4.0,
         'proximity_zone_pct': 20.0,
@@ -419,24 +263,12 @@ PRESETS: dict[str, PresetOverrides] = {
         'global_pause_candles': 10,
     },
 
-    # ── Correction quality bonus ──────────────────────────────────────────────
-    'correction_w10': {'correction_weight': 0.10},
-    'correction_w20': {'correction_weight': 0.20},
-    'correction_w30': {'correction_weight': 0.30},
     'correction_w20_trail15_30': {
         'correction_weight': 0.20,
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
     },
-    'correction_w20_high_rr': {
-        'correction_weight': 0.20,
-        'min_profit_loss_ratio': 2.5,
-        'min_profit_pct': 1.0,
-        'partial_take_pct': 0.30,
-        'trailing_stop_pct': 0.15,
-    },
-
     # ── Full old-bot clone ────────────────────────────────────────────────────
     'db_full_clone': {
         'min_profit_loss_ratio': 4.0,
@@ -638,19 +470,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
     },
-    'lh_sell_prox15_cooldown': {
-        'lower_high_sell': True,
-        'proximity_zone_pct': 15.0,
-        'loss_streak_max': 2,
-        'loss_streak_cooldown_candles': 5,
-        'global_pause_trigger_candles': 3,
-        'global_pause_candles': 10,
-    },
-
-    # ── higher_low_buy: BUY at projected higher low before confirmation ───────
-    'hl_buy_prox10': {'higher_low_buy': True},
-    'hl_buy_prox15': {'higher_low_buy': True, 'proximity_zone_pct': 15.0},
-    'hl_buy_prox20': {'higher_low_buy': True, 'proximity_zone_pct': 20.0},
     'hl_buy_trail15': {
         'higher_low_buy': True,
         'partial_take_pct': 0.30,
@@ -663,21 +482,6 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
-    },
-    'hl_buy_prox15_cooldown': {
-        'higher_low_buy': True,
-        'proximity_zone_pct': 15.0,
-        'loss_streak_max': 2,
-        'loss_streak_cooldown_candles': 5,
-        'global_pause_trigger_candles': 3,
-        'global_pause_candles': 10,
-    },
-
-    # ── Both pre-confirmation flags enabled ───────────────────────────────────
-    'pre_confirm_prox10': {'lower_high_sell': True, 'higher_low_buy': True},
-    'pre_confirm_prox15': {
-        'lower_high_sell': True, 'higher_low_buy': True,
-        'proximity_zone_pct': 15.0,
     },
     'pre_confirm_trail15': {
         'lower_high_sell': True, 'higher_low_buy': True,

@@ -11,6 +11,15 @@ interface Props {
 }
 
 export default function GlobalCapitalRules({ config, state, patchConfig }: Props) {
+  // Which tier is active for the configured backtest balance (same logic as allocation widget)
+  const btBalance = config.backtest_initial_balance_usdt || state?.balance || 0
+  const activeTierIdx = btBalance > 0
+    ? config.balance_tiers.reduce((best, t, i) =>
+        t.min_balance_usdt <= btBalance &&
+        t.min_balance_usdt >= (config.balance_tiers[best]?.min_balance_usdt ?? -1)
+          ? i : best, 0)
+    : -1
+
   function patchTier(idx: number, patch: Partial<BalanceTier>) {
     const tiers = config.balance_tiers.map((t, i) => i === idx ? { ...t, ...patch } : t)
     patchConfig({ balance_tiers: tiers })
@@ -70,15 +79,24 @@ export default function GlobalCapitalRules({ config, state, patchConfig }: Props
             </thead>
             <tbody>
               {config.balance_tiers.map((tier, idx) => (
-                <tr key={idx} className="border-b border-gray-900">
+                <tr
+                  key={idx}
+                  className={`border-b border-gray-900 ${idx === activeTierIdx ? 'bg-indigo-950/40' : ''}`}
+                  title={idx === activeTierIdx ? `Active tier for balance $${btBalance.toLocaleString()} — changes here update the allocation widget` : ''}
+                >
                   <td className="py-1 pr-4">
-                    <input
-                      type="number" min={0} step={100}
-                      value={tier.min_balance_usdt}
-                      title="Minimum account balance (USDT) to activate this tier."
-                      onChange={e => patchTier(idx, { min_balance_usdt: Number(e.target.value) })}
-                      className={INPUT_CLS}
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min={0} step={100}
+                        value={tier.min_balance_usdt}
+                        title="Minimum account balance (USDT) to activate this tier."
+                        onChange={e => patchTier(idx, { min_balance_usdt: Number(e.target.value) })}
+                        className={INPUT_CLS}
+                      />
+                      {idx === activeTierIdx && (
+                        <span className="text-[10px] text-indigo-400 whitespace-nowrap">active</span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-1 pr-4">
                     <input

@@ -29,15 +29,18 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   // BGF: compute deployable pool from the configured balance and current config values
   // so that editing Balance Tiers, min_balance_pct, or backtest_initial_balance_usdt
   // is reflected immediately without waiting for a live risk_state update.
+  const balance = config.backtest_initial_balance_usdt || state?.balance || 0
+  // Always derive tier from config (not state?.active_tier) so UI edits take effect instantly.
+  // This is the tier that actually controls the Alloc USDT column here.
+  const activeTier = balance > 0
+    ? ([...config.balance_tiers]
+        .sort((a, b) => b.min_balance_usdt - a.min_balance_usdt)
+        .find(t => balance >= t.min_balance_usdt) ?? config.balance_tiers[0])
+    : null
   const deployable = (() => {
-    const balance = config.backtest_initial_balance_usdt || state?.balance || 0
-    if (balance <= 0) return 0
-    // Always derive tier from config (not state?.active_tier) so UI edits take effect instantly
-    const tier = [...config.balance_tiers]
-      .sort((a, b) => b.min_balance_usdt - a.min_balance_usdt)
-      .find(t => balance >= t.min_balance_usdt) ?? config.balance_tiers[0]
+    if (!activeTier || balance <= 0) return 0
     const reserve = balance * (config.min_balance_pct / 100)
-    return Math.max(0, balance - reserve) * ((tier?.max_deploy_pct ?? 40) / 100)
+    return Math.max(0, balance - reserve) * (activeTier.max_deploy_pct / 100)
   })()
 
   // BGF: determine which symbols are in the active top-N set.
@@ -110,6 +113,17 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
         {bgfMode && <span className="ml-2 text-xs text-amber-400 font-normal">(auto — score-proportional)</span>}
       </p>
       <div className={SECTION_BODY_CLS}>
+
+        {/* BGF: active-tier info — tells the user which Balance Tier row drives these numbers */}
+        {bgfMode && activeTier && (
+          <div className="mb-3 text-xs font-mono text-gray-500 bg-gray-800/50 rounded px-3 py-1.5">
+            Using balance <span className="text-gray-300">${balance.toLocaleString()}</span>
+            {' '}→ tier ≥${activeTier.min_balance_usdt.toLocaleString()}
+            {' '}→ deploy <span className="text-indigo-300">{activeTier.max_deploy_pct}%</span>
+            {', '}reserve <span className="text-indigo-300">{config.min_balance_pct}%</span>
+            {' '}→ deployable <span className="text-emerald-400">${deployable.toFixed(0)}</span>
+          </div>
+        )}
 
         {/* BGF: Top-N control */}
         {bgfMode && (

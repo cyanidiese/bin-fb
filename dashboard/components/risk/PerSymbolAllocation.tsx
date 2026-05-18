@@ -26,13 +26,14 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
 
   const totalWeight = Object.values(config.symbol_weights).reduce((a, b) => a + b, 0) || 1
 
-  // BGF: compute deployable pool using backtest_initial_balance so the user can
-  // see allocation impact immediately when they change that field, without waiting
-  // for a live risk_state update. Falls back to live balance if backtest field is 0.
+  // BGF: compute deployable pool from the configured balance and current config values
+  // so that editing Balance Tiers, min_balance_pct, or backtest_initial_balance_usdt
+  // is reflected immediately without waiting for a live risk_state update.
   const deployable = (() => {
     const balance = config.backtest_initial_balance_usdt || state?.balance || 0
     if (balance <= 0) return 0
-    const tier = state?.active_tier ?? [...config.balance_tiers]
+    // Always derive tier from config (not state?.active_tier) so UI edits take effect instantly
+    const tier = [...config.balance_tiers]
       .sort((a, b) => b.min_balance_usdt - a.min_balance_usdt)
       .find(t => balance >= t.min_balance_usdt) ?? config.balance_tiers[0]
     const reserve = balance * (config.min_balance_pct / 100)

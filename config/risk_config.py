@@ -38,7 +38,6 @@ DEFAULT_CONFIG: dict = {
     # Telegram content-dedup cooldowns (suppress re-sending identical message)
     "emergency_repeat_interval_s": 1800,   # 30 min
     "warning_repeat_interval_s": 14400,    # 4 hours
-    "virtual_rank_max": 6,
     "scenario": "default",
 }
 

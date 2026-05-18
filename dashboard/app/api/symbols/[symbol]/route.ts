@@ -3,6 +3,18 @@ import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from '../_registry'
 
+const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
+
+function removeFromSymbolWeights(symbol: string): void {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    if (cfg.symbol_weights && symbol in cfg.symbol_weights) {
+      delete cfg.symbol_weights[symbol]
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
+    }
+  } catch { /* config missing — nothing to remove */ }
+}
+
 function deleteSymbolFiles(symbol: string): void {
   const publicDir = path.join(BOT_ROOT, 'dashboard', 'public')
   const dataDir = path.join(BOT_ROOT, 'data')
@@ -58,6 +70,7 @@ export async function DELETE(
   reg.symbols = reg.symbols.filter(s => s !== symbol)
   delete reg.status[symbol]
   writeRegistry(reg)
+  removeFromSymbolWeights(symbol)
 
   deleteSymbolFiles(symbol)
 

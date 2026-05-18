@@ -4,6 +4,19 @@ import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from './_registry'
 
+const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
+
+function addToSymbolWeights(symbol: string): void {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    if (!cfg.symbol_weights) cfg.symbol_weights = {}
+    if (!(symbol in cfg.symbol_weights)) {
+      cfg.symbol_weights[symbol] = 1
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
+    }
+  } catch { /* config not yet created — bot will add it on first write */ }
+}
+
 const MODE_PATH = path.join(BOT_ROOT, 'data', 'bot_mode.json')
 
 function readCurrentMode(): string {
@@ -116,6 +129,7 @@ export async function POST(req: NextRequest) {
   reg.symbols.push(symbol)
   reg.status[symbol] = { backtest: 'running', pid: null }
   writeRegistry(reg)
+  addToSymbolWeights(symbol)
 
   // Write a placeholder results file immediately so the Strategy page shows the
   // symbol straight away rather than the "no data yet" message.

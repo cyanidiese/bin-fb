@@ -1,8 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 type BacktestStatus = 'none' | 'running' | 'complete' | 'error' | 'cancelled'
+type SortCol = 'symbol' | 'profit'
+type SortDir = 'asc' | 'desc'
 
 interface SymbolStatus {
   backtest: BacktestStatus
@@ -43,6 +45,35 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [perfScores, setPerfScores] = useState<Record<string, number>>({})
+  const [sortCol, setSortCol] = useState<SortCol>('profit')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  useEffect(() => {
+    fetch('/api/public-file?f=risk_state.json')
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (!data?.per_symbol) return
+        const scores: Record<string, number> = {}
+        for (const [sym, info] of Object.entries(data.per_symbol as Record<string, { performance_score?: number }>)) {
+          scores[sym] = (info as { performance_score?: number }).performance_score ?? 0
+        }
+        setPerfScores(scores)
+      })
+      .catch(() => {})
+  }, [registry])  // re-fetch whenever registry changes (symbol added/removed/backtest done)
+
+  function toggleSort(col: SortCol) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir(col === 'profit' ? 'desc' : 'asc') }
+  }
+
+  const sortedSymbols = [...(registry?.symbols ?? [])].sort((a, b) => {
+    const cmp = sortCol === 'symbol'
+      ? a.localeCompare(b)
+      : (perfScores[a] ?? -1) - (perfScores[b] ?? -1)
+    return sortDir === 'asc' ? cmp : -cmp
+  })
 
   const updatedAt = registry?.updated_at
     ? new Date(registry.updated_at).toLocaleTimeString()
@@ -119,19 +150,39 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
           <table className="w-full text-xs font-mono">
             <thead>
               <tr className="border-b border-gray-800 text-gray-500">
-                <th className="text-left px-4 py-2 font-normal" title="Binance USD-M Futures symbol">Symbol</th>
+                <th
+                  className="text-left px-4 py-2 font-normal cursor-pointer select-none hover:text-gray-300 transition-colors"
+                  title="Binance USD-M Futures symbol — click to sort"
+                  onClick={() => toggleSort('symbol')}
+                >
+                  Symbol{sortCol === 'symbol' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                </th>
                 <th className="text-left px-4 py-2 font-normal" title="Status of the most recent backtest run for this symbol">Backtest</th>
+                <th
+                  className="text-right px-4 py-2 font-normal cursor-pointer select-none hover:text-gray-300 transition-colors"
+                  title="Best preset's total profit % from the last backtest — click to sort"
+                  onClick={() => toggleSort('profit')}
+                >
+                  Profit %{sortCol === 'profit' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                </th>
                 <th className="px-4 py-2" />
               </tr>
             </thead>
             <tbody>
-              {registry.symbols.map(sym => {
+              {sortedSymbols.map(sym => {
                 const st = registry.status[sym] ?? { backtest: 'none', pid: null }
+                const score = perfScores[sym]
                 return (
                   <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
                     <td className="px-4 py-2 text-indigo-300 font-semibold">{sym}</td>
                     <td className="px-4 py-2">
                       <StatusBadge status={st.backtest} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {score != null
+                        ? <span className={score > 0 ? 'text-emerald-400' : 'text-gray-500'}>{score.toFixed(2)}%</span>
+                        : <span className="text-gray-700">—</span>
+                      }
                     </td>
                     <td className="px-4 py-2 text-right">
                       <button

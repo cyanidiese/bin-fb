@@ -15,6 +15,7 @@ interface RiskConfig {
   min_balance_pct?: number
   symbol_weights?: Record<string, number>
   scenario?: string
+  bgf_top_n?: number
 }
 
 interface RiskStateSnapshot {
@@ -87,11 +88,8 @@ function computeSizingFirstHasMost(
   riskState: RiskStateSnapshot | undefined,
   allSymbols: string[],
 ): { margin: number; lev: number } {
-  const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
-  const base = config.base_leverage ?? 1
-  const maxLev = config.max_leverage_level ?? 5
-  const raw = base + Math.floor(score * (maxLev - base))
-  const lev = Math.max(base, Math.min(maxLev, raw))
+  // Use bot's pre-computed leverage — performance_score is now raw profit%, not 0-1
+  const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage ?? config.base_leverage ?? 1)
   const tier = activeTier(config, balance)
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
@@ -105,23 +103,31 @@ function computeSizingBestGetsFirst(
   config: RiskConfig,
   riskState: RiskStateSnapshot | undefined,
   allSymbols: string[],
+  bgfTopN: number,
 ): { margin: number; lev: number } {
-  const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
-  const base = config.base_leverage ?? 1
-  const maxLev = config.max_leverage_level ?? 5  // was config.max_leverage — wrong ceiling
+  // Use bot's pre-computed leverage — performance_score is now raw profit%, not 0-1
+  const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage ?? config.base_leverage ?? 1)
   const tier = activeTier(config, balance)
-  const maxEffective = Math.min(maxLev, tier.max_leverage_ceiling)
-  const raw = base + Math.floor(score * (maxEffective - base))
-  const lev = Math.max(base, Math.min(maxEffective, raw))
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
-  // Proportional allocation: score / sum(all scores) — mirrors main.py BGF loop
-  const totalScore = allSymbols.reduce(
+
+  // Apply top-N filter — sort by profit% desc, take first N (mirrors main.py BGF loop)
+  const sortedByScore = [...allSymbols].sort(
+    (a, b) => (riskState?.per_symbol?.[b]?.performance_score ?? 0) -
+               (riskState?.per_symbol?.[a]?.performance_score ?? 0)
+  )
+  const effectiveN = bgfTopN > 0 && bgfTopN < sortedByScore.length ? bgfTopN : sortedByScore.length
+  const activeSet = new Set(sortedByScore.slice(0, effectiveN))
+
+  if (!activeSet.has(symbol)) return { margin: 0, lev }
+
+  const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
+  const totalScore = [...activeSet].reduce(
     (sum, s) => sum + Math.max(0, riskState?.per_symbol?.[s]?.performance_score ?? 0), 0
   )
   const margin = totalScore > 0
     ? pool * Math.max(0, score) / totalScore
-    : pool / Math.max(allSymbols.length, 1)
+    : pool / Math.max(activeSet.size, 1)
   return { margin, lev }
 }
 
@@ -231,7 +237,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
             out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           case 'best_gets_first':
-            out[sym] = computeSizingBestGetsFirst(sym, totalBalance, riskConfig, riskState, loadedSymbols)
+            out[sym] = computeSizingBestGetsFirst(sym, totalBalance, riskConfig, riskState, loadedSymbols, riskConfig.bgf_top_n ?? 0)
             break
           default:
             out[sym] = computeSizingDefault(sym, totalBalance, riskConfig, riskState, loadedSymbols)
@@ -473,11 +479,14 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
           {loadedSymbols.map(sym => {
             const { margin, lev } = sizingBySymbol[sym]
             const score = riskState?.per_symbol[sym]?.performance_score
+            const excluded = scenarioTab === 'best_gets_first' && margin === 0
             return (
-              <span key={sym} title={score != null ? `Performance score: ${score.toFixed(3)}` : 'No live score — using base leverage'}>
-                <span className="text-indigo-400">{sym}</span>
-                {' '}${margin.toFixed(0)} × {lev}×
-                {score == null && <span className="text-gray-700"> (base lev)</span>}
+              <span key={sym} title={score != null ? `Profit score: ${score.toFixed(2)}%` : 'No live score — using base leverage'}>
+                <span className={excluded ? 'text-gray-600' : 'text-indigo-400'}>{sym}</span>
+                {' '}{excluded
+                  ? <span className="text-gray-700">(excluded)</span>
+                  : <>{`$${margin.toFixed(0)} × ${lev}×`}{score == null && <span className="text-gray-700"> (base lev)</span>}</>
+                }
               </span>
             )
           })}

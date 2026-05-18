@@ -25,6 +25,7 @@ interface RiskConfig {
   min_balance_pct: number
   symbol_weights: Record<string, number>
   backtest_klines?: number
+  bgf_top_n?: number
 }
 
 interface RiskStateSnapshot {
@@ -146,22 +147,41 @@ export default function BacktestPage() {
 
   useEffect(() => {
     setData(null)
-    fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then((json: BacktestResults) => {
-        setData(json)
-        const entries = Object.values(json.presets)
-        if (entries.length > 0) {
-          const best = entries.reduce((a, b) =>
-            b.total_profit_pct > a.total_profit_pct ? b : a
-          )
-          setSelectedPreset(prev => prev ?? best.preset)
-        }
-      })
-      .catch(e => setError(String(e)))
+    setError(null)
+    let cancelled = false
+    let retries = 0
+    const MAX_RETRIES = 20  // 20 × 3s = 60s polling window
+
+    function load() {
+      fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        })
+        .then((json: BacktestResults) => {
+          if (cancelled) return
+          setData(json)
+          const entries = Object.values(json.presets)
+          if (entries.length > 0) {
+            const best = entries.reduce((a, b) =>
+              b.total_profit_pct > a.total_profit_pct ? b : a
+            )
+            setSelectedPreset(prev => prev ?? best.preset)
+          }
+        })
+        .catch(() => {
+          if (cancelled) return
+          if (retries < MAX_RETRIES) {
+            retries++
+            setTimeout(load, 3000)
+          } else {
+            setError('Results not ready — run backtest.py first or wait for the auto-backtest to finish')
+          }
+        })
+    }
+
+    load()
+    return () => { cancelled = true }
   }, [symbol])
 
   useEffect(() => {
@@ -213,7 +233,10 @@ export default function BacktestPage() {
 
   if (!data) {
     return (
-      <main className="p-6 text-gray-500 text-sm">Loading backtest results…</main>
+      <main className="p-6 text-gray-500 text-sm">
+        Loading backtest results…
+        <span className="ml-2 text-gray-600">(polling — auto-backtests may still be running on startup)</span>
+      </main>
     )
   }
 

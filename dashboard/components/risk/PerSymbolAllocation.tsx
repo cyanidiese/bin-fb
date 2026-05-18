@@ -249,7 +249,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     {live ? `${live.leverage}×` : '—'}
                   </td>
                   <td className="py-1.5 text-gray-400">
-                    {live ? `${live.performance_score.toFixed(2)}%` : '—'}
+                    {live?.performance_score != null ? `${live.performance_score.toFixed(2)}%` : '—'}
                   </td>
                 </tr>
               )

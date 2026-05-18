@@ -105,14 +105,13 @@ export default function RiskPage() {
 
       <GlobalCapitalRules config={config} state={state} patchConfig={patchConfig} />
 
-      {scenario !== 'best_gets_first' && (
-        <PerSymbolAllocation
-          config={config}
-          state={state}
-          availableSymbols={availableSymbols}
-          patchConfig={patchConfig}
-        />
-      )}
+      <PerSymbolAllocation
+        config={config}
+        state={state}
+        availableSymbols={availableSymbols}
+        patchConfig={patchConfig}
+        bgfMode={scenario === 'best_gets_first'}
+      />
 
       <LeverageControls config={config} patchConfig={patchConfig} scenario={scenario} />
 

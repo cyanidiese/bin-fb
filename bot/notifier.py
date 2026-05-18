@@ -125,10 +125,10 @@ class Notifier:
         result = "Win" if win else "Loss"
         sign = "+" if pnl_usdt >= 0 else ""
         text = (
-            f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b>\n"
+            f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b> <i>[Real]</i>\n"
             f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
             f"Balance: {balance_after:,.2f} USDT\n"
-            f"Entry: {entry_price:,.2f} → Close: {close_price:,.2f}\n"
+            f"Entry: {entry_price:,.4f} → Close: {close_price:,.4f}\n"
             f"Preset: {html.escape(preset_name)}"
         )
         try:

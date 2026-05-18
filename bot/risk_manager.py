@@ -167,11 +167,11 @@ class RiskManager:
             reserve = self._balance * (min_pct / 100.0) if min_pct > 0 else 0.0
             return max(0.0, self._balance - reserve) * tier["max_deploy_pct"] / 100.0
 
-    def get_symbol_allocation(self, symbol: str) -> float:
-        """Per-symbol deployable USDT margin, same formula as _calc_allocation."""
+    def get_symbol_allocation(self, symbol: str, active_symbols: list[str] | None = None) -> float:
+        """Per-symbol deployable USDT margin. Pass active_symbols to exclude disabled symbols from the weight denominator."""
         with self._lock:
             cfg = self._load_config()
-            return self._calc_allocation(symbol, cfg)
+            return self._calc_allocation(symbol, cfg, active_symbols)
 
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
@@ -241,10 +241,13 @@ class RiskManager:
                 active = t
         return active
 
-    def _calc_allocation(self, symbol: str, cfg: dict) -> float:
+    def _calc_allocation(self, symbol: str, cfg: dict, active_symbols: list[str] | None = None) -> float:
         weights: dict = cfg.get("symbol_weights", {})
         w_sym = float(weights.get(symbol, 1))
-        total_w = float(sum(weights.values())) if weights else 1.0
+        if active_symbols is not None:
+            total_w = sum(float(weights.get(s, 1)) for s in active_symbols)
+        else:
+            total_w = float(sum(weights.values())) if weights else 1.0
         if total_w == 0:
             total_w = 1.0
         tier = self._get_tier(cfg)

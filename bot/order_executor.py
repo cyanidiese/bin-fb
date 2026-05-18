@@ -442,7 +442,7 @@ class OrderExecutor:
                 side=close_side,
                 type='STOP_MARKET',
                 stopPrice=str(sl_price),
-                quantity=str(quantity),
+                quantity=f"{quantity:g}",
                 reduceOnly=True,
                 workingType='MARK_PRICE',
             )
@@ -487,7 +487,7 @@ class OrderExecutor:
                 symbol=symbol,
                 side=side,
                 type='MARKET',
-                quantity=str(quantity),
+                quantity=f"{quantity:g}",
             )
             return str(result.get('orderId'))
         except Exception as exc:
@@ -519,7 +519,7 @@ class OrderExecutor:
             symbol=symbol,
             side=close_side,
             type='MARKET',
-            quantity=str(order.quantity),
+            quantity=f"{order.quantity:g}",
             reduceOnly=True,
         )
         avg_price = float(result.get('avgPrice', 0) or 0)
@@ -531,46 +531,87 @@ class OrderExecutor:
 
     async def reconcile_with_exchange(self) -> None:
         """
-        On startup: fetch open positions from exchange and rebuild _open_orders state.
-        Reconciled orders have no FakeOrder so they won't be monitored for trailing stop —
-        they will be closed via close_order() or close_all_orders_at_market() only.
+        On startup: close any open exchange positions the bot has no record of.
+        Parking them as unmanaged orders (sl=0, no FakeOrder) creates zombies that
+        block future signals with no exit path. Closing and re-entering is safer.
         """
         if self._feed is None:
             return
         try:
             positions = await asyncio.to_thread(self._feed.client.futures_position_information)
-            count = 0
+            closed_count = 0
             for pos in positions:
                 symbol = pos['symbol']
                 amt = float(pos.get('positionAmt', 0))
                 if amt == 0:
                     continue
+                if symbol in self._open_orders:
+                    continue  # bot already tracking this one
                 entry_price = float(pos.get('entryPrice', 0))
                 side = 'BUY' if amt > 0 else 'SELL'
                 quantity = abs(amt)
                 leverage = int(float(pos.get('leverage', 1)))
+                # Register temporarily so _market_close can send the reduce-only order
                 self._open_orders[symbol] = OpenOrder(
                     symbol=symbol, preset_name='reconciled', side=side,
                     entry_price=entry_price, tp_price=0.0, sl_price=0.0,
                     quantity=quantity, leverage=leverage,
                 )
                 self._states[symbol] = OrderState.OPEN
-                count += 1
-                logger.warning(
-                    f"Reconciled open position: {symbol} {side} "
-                    f"qty={quantity} @ {entry_price} lev={leverage}x"
-                )
-            if count == 0:
-                logger.info("Reconciliation complete: no open positions found")
+                try:
+                    close_price = await self._market_close(symbol, self._open_orders[symbol])
+                    pnl = self._calc_pnl(self._open_orders[symbol], close_price)
+                    logger.warning(
+                        f"[{symbol}] Orphan position closed on startup: {side} "
+                        f"qty={quantity} entry={entry_price:.6f} close={close_price:.6f} pnl={pnl:+.4f}"
+                    )
+                except Exception as exc:
+                    logger.error(f"[{symbol}] Failed to close orphan position: {exc}")
+                finally:
+                    self._open_orders.pop(symbol, None)
+                    self._fake_orders.pop(symbol, None)
+                    self._states.pop(symbol, None)
+                closed_count += 1
+            if closed_count == 0:
+                logger.info("Reconciliation complete: no orphan positions found")
             else:
                 self._notifier.notify(
                     "warning",
-                    f"Reconciled {count} open position(s) from exchange",
-                    "These positions have no software trailing stop — manage manually or let them close via normal flow",
+                    f"Closed {closed_count} orphan position(s) on startup",
+                    "Bot restarted with open positions — closed immediately to prevent unmanaged exposure",
                     "order_executor",
                 )
         except Exception as exc:
             logger.warning(f"Reconciliation failed: {exc}")
+
+    async def sync_positions_with_exchange(self) -> None:
+        """Detect positions that were closed externally (e.g. exchange SL fired while bot ran).
+        Clears stale _open_orders entries so the symbol becomes IDLE again."""
+        if self._feed is None or not self._open_orders:
+            return
+        try:
+            positions = await asyncio.to_thread(self._feed.client.futures_position_information)
+            live = {
+                pos['symbol']
+                for pos in positions
+                if float(pos.get('positionAmt', 0)) != 0
+            }
+            for symbol in list(self._open_orders.keys()):
+                if symbol not in live:
+                    logger.warning(
+                        f"[{symbol}] Position closed externally — clearing bot state"
+                    )
+                    self._notifier.notify(
+                        "warning",
+                        f"{symbol} position closed externally",
+                        "Exchange shows no position but bot had one open — state cleared",
+                        "order_executor",
+                    )
+                    self._open_orders.pop(symbol, None)
+                    self._fake_orders.pop(symbol, None)
+                    self._states.pop(symbol, None)
+        except Exception as exc:
+            logger.warning(f"sync_positions_with_exchange failed: {exc}")
 
     async def fetch_account_balance(self) -> float:
         """Returns totalWalletBalance from the futures account, or 0.0 on error."""
@@ -683,7 +724,7 @@ class OrderExecutor:
     async def _ensure_lot_size(self, symbol: str) -> dict:
         if symbol in self._lot_cache:
             return self._lot_cache[symbol]
-        default = {'step_size': 0.001, 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.00001}
+        default = {'step_size': '0.001', 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.00001}
         if self._feed is None:
             return default
         try:
@@ -694,7 +735,7 @@ class OrderExecutor:
                 for f in sym_info.get('filters', []):
                     ft = f.get('filterType')
                     if ft == 'LOT_SIZE':
-                        entry['step_size'] = float(f['stepSize'])
+                        entry['step_size'] = f['stepSize']
                         entry['min_qty'] = float(f['minQty'])
                     elif ft == 'PRICE_FILTER':
                         ts = float(f.get('tickSize', 0) or 0)
@@ -703,7 +744,7 @@ class OrderExecutor:
                     elif ft == 'MIN_NOTIONAL':
                         entry['min_notional'] = float(f.get('notional') or f.get('minNotional') or 0)
                 self._lot_cache[sym] = {
-                    'step_size':   entry.get('step_size', 0.001),
+                    'step_size':   entry.get('step_size', '0.001'),
                     'min_qty':     entry.get('min_qty', 0.001),
                     'min_notional': entry.get('min_notional', 0.0),
                     'tick_size':   entry.get('tick_size', 0.00001),

@@ -221,7 +221,11 @@ class VirtualOrderSimulator:
         if entry <= 0 or tp <= 0:
             return
 
-        quantity = min_notional / entry if entry > 0 else 0.0
+        if self._get_allocation:
+            alloc = self._get_allocation(symbol)
+            quantity = alloc * lev / entry if entry > 0 and alloc > 0 else min_notional / entry
+        else:
+            quantity = min_notional / entry if entry > 0 else 0.0
         if quantity <= 0:
             return
 

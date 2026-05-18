@@ -314,7 +314,8 @@ async def run() -> None:
         return cached_val
 
     async def _try_place_order(
-        symbol: str, best, settings, balance: float, candle_ts: int
+        symbol: str, best, settings, balance: float, candle_ts: int,
+        trade_cap: float = 0.0,
     ) -> float:
         preset_name = virtual_tracker.best_preset(symbol)
         overrides = all_presets.get(preset_name or 'default', {})
@@ -393,6 +394,18 @@ async def run() -> None:
             logger.info(f"[{symbol}] Insufficient balance: {balance:.2f} < margin={margin:.2f}")
             return 0.0
 
+        # Determine per-trade margin from scenario allocation or proportional BGF cap
+        if scenario.uses_weight_allocation:
+            active_syms = [
+                s for s in symbol_registry.get_symbols()
+                if not symbol_registry.is_disabled(s) and not symbol_registry.is_symbol_paused(s)
+            ]
+            trade_margin = max(risk_manager.get_symbol_allocation(symbol, active_syms), margin)
+        else:
+            # trade_cap is the pre-computed proportional share for this symbol
+            cap = trade_cap if trade_cap > 0 else margin
+            trade_margin = max(min(balance, cap), margin)
+
         allowed, reason = risk_manager.can_open_sync(symbol)
         if not allowed:
             decision = 'skip_hard_stop' if 'hard_stop' in reason else 'skip_profit_factor'
@@ -412,7 +425,7 @@ async def run() -> None:
                 return 0.0
 
         # 2% buffer ensures step-rounding never drops notional below the exchange floor (-4164 guard).
-        quantity = min_notional * 1.02 / entry
+        quantity = trade_margin * actual_lev * 1.02 / entry
 
         bh_record(bh_path, balance=balance, trigger='order_open',
                   symbol=symbol, leverage=actual_lev)
@@ -447,7 +460,7 @@ async def run() -> None:
                 level=best.getLevel(),
                 precision_score=precision or 0.0,
             )
-            return margin
+            return trade_margin
         return 0.0
 
     async def on_candle_close(symbol: str, kline: list) -> None:
@@ -500,6 +513,7 @@ async def run() -> None:
                     logger.info("Daily exchange-info refresh complete")
                 except Exception as exc:
                     logger.warning(f"Daily exchange-info refresh failed (will retry next cycle): {exc}")
+                await order_executor.sync_positions_with_exchange()
 
         if symbol_registry.is_disabled(symbol):
             return
@@ -549,11 +563,17 @@ async def run() -> None:
             for sym, best, sym_s, _ in candidates:
                 await _try_place_order(sym, best, sym_s, balance, candle_ts)
         else:
-            # BestGetsFirst: each symbol gets the remaining deployable pool after prior orders
+            # BestGetsFirst: proportional caps derived from efficiency scores (disabled already excluded)
             deployable = risk_manager.get_deployable_budget()
+            total_score = sum(max(0.0, s) for _, _, _, s in candidates)
             deployed = 0.0
-            for sym, best, sym_s, _ in candidates:
-                used = await _try_place_order(sym, best, sym_s, max(0.0, deployable - deployed), candle_ts)
+            for sym, best, sym_s, score in candidates:
+                remaining = max(0.0, deployable - deployed)
+                if total_score > 0:
+                    sym_cap = deployable * max(0.0, score) / total_score
+                else:
+                    sym_cap = deployable / len(candidates) if candidates else 0.0
+                used = await _try_place_order(sym, best, sym_s, remaining, candle_ts, trade_cap=sym_cap)
                 deployed += used
 
         await virtual_order_simulator.on_candle_close(

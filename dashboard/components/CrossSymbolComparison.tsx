@@ -51,12 +51,13 @@ function computeSizingDefault(
   balance: number,
   config: RiskConfig,
   riskState: RiskStateSnapshot | undefined,
+  allSymbols: string[],
 ): { margin: number; lev: number } {
   const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage_level ?? riskState?.leverage_level ?? 1)
   const tier = activeTier(config, balance)
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
-  const numSymbols = Object.keys(riskState?.per_symbol ?? {}).length || 1
+  const numSymbols = allSymbols.length || 1
   return { margin: pool / numSymbols, lev }
 }
 
@@ -65,12 +66,14 @@ function computeSizingAllocation(
   balance: number,
   config: RiskConfig,
   riskState: RiskStateSnapshot | undefined,
+  allSymbols: string[],
 ): { margin: number; lev: number } {
   const tier = activeTier(config, balance)
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
   const weights = config.symbol_weights ?? {}
-  const totalW = Object.values(weights).reduce((a, b) => a + b, 0) || 1
+  // Sum only active symbols' weights — mirrors the bot's disabled-exclusion fix
+  const totalW = allSymbols.reduce((sum, s) => sum + (weights[s] ?? 1), 0) || 1
   const w = weights[symbol] ?? 1
   const margin = pool * (w / totalW)
   const lev = Math.max(1, riskState?.per_symbol?.[symbol]?.leverage_level ?? 1)
@@ -82,6 +85,7 @@ function computeSizingFirstHasMost(
   balance: number,
   config: RiskConfig,
   riskState: RiskStateSnapshot | undefined,
+  allSymbols: string[],
 ): { margin: number; lev: number } {
   const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
   const base = config.base_leverage ?? 1
@@ -91,7 +95,7 @@ function computeSizingFirstHasMost(
   const tier = activeTier(config, balance)
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
-  const numSymbols = Object.keys(riskState?.per_symbol ?? {}).length || 1
+  const numSymbols = allSymbols.length || 1
   return { margin: pool / numSymbols, lev }
 }
 
@@ -104,21 +108,21 @@ function computeSizingBestGetsFirst(
 ): { margin: number; lev: number } {
   const score = riskState?.per_symbol?.[symbol]?.performance_score ?? 0
   const base = config.base_leverage ?? 1
-  const maxLev = config.max_leverage ?? 5
+  const maxLev = config.max_leverage_level ?? 5  // was config.max_leverage — wrong ceiling
   const tier = activeTier(config, balance)
   const maxEffective = Math.min(maxLev, tier.max_leverage_ceiling)
   const raw = base + Math.floor(score * (maxEffective - base))
   const lev = Math.max(base, Math.min(maxEffective, raw))
   const reserve = balance * (config.min_balance_pct ?? 0) / 100
   const pool = Math.max(0, balance - reserve) * tier.max_deploy_pct / 100
-  // Symbols sorted by score descending; each gets the full remaining pool after prior symbols' min margins
-  const sorted = [...allSymbols].sort((a, b) =>
-    (riskState?.per_symbol?.[b]?.performance_score ?? 0) - (riskState?.per_symbol?.[a]?.performance_score ?? 0)
+  // Proportional allocation: score / sum(all scores) — mirrors main.py BGF loop
+  const totalScore = allSymbols.reduce(
+    (sum, s) => sum + Math.max(0, riskState?.per_symbol?.[s]?.performance_score ?? 0), 0
   )
-  const myRank = sorted.indexOf(symbol)
-  // Estimate consumed margin as 5 USDT per prior symbol (min_notional approximation)
-  const consumed = Math.max(0, myRank) * 5
-  return { margin: Math.max(0, pool - consumed), lev }
+  const margin = totalScore > 0
+    ? pool * Math.max(0, score) / totalScore
+    : pool / Math.max(allSymbols.length, 1)
+  return { margin, lev }
 }
 
 function computeSizing(
@@ -221,16 +225,16 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
       if (useSharedBalance && riskConfig) {
         switch (scenarioTab) {
           case 'allocation':
-            out[sym] = computeSizingAllocation(sym, totalBalance, riskConfig, riskState)
+            out[sym] = computeSizingAllocation(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           case 'first_has_most':
-            out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState)
+            out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           case 'best_gets_first':
             out[sym] = computeSizingBestGetsFirst(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           default:
-            out[sym] = computeSizingDefault(sym, totalBalance, riskConfig, riskState)
+            out[sym] = computeSizingDefault(sym, totalBalance, riskConfig, riskState, loadedSymbols)
         }
       } else {
         out[sym] = { margin: positionSize, lev: leverage }

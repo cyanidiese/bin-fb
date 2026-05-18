@@ -190,7 +190,7 @@ async def run() -> None:
         min_notionals=min_notionals,
         get_allocation=risk_manager.get_symbol_allocation,
         get_scenario=lambda: _active_scenario_name,
-        rank_max=6,
+        rank_max=len(all_presets),
         is_rank_disabled=symbol_registry.is_rank_disabled,
     )
 
@@ -206,7 +206,7 @@ async def run() -> None:
         get_mode=lambda: mode_manager.current_mode,
         get_active_symbols=symbol_registry.get_symbols,
         get_open_orders=order_executor.get_open_orders,
-        rank_max=6,
+        rank_max=len(all_presets),
     )
 
     def _push_scenario_info() -> None:
@@ -672,7 +672,7 @@ async def run() -> None:
             min_notionals=min_notionals,
             get_allocation=risk_manager.get_symbol_allocation,
             get_scenario=lambda: _active_scenario_name,
-            rank_max=6,
+            rank_max=len(all_presets),
             is_rank_disabled=symbol_registry.is_rank_disabled,
         )
         switch_balance = await order_executor.fetch_account_balance()

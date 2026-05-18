@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_CLOSED = 500
 _DEFAULT_MIN_NOTIONAL = 5.0
-_DEFAULT_RANK_MAX = 6   # track ranks 2 through 6 (rank 1 = real order)
+_DEFAULT_RANK_MAX = 6   # fallback; callers pass len(all_presets) at runtime
 
 
 class VirtualOrderSimulator:

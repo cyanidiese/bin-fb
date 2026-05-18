@@ -214,9 +214,9 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
 
   const [useSharedBalance, setUseSharedBalance] = useState(false)
   const [totalBalance, setTotalBalance] = useState<number>(() => riskState?.balance ?? 1000)
-  const [scenarioTab, setScenarioTab] = useState<ScenarioId>(
-    (riskConfig?.scenario as ScenarioId | undefined) ?? 'default'
-  )
+  // null = follow riskConfig.scenario; set when user manually picks a different tab
+  const [scenarioOverride, setScenarioOverride] = useState<ScenarioId | null>(null)
+  const scenarioTab: ScenarioId = scenarioOverride ?? ((riskConfig?.scenario as ScenarioId | undefined) ?? 'default')
 
   const [combinedSort,   setCombinedSort]   = useState<SortState>({ key: 'total',  dir: 'desc' })
   const [sideBySideSort, setSideBySideSort] = useState<SortState>({ key: '',       dir: 'desc' })
@@ -450,7 +450,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
 
       {/* Scenario tabs — only visible in shared balance mode */}
       {useSharedBalance && riskConfig && (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           <span className="text-gray-600 text-[10px] mr-1">Scenario:</span>
           {([
             ['default',         'Default'],
@@ -460,7 +460,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
           ] as [ScenarioId, string][]).map(([id, label]) => (
             <button
               key={id}
-              onClick={() => setScenarioTab(id)}
+              onClick={() => setScenarioOverride(id)}
               className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
                 scenarioTab === id
                   ? 'bg-indigo-600 text-white'
@@ -470,6 +470,15 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
               {label}
             </button>
           ))}
+          {scenarioOverride !== null && (
+            <button
+              onClick={() => setScenarioOverride(null)}
+              className="ml-1 text-[10px] text-indigo-400 hover:text-white transition-colors"
+              title={`Reset to configured scenario: ${riskConfig?.scenario ?? 'default'}`}
+            >
+              ↺ config
+            </button>
+          )}
         </div>
       )}
 

@@ -51,7 +51,7 @@ export async function POST() {
       }
     }
 
-    // Clear virtual orders per symbol
+    // Clear virtual orders per symbol (legacy flat format)
     for (const sym of symbols) {
       const src = path.join(dataDir, `virtual_orders_${sym}_${mode}.json`)
       if (!fs.existsSync(src)) continue
@@ -61,6 +61,22 @@ export async function POST() {
         archived.push(`virtual_orders_${sym}_${mode}.json`)
       } catch (e) {
         errors.push(`virtual ${sym}: ${e}`)
+      }
+    }
+
+    // Clear rank-based virtual order files (virtual_orders_rank${N}_${sym}_${mode}.json)
+    const rankOrderRe = new RegExp(`^virtual_orders_rank(\\d+)_(.+)_${mode}\\.json$`)
+    let allFiles: string[] = []
+    try { allFiles = fs.readdirSync(dataDir) } catch { /* ignore */ }
+    for (const fname of allFiles) {
+      if (!rankOrderRe.test(fname)) continue
+      const src = path.join(dataDir, fname)
+      const dst = path.join(dataDir, fname.replace(`.json`, `_archive_${ts}.json`))
+      try {
+        fs.renameSync(src, dst)
+        archived.push(fname)
+      } catch (e) {
+        errors.push(`${fname}: ${e}`)
       }
     }
 

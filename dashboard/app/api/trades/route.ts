@@ -17,7 +17,15 @@ function currentMode(): string {
   return data.mode ?? 'test'
 }
 
-const RANK_MAX = 6
+function detectRankMax(dataDir: string, mode: string): number {
+  try {
+    const re = new RegExp(`^virtual_balance_rank(\\d+)_${mode}\\.json$`)
+    const ranks = fs.readdirSync(dataDir)
+      .map(f => { const m = f.match(re); return m ? parseInt(m[1], 10) : 0 })
+      .filter(n => n > 0)
+    return ranks.length > 0 ? Math.max(...ranks) : 6
+  } catch { return 6 }
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -70,10 +78,12 @@ export async function GET(req: NextRequest) {
     presetRanks[name] = idx + 1  // rank 1 = best
   })
 
-  // Read rank orders (ranks 2–RANK_MAX) for this symbol
+  // Read rank orders (ranks 2–rankMax) for this symbol
+  const dataDir = path.join(BOT_ROOT, 'data')
+  const rankMax = detectRankMax(dataDir, mode)
   const rankOrders: Record<string, unknown[]> = {}
   const rankBalances: Record<string, number> = {}
-  for (let rank = 2; rank <= RANK_MAX; rank++) {
+  for (let rank = 2; rank <= rankMax; rank++) {
     const ordersPath = path.join(BOT_ROOT, 'data', `virtual_orders_rank${rank}_${symbol}_${mode}.json`)
     rankOrders[String(rank)] = readJson(ordersPath, []) as unknown[]
     const balPath = path.join(BOT_ROOT, 'data', `virtual_balance_rank${rank}_${mode}.json`)

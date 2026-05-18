@@ -68,7 +68,12 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
       )
     : 0
 
-  // Build display-sorted list
+  // Build display-sorted list.
+  // Three fixed groups (regardless of sort direction):
+  //   0 = active (has allocation)
+  //   1 = excluded (has backtest data but outside top-N)
+  //   2 = no data (backtest not run yet)
+  // Within each group the user's sort column applies.
   const sortedSymbols = bgfMode ? [...availableSymbols].sort((a, b) => {
     const scoreA = state?.per_symbol[a]?.performance_score ?? null
     const scoreB = state?.per_symbol[b]?.performance_score ?? null
@@ -76,21 +81,16 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     const scoreBNum = scoreB ?? 0
     const activeA = activeSet!.has(a)
     const activeB = activeSet!.has(b)
-    // Always pin excluded symbols to the bottom regardless of sort direction
-    if (activeA !== activeB) return activeA ? -1 : 1
+    const groupA = activeA ? 0 : scoreA === null ? 2 : 1
+    const groupB = activeB ? 0 : scoreB === null ? 2 : 1
+    if (groupA !== groupB) return groupA - groupB
     const shareA = totalScore > 0 && activeA ? scoreANum / totalScore : 0
     const shareB = totalScore > 0 && activeB ? scoreBNum / totalScore : 0
     const levA = state?.per_symbol[a]?.leverage ?? 0
     const levB = state?.per_symbol[b]?.leverage ?? 0
     let cmp = 0
     if (sortCol === 'symbol') cmp = a.localeCompare(b)
-    else if (sortCol === 'score') {
-      // null sorts after all real scores
-      if (scoreA === null && scoreB === null) cmp = 0
-      else if (scoreA === null) cmp = 1
-      else if (scoreB === null) cmp = -1
-      else cmp = scoreANum - scoreBNum
-    }
+    else if (sortCol === 'score') cmp = scoreANum - scoreBNum
     else if (sortCol === 'alloc') cmp = shareA - shareB
     else if (sortCol === 'usdt') cmp = (deployable * shareA) - (deployable * shareB)
     else if (sortCol === 'leverage') cmp = levA - levB

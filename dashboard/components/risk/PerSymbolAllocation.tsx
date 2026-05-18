@@ -26,11 +26,18 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
 
   const totalWeight = Object.values(config.symbol_weights).reduce((a, b) => a + b, 0) || 1
 
-  // BGF: compute deployable pool and proportional caps from live performance scores
+  // BGF: compute deployable pool using backtest_initial_balance so the user can
+  // see allocation impact immediately when they change that field, without waiting
+  // for a live risk_state update. Falls back to live balance if backtest field is 0.
   const deployable = (() => {
-    if (!state) return 0
-    const reserve = state.balance * (config.min_balance_pct / 100)
-    return Math.max(0, state.balance - reserve) * (state.active_tier.max_deploy_pct / 100)
+    const balance = config.backtest_initial_balance_usdt || state?.balance || 0
+    if (balance <= 0) return 0
+    // Pick the highest tier whose min_balance_usdt ≤ balance
+    const tier = state?.active_tier ?? [...config.balance_tiers]
+      .sort((a, b) => b.min_balance_usdt - a.min_balance_usdt)
+      .find(t => balance >= t.min_balance_usdt) ?? config.balance_tiers[0]
+    const reserve = balance * (config.min_balance_pct / 100)
+    return Math.max(0, balance - reserve) * ((tier?.max_deploy_pct ?? 40) / 100)
   })()
   const totalScore = bgfMode
     ? availableSymbols.reduce((sum, sym) => sum + (state?.per_symbol[sym]?.performance_score ?? 0), 0)
@@ -91,7 +98,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   <SortHdr col="symbol">Symbol</SortHdr>
                   <SortHdr col="score" title="Normalised performance score driving this symbol's allocation share.">Score</SortHdr>
                   <SortHdr col="alloc" title="score ÷ total scores">Alloc %</SortHdr>
-                  <SortHdr col="usdt" title="USDT allocated to this symbol from the current deployable pool.">Alloc USDT</SortHdr>
+                  <SortHdr col="usdt" title="USDT allocated to this symbol. Based on Backtest initial balance setting — update that field to see allocation change in real time.">Alloc USDT</SortHdr>
                   <SortHdr col="leverage" title="Dynamic leverage currently assigned to this symbol.">Leverage</SortHdr>
                 </>
               ) : (
@@ -120,7 +127,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     <td className="py-1.5 pr-4 text-gray-400">{score.toFixed(3)}</td>
                     <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
                     <td className="py-1.5 pr-4 text-gray-400">
-                      {state ? `$${allocUSDT.toFixed(0)}` : '—'}
+                      {deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
                     </td>
                     <td className="py-1.5 pr-4 text-gray-400">
                       {live ? `${live.leverage}×` : '—'}

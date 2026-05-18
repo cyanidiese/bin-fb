@@ -361,9 +361,12 @@ class RiskManager:
         symbols = list(cfg.get("symbol_weights", {}).keys())
         per_symbol: dict = {}
         for sym in symbols:
+            # Populate/refresh the perf cache for this symbol before reading it.
+            # _calc_leverage also calls _get_perf_score, but that happens after
+            # raw_pct would already have been read from the (possibly empty) cache.
+            self._get_perf_score(sym, cfg)
             cached = self._perf_cache.get(sym)
             # raw_profit_pct (index 3): cross-symbol BGF allocation weight.
-            # intra_score (index 0): kept for leverage (per-symbol normalized, not used in state).
             raw_pct = cached[3] if cached and len(cached) > 3 else 0.0
             per_symbol[sym] = {
                 "allocation_usdt": round(self._calc_allocation(sym, cfg), 2),

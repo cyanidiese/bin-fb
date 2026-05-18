@@ -24,6 +24,7 @@ interface RiskConfig {
   max_leverage: number
   min_balance_pct: number
   symbol_weights: Record<string, number>
+  backtest_klines?: number
 }
 
 interface RiskStateSnapshot {
@@ -37,7 +38,7 @@ export default function BacktestPage() {
   const [riskConfig, setRiskConfig] = useState<RiskConfig | null>(null)
   const [riskState, setRiskState] = useState<RiskStateSnapshot | null>(null)
   const [selectedPreset, setSelectedPreset] = useLocalStorage<string | null>('db:backtest:selectedPreset', null)
-  const [klinesCount, setKlinesCount] = useLocalStorage<number>('db:backtest:klinesCount', 1500)
+  const [klinesCount, setKlinesCount] = useState<number>(1500)
   const [isRunning, setIsRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const { symbol, availableSymbols } = useSymbolContext()
@@ -61,7 +62,12 @@ export default function BacktestPage() {
     fetch('/api/risk')
       .then(r => r.json())
       .then(d => {
-        if (d.config) setRiskConfig(d.config)
+        if (d.config) {
+          setRiskConfig(d.config)
+          if (typeof d.config.backtest_klines === 'number' && d.config.backtest_klines > 0) {
+            setKlinesCount(d.config.backtest_klines)
+          }
+        }
         if (d.state) setRiskState(d.state)
       })
       .catch(() => {})
@@ -238,7 +244,15 @@ export default function BacktestPage() {
               max={10000}
               step={50}
               value={klinesCount}
-              onChange={e => setKlinesCount(Math.max(50, Number(e.target.value)))}
+              onChange={e => {
+                const val = Math.max(50, Number(e.target.value))
+                setKlinesCount(val)
+                fetch('/api/risk', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ backtest_klines: val }),
+                }).catch(() => {})
+              }}
               disabled={isRunning}
               className="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-40"
             />

@@ -267,31 +267,39 @@ class RiskManager:
         return max(base, min(effective_max, raw))
 
     def _get_perf_score(self, symbol: str, cfg: dict) -> tuple[float, float]:
-        """Returns (score, true_pf). Updates cache if stale."""
+        """Returns (intra_score, true_pf). Updates cache if stale."""
         now = time.monotonic()
         cached = self._perf_cache.get(symbol)
         if cached is not None:
-            score, ts, pf = cached
+            score, ts, pf = cached[:3]
             if now - ts < _PERF_CACHE_TTL:
                 return score, pf
-        score, pf = self._compute_perf_score(symbol)
-        self._perf_cache[symbol] = (score, now, pf)
+        score, pf, raw_pct = self._compute_perf_score(symbol)
+        self._perf_cache[symbol] = (score, now, pf, raw_pct)
         return score, pf
 
-    def _compute_perf_score(self, symbol: str) -> tuple[float, float]:
-        """Read backtest_results_{symbol}.json and compute normalised score."""
+    def _compute_perf_score(self, symbol: str) -> tuple[float, float, float]:
+        """Read backtest_results_{symbol}.json and compute scores.
+
+        Returns (intra_score, best_pf, raw_profit_pct):
+          intra_score    — 0-1 normalised within this symbol's own presets (used for leverage).
+          best_pf        — true profit factor of the best preset (used for min_profit_factor gate).
+          raw_profit_pct — best preset's raw total_profit_pct; used as cross-symbol allocation
+                           weight so that a symbol with +22 % profit gets proportionally more
+                           capital than one with +6 %, regardless of their individual preset spreads.
+        """
         path = self._results_dir / f"backtest_results_{symbol}.json"
         try:
             data = json.loads(path.read_text())
         except Exception:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         presets = [
             p for p in data.get("presets", {}).values()
             if p.get("total_trades", 0) >= _MIN_PRESET_TRADES
         ]
         if not presets:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         def true_pf(p: dict) -> float:
             gp = sum((t.get("profit_pct") or 0) for t in p.get("trades", [])
@@ -302,6 +310,7 @@ class RiskManager:
 
         best = max(presets, key=lambda p: p["total_profit_pct"])
         best_pf = true_pf(best)
+        raw_profit_pct = max(0.0, best["total_profit_pct"])
 
         all_pcts = [p["total_profit_pct"] for p in presets]
         all_pfs = [true_pf(p) for p in presets]
@@ -311,7 +320,7 @@ class RiskManager:
             return (val - lo) / (hi - lo) if hi > lo else 1.0
 
         score = (norm(best["total_profit_pct"], all_pcts) + norm(best_pf, all_pfs)) / 2.0
-        return max(0.0, min(1.0, score)), best_pf
+        return max(0.0, min(1.0, score)), best_pf, raw_profit_pct
 
     def _check_drawdown(self) -> tuple | None:
         """
@@ -353,12 +362,14 @@ class RiskManager:
         per_symbol: dict = {}
         for sym in symbols:
             cached = self._perf_cache.get(sym)
-            score = cached[0] if cached else 0.0
+            # raw_profit_pct (index 3): cross-symbol BGF allocation weight.
+            # intra_score (index 0): kept for leverage (per-symbol normalized, not used in state).
+            raw_pct = cached[3] if cached and len(cached) > 3 else 0.0
             per_symbol[sym] = {
                 "allocation_usdt": round(self._calc_allocation(sym, cfg), 2),
                 "leverage": self._calc_leverage(sym, cfg),
                 "leverage_level": self._scenario_per_symbol.get(sym, self._scenario_global_level),
-                "performance_score": round(score, 3),
+                "performance_score": round(raw_pct, 3),
             }
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),

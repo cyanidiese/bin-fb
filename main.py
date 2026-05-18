@@ -235,8 +235,10 @@ async def run() -> None:
 
     # Run obligatory startup backtest
     notifier.notify("info", "Running obligatory backtest", f"mode={current_mode}", "main")
+    _startup_cfg = load_risk_config()
+    _bt_klines = int(_startup_cfg.get("backtest_klines", 1500))
     bt_result = subprocess.run(
-        [sys.executable, "backtest.py", "--mode", current_mode],
+        [sys.executable, "backtest.py", "--mode", current_mode, "--klines-count", str(_bt_klines)],
         capture_output=True,
         cwd=str(_PROJECT_ROOT),
     )

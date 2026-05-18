@@ -96,7 +96,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
               {bgfMode ? (
                 <>
                   <SortHdr col="symbol">Symbol</SortHdr>
-                  <SortHdr col="score" title="Normalised performance score driving this symbol's allocation share.">Score</SortHdr>
+                  <SortHdr col="score" title="Best preset's raw total profit % from the last backtest. Higher = larger allocation share.">Profit %</SortHdr>
                   <SortHdr col="alloc" title="score ÷ total scores">Alloc %</SortHdr>
                   <SortHdr col="usdt" title="USDT allocated to this symbol. Based on Backtest initial balance setting — update that field to see allocation change in real time.">Alloc USDT</SortHdr>
                   <SortHdr col="leverage" title="Dynamic leverage currently assigned to this symbol.">Leverage</SortHdr>
@@ -108,7 +108,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   <th className="text-left py-1 pr-4 font-normal" title="weight ÷ total weights">Alloc %</th>
                   <th className="text-left py-1 pr-4 font-normal" title="USDT allocated to this symbol from the current deployable pool.">Alloc USDT</th>
                   <th className="text-left py-1 pr-4 font-normal" title="Dynamic leverage currently assigned to this symbol.">Leverage</th>
-                  <th className="text-left py-1 font-normal" title="Normalised performance score (0–1) from the best backtest preset for this symbol.">Perf score</th>
+                  <th className="text-left py-1 font-normal" title="Best preset's raw total profit % from the last backtest.">Profit %</th>
                 </>
               )}
             </tr>
@@ -124,7 +124,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                 return (
                   <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
                     <td className="py-1.5 pr-4 text-indigo-300 font-semibold">{sym}</td>
-                    <td className="py-1.5 pr-4 text-gray-400">{score.toFixed(3)}</td>
+                    <td className="py-1.5 pr-4 text-gray-400">{score.toFixed(2)}%</td>
                     <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
                     <td className="py-1.5 pr-4 text-gray-400">
                       {deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
@@ -159,7 +159,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     {live ? `${live.leverage}×` : '—'}
                   </td>
                   <td className="py-1.5 text-gray-400">
-                    {live ? live.performance_score.toFixed(3) : '—'}
+                    {live ? `${live.performance_score.toFixed(2)}%` : '—'}
                   </td>
                 </tr>
               )

@@ -19,6 +19,7 @@ DEFAULT_CONFIG: dict = {
     "drawdown_warning_pct": 10.0,
     "drawdown_hard_stop_pct": 20.0,
     "backtest_initial_balance_usdt": 1000.0,
+    "backtest_klines": 1500,
     "symbol_weights": {},
     # Telegram alerting
     "telegram": {"token": "", "chat_id": ""},

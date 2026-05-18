@@ -93,7 +93,7 @@ export default function DrawdownGuard({ config, state, patchConfig }: Props) {
             className="rounded border border-amber-700/60 bg-amber-900/20 px-3 py-2 text-xs text-amber-300 font-mono"
             title="Drawdown has crossed the warning threshold. Review your positions."
           >
-            ⚠ Drawdown warning — {state.drawdown_pct.toFixed(2)}% from peak ${state.peak_balance.toFixed(2)}
+            ⚠ Drawdown warning — {state.drawdown_pct.toFixed(2)}% from peak {state.peak_balance != null ? `$${state.peak_balance.toFixed(2)}` : '—'}
           </div>
         )}
 

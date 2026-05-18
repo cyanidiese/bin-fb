@@ -31,7 +31,7 @@ export interface RiskState {
   generated_at: string
   mode: string
   balance: number
-  peak_balance: number
+  peak_balance: number | null
   drawdown_pct: number
   warning_active: boolean
   hard_stop_active: boolean

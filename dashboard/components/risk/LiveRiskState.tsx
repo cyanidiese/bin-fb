@@ -57,7 +57,7 @@ export default function LiveRiskState({ config, state }: Props) {
               {[
                 { label: 'Mode',       value: state.mode,                          color: 'text-gray-300' },
                 { label: 'Balance',    value: `$${state.balance.toFixed(2)}`,      color: 'text-gray-300' },
-                { label: 'Peak',       value: `$${state.peak_balance.toFixed(2)}`, color: 'text-gray-300' },
+                { label: 'Peak',       value: state.peak_balance != null ? `$${state.peak_balance.toFixed(2)}` : '—', color: 'text-gray-300' },
                 { label: 'Drawdown',   value: `${state.drawdown_pct.toFixed(2)}%`,
                   color: state.drawdown_pct >= config.drawdown_hard_stop_pct
                     ? 'text-red-400'

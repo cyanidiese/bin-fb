@@ -13,6 +13,7 @@ export interface RiskConfig {
   drawdown_hard_stop_pct: number
   backtest_initial_balance_usdt: number
   backtest_klines: number
+  bgf_top_n: number
   symbol_weights: Record<string, number>
   max_leverage_level: number
   use_allocation_weighting: boolean

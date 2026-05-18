@@ -20,6 +20,8 @@ DEFAULT_CONFIG: dict = {
     "drawdown_hard_stop_pct": 20.0,
     "backtest_initial_balance_usdt": 1000.0,
     "backtest_klines": 1500,
+    # BGF scenario: cap allocation to top-N symbols by score (0 = no cap, use all)
+    "bgf_top_n": 0,
     "symbol_weights": {},
     # Telegram alerting
     "telegram": {"token": "", "chat_id": ""},

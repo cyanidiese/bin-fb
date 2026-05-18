@@ -566,6 +566,9 @@ async def run() -> None:
                 await _try_place_order(sym, best, sym_s, balance, candle_ts)
         else:
             # BestGetsFirst: proportional caps derived from efficiency scores (disabled already excluded)
+            bgf_top_n = int(risk_cfg.get("bgf_top_n", 0))
+            if bgf_top_n > 0:
+                candidates = candidates[:bgf_top_n]
             deployable = risk_manager.get_deployable_budget()
             total_score = sum(max(0.0, s) for _, _, _, s in candidates)
             deployed = 0.0

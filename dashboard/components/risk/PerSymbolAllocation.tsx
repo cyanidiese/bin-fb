@@ -32,23 +32,42 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   const deployable = (() => {
     const balance = config.backtest_initial_balance_usdt || state?.balance || 0
     if (balance <= 0) return 0
-    // Pick the highest tier whose min_balance_usdt ≤ balance
     const tier = state?.active_tier ?? [...config.balance_tiers]
       .sort((a, b) => b.min_balance_usdt - a.min_balance_usdt)
       .find(t => balance >= t.min_balance_usdt) ?? config.balance_tiers[0]
     const reserve = balance * (config.min_balance_pct / 100)
     return Math.max(0, balance - reserve) * ((tier?.max_deploy_pct ?? 40) / 100)
   })()
+
+  // BGF: determine which symbols are in the active top-N set.
+  // Score ranking is always by profit% desc, independent of the user's display sort.
+  const scoreRanked = bgfMode
+    ? [...availableSymbols].sort((a, b) =>
+        (state?.per_symbol[b]?.performance_score ?? 0) - (state?.per_symbol[a]?.performance_score ?? 0)
+      )
+    : availableSymbols
+
+  const storedN = config.bgf_top_n ?? 0
+  const effectiveN = (storedN > 0 && storedN < scoreRanked.length) ? storedN : scoreRanked.length
+  const activeSet = bgfMode ? new Set(scoreRanked.slice(0, effectiveN)) : null
+
+  // totalScore sums only the active (top-N) symbols so excluded ones don't dilute shares
   const totalScore = bgfMode
-    ? availableSymbols.reduce((sum, sym) => sum + (state?.per_symbol[sym]?.performance_score ?? 0), 0)
+    ? scoreRanked.slice(0, effectiveN).reduce(
+        (sum, sym) => sum + Math.max(0, state?.per_symbol[sym]?.performance_score ?? 0), 0
+      )
     : 0
 
-  // Build sorted symbol list for BGF mode
+  // Build display-sorted list
   const sortedSymbols = bgfMode ? [...availableSymbols].sort((a, b) => {
     const scoreA = state?.per_symbol[a]?.performance_score ?? 0
     const scoreB = state?.per_symbol[b]?.performance_score ?? 0
-    const shareA = totalScore > 0 ? scoreA / totalScore : 0
-    const shareB = totalScore > 0 ? scoreB / totalScore : 0
+    const activeA = activeSet!.has(a)
+    const activeB = activeSet!.has(b)
+    // Always pin excluded symbols to the bottom regardless of sort direction
+    if (activeA !== activeB) return activeA ? -1 : 1
+    const shareA = totalScore > 0 && activeA ? scoreA / totalScore : 0
+    const shareB = totalScore > 0 && activeB ? scoreB / totalScore : 0
     const levA = state?.per_symbol[a]?.leverage ?? 0
     const levB = state?.per_symbol[b]?.leverage ?? 0
     let cmp = 0
@@ -90,6 +109,38 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
         {bgfMode && <span className="ml-2 text-xs text-amber-400 font-normal">(auto — score-proportional)</span>}
       </p>
       <div className={SECTION_BODY_CLS}>
+
+        {/* BGF: Top-N control */}
+        {bgfMode && (
+          <div className="mb-3 flex items-center gap-2 text-xs text-gray-400">
+            <span>Allocate only to top</span>
+            <input
+              type="number"
+              min={1}
+              max={availableSymbols.length}
+              step={1}
+              value={storedN > 0 ? storedN : availableSymbols.length}
+              title="Only the top-N symbols by profit% receive capital. Others are excluded from order placement."
+              onChange={e => {
+                const val = Math.max(1, Math.min(availableSymbols.length, Number(e.target.value)))
+                // Store 0 when user sets it back to all symbols (= no cap)
+                patchConfig({ bgf_top_n: val >= availableSymbols.length ? 0 : val })
+              }}
+              className={INPUT_CLS + ' w-14'}
+            />
+            <span>of {availableSymbols.length} symbols</span>
+            {storedN > 0 && storedN < availableSymbols.length && (
+              <button
+                onClick={() => patchConfig({ bgf_top_n: 0 })}
+                className="ml-1 text-indigo-400 hover:text-white transition-colors"
+                title="Reset to all symbols"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        )}
+
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="text-gray-600 border-b border-gray-800">
@@ -97,7 +148,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                 <>
                   <SortHdr col="symbol">Symbol</SortHdr>
                   <SortHdr col="score" title="Best preset's raw total profit % from the last backtest. Higher = larger allocation share.">Profit %</SortHdr>
-                  <SortHdr col="alloc" title="score ÷ total scores">Alloc %</SortHdr>
+                  <SortHdr col="alloc" title="score ÷ total scores of active (top-N) symbols">Alloc %</SortHdr>
                   <SortHdr col="usdt" title="USDT allocated to this symbol. Based on Backtest initial balance setting — update that field to see allocation change in real time.">Alloc USDT</SortHdr>
                   <SortHdr col="leverage" title="Dynamic leverage currently assigned to this symbol.">Leverage</SortHdr>
                 </>
@@ -117,17 +168,24 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
             {sortedSymbols.map(sym => {
               const live = state?.per_symbol[sym]
               if (bgfMode) {
+                const isActive = activeSet!.has(sym)
                 const score = live?.performance_score ?? 0
-                const share = totalScore > 0 ? score / totalScore : 0
+                const share = (isActive && totalScore > 0) ? score / totalScore : 0
                 const allocPct = (share * 100).toFixed(1)
                 const allocUSDT = deployable * share
+                const rowCls = isActive
+                  ? 'border-b border-gray-900 hover:bg-gray-900/40'
+                  : 'border-b border-gray-900 opacity-35'
                 return (
-                  <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
-                    <td className="py-1.5 pr-4 text-indigo-300 font-semibold">{sym}</td>
+                  <tr key={sym} className={rowCls}>
+                    <td className="py-1.5 pr-4 text-indigo-300 font-semibold">
+                      {sym}
+                      {!isActive && <span className="ml-1.5 text-gray-600 font-normal text-[10px]">excluded</span>}
+                    </td>
                     <td className="py-1.5 pr-4 text-gray-400">{score.toFixed(2)}%</td>
-                    <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
+                    <td className="py-1.5 pr-4 text-gray-400">{isActive ? `${allocPct}%` : '—'}</td>
                     <td className="py-1.5 pr-4 text-gray-400">
-                      {deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
+                      {isActive && deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
                     </td>
                     <td className="py-1.5 pr-4 text-gray-400">
                       {live ? `${live.leverage}×` : '—'}

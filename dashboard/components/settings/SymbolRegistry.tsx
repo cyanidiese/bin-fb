@@ -45,7 +45,7 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
-  const [perfScores, setPerfScores] = useState<Record<string, number>>({})
+  const [perfScores, setPerfScores] = useState<Record<string, number | null>>({})
   const [sortCol, setSortCol] = useState<SortCol>('profit')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
@@ -54,9 +54,10 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
         if (!data?.per_symbol) return
-        const scores: Record<string, number> = {}
-        for (const [sym, info] of Object.entries(data.per_symbol as Record<string, { performance_score?: number }>)) {
-          scores[sym] = (info as { performance_score?: number }).performance_score ?? 0
+        const scores: Record<string, number | null> = {}
+        for (const [sym, info] of Object.entries(data.per_symbol as Record<string, { performance_score?: number | null }>)) {
+          const ps = (info as { performance_score?: number | null }).performance_score
+          scores[sym] = ps !== undefined ? ps : null
         }
         setPerfScores(scores)
       })
@@ -69,9 +70,17 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
   }
 
   const sortedSymbols = [...(registry?.symbols ?? [])].sort((a, b) => {
-    const cmp = sortCol === 'symbol'
-      ? a.localeCompare(b)
-      : (perfScores[a] ?? -1) - (perfScores[b] ?? -1)
+    if (sortCol === 'symbol') {
+      const cmp = a.localeCompare(b)
+      return sortDir === 'asc' ? cmp : -cmp
+    }
+    // Profit sort: null (no backtest) always goes to the bottom regardless of direction
+    const sa = perfScores[a] ?? null
+    const sb = perfScores[b] ?? null
+    if (sa === null && sb === null) return 0
+    if (sa === null) return 1
+    if (sb === null) return -1
+    const cmp = sa - sb
     return sortDir === 'asc' ? cmp : -cmp
   })
 

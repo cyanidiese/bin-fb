@@ -15,7 +15,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const pathname = usePathname()
   const isLoginPage = pathname === '/login'
 
-  const [perfScores, setPerfScores] = useState<Record<string, number>>({})
+  const [perfScores, setPerfScores] = useState<Record<string, number | null>>({})
 
   useEffect(() => {
     function loadScores() {
@@ -23,9 +23,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         .then(r => (r.ok ? r.json() : null))
         .then(data => {
           if (!data?.per_symbol) return
-          const scores: Record<string, number> = {}
-          for (const [sym, info] of Object.entries(data.per_symbol as Record<string, { performance_score?: number }>)) {
-            scores[sym] = (info as { performance_score?: number }).performance_score ?? 0
+          const scores: Record<string, number | null> = {}
+          for (const [sym, info] of Object.entries(data.per_symbol as Record<string, { performance_score?: number | null }>)) {
+            const ps = (info as { performance_score?: number | null }).performance_score
+            scores[sym] = ps !== undefined ? ps : null
           }
           setPerfScores(scores)
         })
@@ -36,12 +37,17 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return () => clearInterval(id)
   }, [])
 
-  // Sort by profit score desc; keep original order when no scores available yet
+  // Sort by profit score desc; null (no backtest data) always sorts last
   const sortedSymbols = useMemo(() => {
     if (Object.keys(perfScores).length === 0) return availableSymbols
-    return [...availableSymbols].sort(
-      (a, b) => (perfScores[b] ?? 0) - (perfScores[a] ?? 0)
-    )
+    return [...availableSymbols].sort((a, b) => {
+      const sa = perfScores[a] ?? null
+      const sb = perfScores[b] ?? null
+      if (sa === null && sb === null) return 0
+      if (sa === null) return 1
+      if (sb === null) return -1
+      return sb - sa
+    })
   }, [availableSymbols, perfScores])
 
   return (

@@ -24,7 +24,7 @@ export interface RiskConfig {
 export interface PerSymbol {
   allocation_usdt: number
   leverage: number
-  performance_score: number
+  performance_score: number | null  // null = no backtest data yet
 }
 
 export interface RiskState {

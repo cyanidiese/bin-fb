@@ -292,7 +292,7 @@ class RiskManager:
         try:
             data = json.loads(path.read_text())
         except Exception:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, None  # None = no backtest data yet
 
         presets = [
             p for p in data.get("presets", {}).values()
@@ -367,12 +367,13 @@ class RiskManager:
             self._get_perf_score(sym, cfg)
             cached = self._perf_cache.get(sym)
             # raw_profit_pct (index 3): cross-symbol BGF allocation weight.
-            raw_pct = cached[3] if cached and len(cached) > 3 else 0.0
+            # None means no backtest file exists yet for this symbol.
+            raw_pct = cached[3] if cached and len(cached) > 3 else None
             per_symbol[sym] = {
                 "allocation_usdt": round(self._calc_allocation(sym, cfg), 2),
                 "leverage": self._calc_leverage(sym, cfg),
                 "leverage_level": self._scenario_per_symbol.get(sym, self._scenario_global_level),
-                "performance_score": round(raw_pct, 3),
+                "performance_score": round(raw_pct, 3) if raw_pct is not None else None,
             }
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),

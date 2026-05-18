@@ -45,10 +45,16 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
 
   // BGF: determine which symbols are in the active top-N set.
   // Score ranking is always by profit% desc, independent of the user's display sort.
+  // null score (no backtest yet) sorts below all real scores including 0.
   const scoreRanked = bgfMode
-    ? [...availableSymbols].sort((a, b) =>
-        (state?.per_symbol[b]?.performance_score ?? 0) - (state?.per_symbol[a]?.performance_score ?? 0)
-      )
+    ? [...availableSymbols].sort((a, b) => {
+        const sa = state?.per_symbol[a]?.performance_score ?? null
+        const sb = state?.per_symbol[b]?.performance_score ?? null
+        if (sa === null && sb === null) return 0
+        if (sa === null) return 1   // null goes last
+        if (sb === null) return -1
+        return sb - sa
+      })
     : availableSymbols
 
   const storedN = config.bgf_top_n ?? 0
@@ -64,19 +70,27 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
 
   // Build display-sorted list
   const sortedSymbols = bgfMode ? [...availableSymbols].sort((a, b) => {
-    const scoreA = state?.per_symbol[a]?.performance_score ?? 0
-    const scoreB = state?.per_symbol[b]?.performance_score ?? 0
+    const scoreA = state?.per_symbol[a]?.performance_score ?? null
+    const scoreB = state?.per_symbol[b]?.performance_score ?? null
+    const scoreANum = scoreA ?? 0
+    const scoreBNum = scoreB ?? 0
     const activeA = activeSet!.has(a)
     const activeB = activeSet!.has(b)
     // Always pin excluded symbols to the bottom regardless of sort direction
     if (activeA !== activeB) return activeA ? -1 : 1
-    const shareA = totalScore > 0 && activeA ? scoreA / totalScore : 0
-    const shareB = totalScore > 0 && activeB ? scoreB / totalScore : 0
+    const shareA = totalScore > 0 && activeA ? scoreANum / totalScore : 0
+    const shareB = totalScore > 0 && activeB ? scoreBNum / totalScore : 0
     const levA = state?.per_symbol[a]?.leverage ?? 0
     const levB = state?.per_symbol[b]?.leverage ?? 0
     let cmp = 0
     if (sortCol === 'symbol') cmp = a.localeCompare(b)
-    else if (sortCol === 'score') cmp = scoreA - scoreB
+    else if (sortCol === 'score') {
+      // null sorts after all real scores
+      if (scoreA === null && scoreB === null) cmp = 0
+      else if (scoreA === null) cmp = 1
+      else if (scoreB === null) cmp = -1
+      else cmp = scoreANum - scoreBNum
+    }
     else if (sortCol === 'alloc') cmp = shareA - shareB
     else if (sortCol === 'usdt') cmp = (deployable * shareA) - (deployable * shareB)
     else if (sortCol === 'leverage') cmp = levA - levB
@@ -184,7 +198,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
               const live = state?.per_symbol[sym]
               if (bgfMode) {
                 const isActive = activeSet!.has(sym)
-                const score = live?.performance_score ?? 0
+                const rawScore = live?.performance_score ?? null  // null = no backtest yet
+                const score = rawScore ?? 0
                 const share = (isActive && totalScore > 0) ? score / totalScore : 0
                 const allocPct = (share * 100).toFixed(1)
                 const allocUSDT = deployable * share
@@ -195,9 +210,11 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   <tr key={sym} className={rowCls}>
                     <td className="py-1.5 pr-4 text-indigo-300 font-semibold">
                       {sym}
-                      {!isActive && <span className="ml-1.5 text-gray-600 font-normal text-[10px]">excluded</span>}
+                      {!isActive && <span className="ml-1.5 text-gray-600 font-normal text-[10px]">{rawScore === null ? 'no data' : 'excluded'}</span>}
                     </td>
-                    <td className="py-1.5 pr-4 text-gray-400">{score.toFixed(2)}%</td>
+                    <td className="py-1.5 pr-4 text-gray-400">
+                      {rawScore !== null ? `${rawScore.toFixed(2)}%` : '—'}
+                    </td>
                     <td className="py-1.5 pr-4 text-gray-400">{isActive ? `${allocPct}%` : '—'}</td>
                     <td className="py-1.5 pr-4 text-gray-400">
                       {isActive && deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}

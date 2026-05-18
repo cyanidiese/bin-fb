@@ -116,6 +116,8 @@ export default function BacktestPage() {
           if (result.generated_at !== snapshotTs) {
             setData(result)
             updated = true
+            // Patch risk_state.json so Risk page B widget shows updated scores immediately
+            fetch('/api/refresh-scores', { method: 'POST' }).catch(() => {})
             break
           }
         } catch { /* keep polling */ }

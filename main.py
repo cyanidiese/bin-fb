@@ -330,9 +330,22 @@ async def run() -> None:
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
+        # Re-run the engine with the best preset's own settings so that proximity_zone_pct,
+        # min_swing_points, etc. are applied consistently — same as _try_open in the virtual
+        # simulator. The base-settings signal (passed in as `best`) only gates entry here.
+        _current_px = analyzers[symbol].get_current_price() if symbol in analyzers else 0.0
+        _trend = analyzers[symbol].get_trend() if symbol in analyzers else None
+        if _trend is None:
+            return 0.0
+        _preset_entry_px = _current_px if _current_px > 0 else best.getEntryPrice()
+        if _preset_entry_px <= 0:
+            return 0.0
+        best = RecommendationEngine(preset_settings).generate(_trend, _preset_entry_px)
+        if best is None:
+            return 0.0
+
         # A3: use analyzer's current price (updated by live ticks) instead of stale signal entry
         _raw_entry = best.getEntryPrice()
-        _current_px = analyzers[symbol].get_current_price() if symbol in analyzers else 0.0
         entry = _current_px if _current_px > 0 else _raw_entry
         if entry <= 0:
             return 0.0

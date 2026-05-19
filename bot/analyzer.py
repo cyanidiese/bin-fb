@@ -85,8 +85,9 @@ class Analyzer:
             self._trend.checkPointObject(point_dict)
             self._capture_bigger_trends()
 
-        if new_points:
-            self._refresh_recommendations()
+        # A1: refresh every candle so the best recommendation reflects current price proximity,
+        # not just the candle where the last swing point was detected.
+        self._refresh_recommendations()
 
         pct = self._engine._s.proximity_zone_pct if self._engine else 10.0
         return self._trend.getRecommendations(

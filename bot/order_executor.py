@@ -428,45 +428,54 @@ class OrderExecutor:
     async def _place_sl_on_exchange(
         self, symbol: str, side: str, quantity: float, sl_price: float
     ) -> str | None:
-        """Place a STOP_MARKET order on the exchange as crash-safe SL protection.
+        """Place a STOP_MARKET algo order as crash-safe SL protection.
+        Binance migrated all conditional order types to /fapi/v1/algoOrder on 2025-12-09.
         Uses MARK_PRICE to avoid wick-triggered false SLs."""
         if self._feed is None or sl_price <= 0:
             return None
         sl_price = await self.round_price(symbol, sl_price)
         client = self._feed.client
         close_side = 'SELL' if side == 'BUY' else 'BUY'
+        if not hasattr(client, 'futures_create_algo_order'):
+            logger.error(f"[{symbol}] python-binance too old — futures_create_algo_order missing. Upgrade to 1.0.19+")
+            return None
+        lot = await self._ensure_lot_size(symbol)
+        qty_str = self._qty_str(quantity, lot['step_size'])
         try:
             result = await asyncio.to_thread(
-                client.futures_create_order,
+                client.futures_create_algo_order,
                 symbol=symbol,
                 side=close_side,
                 type='STOP_MARKET',
-                stopPrice=str(sl_price),
-                quantity=f"{quantity:g}",
-                reduceOnly=True,
+                triggerPrice=str(sl_price),
+                quantity=qty_str,
+                reduceOnly='true',
                 workingType='MARK_PRICE',
             )
-            sl_id = str(result.get('orderId'))
-            logger.info(f"[{symbol}] SL order placed: id={sl_id} stopPrice={sl_price}")
+            sl_id = str(result.get('algoId'))
+            logger.info(f"[{symbol}] SL algo order placed: algoId={sl_id} triggerPrice={sl_price}")
             return sl_id
         except Exception as exc:
-            logger.warning(f"[{symbol}] Failed to place SL order (no crash protection): {exc}")
+            logger.warning(f"[{symbol}] Failed to place SL algo order (no crash protection): {exc}")
             return None
 
     async def _cancel_exchange_order(self, symbol: str, order_id: str | None) -> None:
-        """Cancel a specific exchange order by ID. No-op if order_id is None or not found."""
+        """Cancel a SL algo order by algoId. No-op if order_id is None or not found."""
         if self._feed is None or not order_id:
             return
         client = self._feed.client
+        if not hasattr(client, 'futures_cancel_algo_order'):
+            logger.warning(f"[{symbol}] python-binance too old — futures_cancel_algo_order missing")
+            return
         try:
             await asyncio.to_thread(
-                client.futures_cancel_order,
+                client.futures_cancel_algo_order,
                 symbol=symbol,
-                orderId=int(order_id),
+                algoId=int(order_id),
             )
-            logger.info(f"[{symbol}] Exchange order cancelled: id={order_id}")
+            logger.info(f"[{symbol}] SL algo order cancelled: algoId={order_id}")
         except Exception as exc:
-            logger.warning(f"[{symbol}] Failed to cancel order {order_id}: {exc}")
+            logger.warning(f"[{symbol}] Failed to cancel algo order {order_id}: {exc}")
 
     async def _submit_to_exchange(self, symbol: str, side: str, quantity: float, leverage: int) -> str | None:
         if self._feed is None:
@@ -481,13 +490,15 @@ class OrderExecutor:
         except Exception as exc:
             logger.warning(f"[{symbol}] Could not set leverage={leverage}: {exc}")
 
+        lot = await self._ensure_lot_size(symbol)
+        qty_str = self._qty_str(quantity, lot['step_size'])
         try:
             result = await asyncio.to_thread(
                 client.futures_create_order,
                 symbol=symbol,
                 side=side,
                 type='MARKET',
-                quantity=f"{quantity:g}",
+                quantity=qty_str,
             )
             return str(result.get('orderId'))
         except Exception as exc:
@@ -514,15 +525,39 @@ class OrderExecutor:
             return order.entry_price
         client = self._feed.client
         close_side = 'SELL' if order.side == 'BUY' else 'BUY'
+        lot = await self._ensure_lot_size(symbol)
+        qty_str = self._qty_str(order.quantity, lot['step_size'])
         result = await asyncio.to_thread(
             client.futures_create_order,
             symbol=symbol,
             side=close_side,
             type='MARKET',
-            quantity=f"{order.quantity:g}",
+            quantity=qty_str,
             reduceOnly=True,
         )
         avg_price = float(result.get('avgPrice', 0) or 0)
+        # Testnet often returns avgPrice="0" in the immediate response for market orders.
+        # Retry-query the order to get the actual fill price before falling back to entry.
+        if avg_price <= 0:
+            order_id = result.get('orderId')
+            if order_id:
+                for _ in range(4):
+                    await asyncio.sleep(0.25)
+                    try:
+                        filled = await asyncio.to_thread(
+                            client.futures_get_order,
+                            symbol=symbol,
+                            orderId=order_id,
+                        )
+                        avg_price = float(filled.get('avgPrice', 0) or 0)
+                        if avg_price > 0:
+                            break
+                    except Exception:
+                        break
+        if avg_price <= 0:
+            logger.warning(
+                f"[{symbol}] avgPrice still 0 after retry — using entry_price={order.entry_price} as fallback"
+            )
         return avg_price if avg_price > 0 else order.entry_price
 
     # ------------------------------------------------------------------ #
@@ -703,15 +738,28 @@ class OrderExecutor:
                 logger.warning(f"[{symbol}] Failed to fetch leverage bracket: {exc}")
 
     async def round_quantity(self, symbol: str, quantity: float) -> float:
-        """Round quantity DOWN to the symbol's LOT_SIZE step, respecting minQty."""
+        """Round quantity DOWN to the symbol's LOT_SIZE step, capped by maxQty."""
         lot = await self._ensure_lot_size(symbol)
         step = lot['step_size']
         min_qty = lot['min_qty']
-        # Use Decimal for exact rounding
+        max_qty = lot.get('max_qty', 0.0)
         d_qty = Decimal(str(quantity))
         d_step = Decimal(str(step))
         rounded = float(d_qty.quantize(d_step, rounding=ROUND_DOWN))
+        if max_qty > 0 and rounded > max_qty:
+            logger.warning(f"[{symbol}] quantity {rounded} exceeds maxQty {max_qty} — capping")
+            rounded = float(Decimal(str(max_qty)).quantize(d_step, rounding=ROUND_DOWN))
         return max(rounded, min_qty) if rounded >= min_qty else 0.0
+
+    @staticmethod
+    def _qty_str(quantity: float, step_size: str) -> str:
+        """Format quantity as an exchange-safe string without scientific notation.
+        f"{qty:g}" switches to scientific for values >= 1e6, which Binance rejects."""
+        if '.' in step_size:
+            decimals = len(step_size.rstrip('0').split('.')[1])
+        else:
+            decimals = 0
+        return f"{quantity:.{decimals}f}"
 
     async def round_price(self, symbol: str, price: float) -> float:
         """Round price to the symbol's PRICE_FILTER tick size."""
@@ -724,7 +772,7 @@ class OrderExecutor:
     async def _ensure_lot_size(self, symbol: str) -> dict:
         if symbol in self._lot_cache:
             return self._lot_cache[symbol]
-        default = {'step_size': '0.001', 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': 0.00001}
+        default = {'step_size': '0.001', 'min_qty': 0.001, 'max_qty': 0.0, 'min_notional': 0.0, 'tick_size': 0.00001}
         if self._feed is None:
             return default
         try:
@@ -737,6 +785,9 @@ class OrderExecutor:
                     if ft == 'LOT_SIZE':
                         entry['step_size'] = f['stepSize']
                         entry['min_qty'] = float(f['minQty'])
+                        max_qty = float(f.get('maxQty', 0) or 0)
+                        if max_qty > 0:
+                            entry['max_qty'] = max_qty
                     elif ft == 'PRICE_FILTER':
                         ts = float(f.get('tickSize', 0) or 0)
                         if ts > 0:
@@ -744,17 +795,18 @@ class OrderExecutor:
                     elif ft == 'MIN_NOTIONAL':
                         entry['min_notional'] = float(f.get('notional') or f.get('minNotional') or 0)
                 self._lot_cache[sym] = {
-                    'step_size':   entry.get('step_size', '0.001'),
-                    'min_qty':     entry.get('min_qty', 0.001),
+                    'step_size':    entry.get('step_size', '0.001'),
+                    'min_qty':      entry.get('min_qty', 0.001),
+                    'max_qty':      entry.get('max_qty', 0.0),
                     'min_notional': entry.get('min_notional', 0.0),
-                    'tick_size':   entry.get('tick_size', 0.00001),
+                    'tick_size':    entry.get('tick_size', 0.00001),
                 }
         except Exception as exc:
             logger.warning(f"Failed to fetch exchange info: {exc}")
         cached = self._lot_cache.get(symbol, default)
         logger.debug(
             f"[{symbol}] lot filters: step={cached['step_size']} "
-            f"minQty={cached['min_qty']} tick={cached['tick_size']}"
+            f"minQty={cached['min_qty']} maxQty={cached.get('max_qty', 0)} tick={cached['tick_size']}"
         )
         return cached
 

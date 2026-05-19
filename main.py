@@ -690,6 +690,8 @@ async def run() -> None:
             deployed = 0.0
             for sym, best, sym_s, score in candidates:
                 remaining = max(0.0, deployable - deployed)
+                if remaining <= 0:
+                    break
                 if total_score > 0:
                     sym_cap = deployable * max(0.0, score) / total_score
                 else:

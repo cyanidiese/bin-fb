@@ -182,6 +182,24 @@ class RiskManager:
         logger.warning(msg)
         print(msg, flush=True)
 
+        if self._notifier:
+            dd = payload.get("drawdown_pct", 0)
+            bal = payload.get("balance", 0)
+            if event == "hard_stop":
+                self._notifier.notify(
+                    "emergency",
+                    "Drawdown hard stop triggered",
+                    f"Drawdown: {dd:.2f}% — balance: {bal:.2f} USDT. All new entries blocked.",
+                    "risk_manager",
+                )
+            elif event == "drawdown_warning":
+                self._notifier.notify(
+                    "warning",
+                    "Drawdown warning",
+                    f"Drawdown reached {dd:.2f}% — balance: {bal:.2f} USDT.",
+                    "risk_manager",
+                )
+
     def reset_hard_stop(self) -> None:
         """Clear the hard stop latch. Requires user action via the dashboard."""
         was_active = False
@@ -306,7 +324,7 @@ class RiskManager:
                      if (t.get("profit_pct") or 0) > 0)
             gl = sum(abs(t.get("profit_pct") or 0) for t in p.get("trades", [])
                      if (t.get("profit_pct") or 0) < 0)
-            return gp / gl if gl else 0.0
+            return gp / gl if gl else 99.0
 
         best = max(presets, key=lambda p: p["total_profit_pct"])
         best_pf = true_pf(best)

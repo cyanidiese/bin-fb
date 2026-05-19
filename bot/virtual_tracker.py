@@ -84,13 +84,15 @@ class VirtualTracker:
 
     def get_efficiency_score(self, symbol: str) -> float:
         symbol_data = self._efficiency.get(symbol, {})
-        best = 0.0
+        if not symbol_data:
+            return 0.0
+        best = float('-inf')
         for stats in symbol_data.values():
             if stats.get('trade_count', 0) >= _MIN_TRADES:
                 best = max(best, stats.get('total_winning_usdt', 0.0))
             else:
                 best = max(best, stats.get('seeded_winning_usdt', 0.0))
-        return best
+        return best if best != float('-inf') else 0.0
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})

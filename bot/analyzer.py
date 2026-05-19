@@ -5,6 +5,8 @@ from bot.recommendation import Recommendation
 from bot.recommendation_engine import RecommendationEngine
 from bot.trend import Trend
 
+_MAX_KLINES = 3000  # ~31 days of 15-minute candles; more than enough for ATR and swing detection
+
 
 class Analyzer:
     def __init__(self, swing_neighbours: int = 2, engine: Optional[RecommendationEngine] = None):
@@ -18,12 +20,11 @@ class Analyzer:
         # trend state but we want the dashboard to show the full historical picture.
         self._all_points: list = []
         self._best_recommendation: Optional[Recommendation] = None
+        self._existing_bigger_points: set = set()
 
     def _capture_bigger_trends(self) -> None:
         """Snapshot any new L2+ points into the permanent history.
-        Called after each checkPointObject so points are captured before a
-        subsequent BoS could wipe them from the trend."""
-        existing = {(p['time'], p['level'], p['type']) for p in self._all_points}
+        Uses a persistent dedup set to avoid O(N²) rebuilding on every call."""
         current = (
             self._trend.getBiggerTrend()
             if (self._trend and self._trend.hasBiggerTrend())
@@ -33,16 +34,16 @@ class Analyzer:
             level = current.getLevel()
             for pt in current.getHighPoints():
                 key = (pt.getTime(), level, 'high')
-                if key not in existing:
-                    existing.add(key)
+                if key not in self._existing_bigger_points:
+                    self._existing_bigger_points.add(key)
                     self._all_points.append({
                         'time': pt.getTime(), 'level': level,
                         'type': 'high', 'price': pt.getHighValue(),
                     })
             for pt in current.getLowPoints():
                 key = (pt.getTime(), level, 'low')
-                if key not in existing:
-                    existing.add(key)
+                if key not in self._existing_bigger_points:
+                    self._existing_bigger_points.add(key)
                     self._all_points.append({
                         'time': pt.getTime(), 'level': level,
                         'type': 'low', 'price': pt.getLowValue(),
@@ -52,6 +53,7 @@ class Analyzer:
     def build_from_klines(self, klines: list) -> None:
         self._klines = list(klines)
         self._all_points = []
+        self._existing_bigger_points = set()
         self._best_recommendation = None
         self._trend = Trend(1)
         for point_dict in self._processor.detect_points(klines):
@@ -72,6 +74,8 @@ class Analyzer:
             return []
 
         self._klines.append(kline)
+        if len(self._klines) > _MAX_KLINES:
+            self._klines = self._klines[-_MAX_KLINES:]
 
         new_points = self._processor.check_last_confirmed(self._klines)
         for point_dict in new_points:
@@ -87,6 +91,11 @@ class Analyzer:
 
         # A1: refresh every candle so the best recommendation reflects current price proximity,
         # not just the candle where the last swing point was detected.
+        # BUG-05: sync price to the closed candle's close before scoring so REST-refreshed
+        # candles don't produce recommendations scored against a slightly lagged tick price.
+        close_px = float(kline[4]) if kline and kline[4] else self._current_price
+        if close_px > 0:
+            self._current_price = close_px
         self._refresh_recommendations()
 
         pct = self._engine._s.proximity_zone_pct if self._engine else 10.0

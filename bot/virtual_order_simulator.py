@@ -218,7 +218,7 @@ class VirtualOrderSimulator:
         entry = rec.getEntryPrice()
         tp = rec.getTarget()
         sl = rec.getStop() or 0.0
-        if entry <= 0 or tp <= 0:
+        if entry <= 0 or tp <= 0 or sl <= 0:
             return
 
         if self._get_allocation:
@@ -230,8 +230,8 @@ class VirtualOrderSimulator:
             return
 
         side = rec.getSide()
-        partial_pct = float(getattr(base_settings, 'partial_take_pct', 0.0))
-        trail_pct = float(getattr(base_settings, 'trailing_stop_pct', 0.0))
+        partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
+        trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
 
         record = {
             'preset_name': preset_name,
@@ -256,7 +256,7 @@ class VirtualOrderSimulator:
             side=side,
             entry_price=entry,
             tp=tp,
-            sl=sl if sl else entry * (0.99 if side == 'BUY' else 1.01),
+            sl=sl,
             level=rec.getLevel(),
             signal_type=rec.getType().value,
             candle_index=0,

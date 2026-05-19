@@ -20,7 +20,7 @@ from bot.exporter import export, write_symbols_json
 from bot.mode_manager import ModeManager
 from bot.notifier import Notifier
 from bot.telegram_menu import TelegramMenu
-from bot.order_executor import OrderExecutor, OrderState
+from bot.order_executor import BotHaltError, OrderExecutor, OrderState
 from bot.symbol_registry import SymbolRegistry
 from bot.virtual_tracker import VirtualTracker
 from bot.virtual_order_simulator import VirtualOrderSimulator
@@ -559,8 +559,10 @@ async def run() -> None:
             precision_score=precision or 0.0,
             scenario=_active_scenario_name,
         )
+        # Mark as attempted regardless of outcome: prevents repeated failed attempts
+        # in the same candle batch when other symbols' close events trigger the loop.
+        _placed_this_candle[symbol] = candle_ts
         if placed:
-            _placed_this_candle[symbol] = candle_ts
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision='placed', reason='',
@@ -694,6 +696,35 @@ async def run() -> None:
                     sym_cap = deployable / len(candidates) if candidates else 0.0
                 used = await _try_place_order(sym, best, sym_s, remaining, candle_ts, trade_cap=sym_cap)
                 deployed += used
+
+        # D1: OHLC-level SL/TP check — catches gaps that per-tick checks miss.
+        candle_high = float(kline[2])
+        candle_low = float(kline[3])
+        candle_open_price = float(kline[1])
+        candle_close_price = float(kline[4])
+        candle_closed = await order_executor.check_symbol_candle(
+            symbol, candle_high, candle_low, candle_open_price, candle_close_price,
+        )
+        for c in candle_closed:
+            if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
+                virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+            scenario.record_closed(c['symbol'], c.get('leverage', 1))
+            _push_scenario_info()
+            fresh_bal = await _get_fresh_balance()
+            bh_record(
+                bh_path, balance=fresh_bal, trigger='order_close',
+                symbol=c['symbol'], leverage=c.get('leverage', 1),
+                pnl_usdt=c.get('pnl_usdt'),
+            )
+            notifier.notify_trade_close(
+                symbol=c['symbol'],
+                side=c.get('side', ''),
+                pnl_usdt=c.get('pnl_usdt', 0.0),
+                entry_price=c.get('entry_price', 0.0),
+                close_price=c.get('close_price', 0.0),
+                preset_name=c.get('preset_name', ''),
+                balance_after=fresh_bal,
+            )
 
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
@@ -835,6 +866,11 @@ async def run() -> None:
             on_candle_close=on_candle_close,
             on_price_update=on_price_update,
         )
+    except BotHaltError as _halt_exc:
+        logger.critical(f"Bot halt: {_halt_exc}")
+        current_syms = symbol_registry.get_symbols()
+        await virtual_order_simulator.close_all_open(current_syms, feed)
+        notifier.notify("emergency", "Bot halted — all symbols disabled", str(_halt_exc), "main")
     finally:
         for t in [_poll_task, _hb_task, _watchdog_task, _menu_task]:
             t.cancel()

@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import math
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
@@ -43,6 +42,10 @@ class SymbolError(Exception):
         super().__init__(reason)
         self.symbol = symbol
         self.reason = reason
+
+
+class BotHaltError(BaseException):
+    """Raised when all symbols are disabled and the bot cannot continue."""
 
 
 @dataclass
@@ -95,7 +98,8 @@ class OrderExecutor:
         self._failure_counts: dict[str, int] = {}
         self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty, min_notional}}
         self._bracket_max: dict[str, int] = {}  # symbol → max leverage from first bracket
-        self._candle_index: int = 0  # incremented on each check_all_orders call
+        self._candle_index: int = 0  # used by check_all_orders (legacy, single-symbol tests)
+        self._symbol_candle_index: dict[str, int] = {}  # per-symbol candle counter for check_symbol_candle
 
         cfg = load_risk_config()
         self._consecutive_failure_threshold: int = cfg.get("consecutive_failure_threshold", 3)
@@ -154,6 +158,19 @@ class OrderExecutor:
                     self._states[symbol] = OrderState.IDLE
                     return False
 
+                # C2: verify notional after rounding; bump one step if needed.
+                if entry > 0:
+                    lot_c2 = await self._ensure_lot_size(symbol)
+                    min_notional_c2 = lot_c2.get('min_notional', 0.0)
+                    if min_notional_c2 > 0 and rounded_qty * entry < min_notional_c2:
+                        step_c2 = Decimal(str(lot_c2['step_size']))
+                        bumped = float(Decimal(str(rounded_qty)) + step_c2)
+                        if bumped * entry >= min_notional_c2:
+                            logger.info(f"[{symbol}] Bumped qty {rounded_qty} → {bumped} to meet min_notional {min_notional_c2}")
+                            rounded_qty = bumped
+                        else:
+                            raise FundsError(f"notional {rounded_qty * entry:.4f} < min_notional {min_notional_c2:.4f} even after bump")
+
                 order_id = await self._submit_to_exchange(symbol, side, rounded_qty, leverage)
                 self._open_orders[symbol] = OpenOrder(
                     symbol=symbol, preset_name=preset_name, side=side,
@@ -175,7 +192,7 @@ class OrderExecutor:
                     sl=sl if sl else entry * (0.99 if side == 'BUY' else 1.01),
                     level=level,
                     signal_type=signal_type,
-                    candle_index=self._candle_index,
+                    candle_index=self._symbol_candle_index.get(symbol, 0),
                     partial_take_pct=partial_take_pct,
                     trailing_stop_pct=trailing_stop_pct,
                 )
@@ -316,6 +333,68 @@ class OrderExecutor:
             "close_price": actual_close_price,
             "leverage": open_order.leverage,
         }]
+
+    async def check_symbol_candle(
+        self,
+        symbol: str,
+        high: float,
+        low: float,
+        candle_open: float,
+        candle_close: float,
+    ) -> list[dict]:
+        """Call once per closed candle for a specific symbol. Handles gap scenarios
+        (price jumped through SL/TP at candle open) that per-tick checks miss."""
+        if self._states.get(symbol) == OrderState.PLACING:
+            return []
+        fake_order = self._fake_orders.get(symbol)
+        if fake_order is None:
+            return []
+
+        self._symbol_candle_index[symbol] = self._symbol_candle_index.get(symbol, 0) + 1
+        candle_idx = self._symbol_candle_index[symbol]
+
+        result = fake_order.check(
+            high, low, candle_idx,
+            candle_open=candle_open,
+            candle_close=candle_close,
+        )
+        if result is None:
+            return []
+
+        open_order = self._open_orders.get(symbol)
+        if open_order is None:
+            del self._fake_orders[symbol]
+            return []
+
+        software_close_price = fake_order.close_price or open_order.entry_price
+        try:
+            actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
+        except Exception as exc:
+            logger.error(f"Market close failed for {symbol}: {exc}")
+            self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
+            actual_close_price = software_close_price
+
+        pnl = self._calc_pnl(open_order, actual_close_price)
+        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
+        closed_info = {
+            "symbol": symbol,
+            "preset_name": open_order.preset_name,
+            "result": result,
+            "pnl_usdt": pnl,
+            "side": open_order.side,
+            "entry_price": open_order.entry_price,
+            "close_price": actual_close_price,
+            "leverage": open_order.leverage,
+        }
+        del self._open_orders[symbol]
+        del self._fake_orders[symbol]
+        self._states[symbol] = OrderState.IDLE
+        self._record_success(symbol)
+        logger.info(
+            f"Order closed (candle): {symbol} result={result} "
+            f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
+        )
+        return [closed_info]
 
     # ------------------------------------------------------------------ #
     # Bulk close                                                           #
@@ -589,6 +668,12 @@ class OrderExecutor:
             logger.warning(
                 f"[{symbol}] avgPrice still 0 after retry — using fallback={fb} as close price"
             )
+            self._notifier.notify(
+                "warning",
+                f"{symbol} close price unavailable",
+                f"avgPrice=0 after retry — used software price {fb:.6f}. PnL estimate may be inaccurate.",
+                "order_executor",
+            )
             return fb
         return avg_price
 
@@ -734,7 +819,7 @@ class OrderExecutor:
                     reason,
                     "order_executor",
                 )
-                sys.exit(1)
+                raise BotHaltError("All symbols disabled — bot cannot continue")
 
     # ------------------------------------------------------------------ #
     # LOT_SIZE helpers                                                     #

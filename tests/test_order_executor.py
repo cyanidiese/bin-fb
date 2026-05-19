@@ -124,7 +124,9 @@ async def test_check_all_orders_tp_hit():
     closed = await ex.check_all_orders(high=55100, low=50000, candle_open=50000, candle_close=55100)
     assert len(closed) == 1
     assert closed[0]['result'] == 'win'
-    assert closed[0]['pnl_usdt'] == pytest.approx((55100 - 50000) * 0.005)
+    raw = (55100 - 50000) * 0.005
+    fees = (50000 + 55100) * 0.005 * 0.0004
+    assert closed[0]['pnl_usdt'] == pytest.approx(raw - fees)
 
 
 # --- close_all_orders_at_market clears fake_orders ---

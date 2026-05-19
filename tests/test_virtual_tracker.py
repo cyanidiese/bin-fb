@@ -67,7 +67,16 @@ def test_record_closed_trade_loss_reduces_score(tmp_path):
     assert eff["trade_count"] == 5
 
 
-def test_no_best_preset_when_below_min_trades(tmp_path):
+def test_best_preset_returned_when_score_is_zero(tmp_path):
+    # Below _MIN_TRADES, _score falls back to seeded_winning_usdt which defaults to 0.
+    # score=0 is no worse than 'default'; the best preset should be returned (not None).
     tracker = _make_tracker(tmp_path)
     tracker._set_efficiency("BTCUSDT", "p1", total_winning=999.0, count=2)
+    assert tracker.best_preset("BTCUSDT") == "p1"
+
+
+def test_best_preset_returns_none_only_when_all_scores_negative(tmp_path):
+    # Only return None when the best available score is strictly negative.
+    tracker = _make_tracker(tmp_path)
+    tracker._set_efficiency("BTCUSDT", "p1", total_winning=-10.0, count=10)
     assert tracker.best_preset("BTCUSDT") is None

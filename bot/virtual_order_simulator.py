@@ -357,12 +357,17 @@ class VirtualOrderSimulator:
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
 
+    _TAKER_FEE_RATE: float = 0.0004
+
     def _calc_pnl(self, record: dict, close_price: float) -> float:
         entry = record['entry_price']
         qty = record['quantity']
         if record['side'] == 'BUY':
-            return (close_price - entry) * qty
-        return (entry - close_price) * qty
+            raw = (close_price - entry) * qty
+        else:
+            raw = (entry - close_price) * qty
+        fees = (entry + close_price) * qty * self._TAKER_FEE_RATE
+        return raw - fees
 
     def _save_all_rank_balances(self) -> None:
         for rank in range(2, self._rank_max + 1):

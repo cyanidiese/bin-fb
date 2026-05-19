@@ -75,7 +75,9 @@ class VirtualTracker:
             return stats.get("seeded_winning_usdt", 0.0)
 
         best = max(symbol_data, key=lambda n: _score(symbol_data[n]))
-        return best if _score(symbol_data[best]) > 0 else None
+        # Return best if score >= 0. Only return None when score is negative (all known losers).
+        # score=0 (no data) is no worse than 'default'; returning None forces the untuned default.
+        return best if _score(symbol_data[best]) >= 0 else None
 
     def get_efficiency(self, symbol: str, preset: str) -> dict:
         return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0})

@@ -299,6 +299,7 @@ async def run() -> None:
     _EXCHANGE_REFRESH_CANDLES = 96
     _candle_counter: list[int] = [0]
     _last_refresh_candle_open: list[int] = [0]
+    _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
 
     async def _get_fresh_balance() -> float:
         now = time.monotonic()
@@ -319,30 +320,136 @@ async def run() -> None:
         symbol: str, best, settings, balance: float, candle_ts: int,
         trade_cap: float = 0.0,
     ) -> float:
+        # Prevent placing more than one real order per symbol per 15m candle batch.
+        # Multiple symbols closing at the same timestamp trigger multiple loop runs;
+        # if an order closes and resets to IDLE within that window, we'd double-enter.
+        if candle_ts > 0 and _placed_this_candle.get(symbol) == candle_ts:
+            return 0.0
+
         preset_name = virtual_tracker.best_preset(symbol)
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
-        entry = best.getEntryPrice()
+        # A3: use analyzer's current price (updated by live ticks) instead of stale signal entry
+        _raw_entry = best.getEntryPrice()
+        _current_px = analyzers[symbol].get_current_price() if symbol in analyzers else 0.0
+        entry = _current_px if _current_px > 0 else _raw_entry
         if entry <= 0:
             return 0.0
 
+        side = best.getSide()
+        raw_tp = best.getTarget()
+        sl_raw = best.getStop()
+
+        # C1: validate geometry (mirrors backtester.py lines 284-296)
+        if sl_raw is None or sl_raw <= 0:
+            return 0.0
+        if side == 'BUY':
+            if raw_tp is None or raw_tp <= entry or sl_raw >= entry:
+                return 0.0
+            tp = entry + (raw_tp - entry) * preset_settings.tp_multiplier
+            sl_dist_pct = (entry - sl_raw) / entry * 100
+            profit_dist_pct = (tp - entry) / entry * 100
+        else:
+            if raw_tp is None or raw_tp >= entry or sl_raw <= entry:
+                return 0.0
+            tp = entry - (entry - raw_tp) * preset_settings.tp_multiplier
+            # SELL SL spikes are harsher — apply ×1.5 when checking min_sl_pct (matches backtester)
+            sl_dist_pct = (sl_raw - entry) / entry * 100 * 1.5
+            profit_dist_pct = (entry - tp) / entry * 100
+
+        sl = sl_raw  # may be tightened by sl_adjust_to_rr below
+
+        # Absolute SL floor: reject if SL is within 0.01% of entry (degenerate signal)
+        if abs(sl - entry) < entry * 0.0001:
+            return 0.0
+
+        _eff_for_dl = virtual_tracker.get_efficiency_score(symbol)
+
+        # max_profit_pct filter
+        if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='skip_max_profit_pct',
+                reason=f'profit={profit_dist_pct:.2f}% > max={preset_settings.max_profit_pct}%',
+                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                preset_name=preset_name, scenario=_active_scenario_name,
+            )
+            return 0.0
+
+        # min_sl_pct filter
+        if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='skip_min_sl_pct',
+                reason=f'sl_dist={sl_dist_pct:.2f}% < min={preset_settings.min_sl_pct}%',
+                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                preset_name=preset_name, scenario=_active_scenario_name,
+            )
+            return 0.0
+
+        # max_sl_pct filter
+        if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='skip_max_sl_pct',
+                reason=f'sl_dist={sl_dist_pct:.2f}% > max={preset_settings.max_sl_pct}%',
+                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                preset_name=preset_name, scenario=_active_scenario_name,
+            )
+            return 0.0
+
+        # ATR-based SL floor (instrument-agnostic structural filter)
         if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:
-            sl_raw = best.getStop()
-            if sl_raw is not None and sl_raw > 0:
-                klines_now = analyzers[symbol].get_klines()
-                if klines_now:
-                    tail = klines_now[-preset_settings.atr_lookback:]
-                    avg_range = sum(float(k[2]) - float(k[3]) for k in tail) / len(tail)
-                    if avg_range > 0 and abs(sl_raw - entry) < preset_settings.min_sl_atr_mult * avg_range:
-                        dl_record(
-                            dl_path, candle_ts=candle_ts, symbol=symbol,
-                            decision='skip_sl_too_tight',
-                            reason=f'sl_dist={abs(sl_raw - entry):.4f} < {preset_settings.min_sl_atr_mult}×avg_range={avg_range:.4f}',
-                            balance=balance, leverage=0, efficiency_score=virtual_tracker.get_efficiency_score(symbol),
-                            preset_name=preset_name, scenario=_active_scenario_name,
-                        )
-                        return 0.0
+            klines_now = analyzers[symbol].get_klines() if symbol in analyzers else []
+            if klines_now:
+                tail = klines_now[-preset_settings.atr_lookback:]
+                avg_range = sum(float(k[2]) - float(k[3]) for k in tail) / len(tail)
+                if avg_range > 0 and abs(sl - entry) < preset_settings.min_sl_atr_mult * avg_range:
+                    dl_record(
+                        dl_path, candle_ts=candle_ts, symbol=symbol,
+                        decision='skip_sl_too_tight',
+                        reason=f'sl_dist={abs(sl - entry):.6f} < {preset_settings.min_sl_atr_mult}×avg_range={avg_range:.6f}',
+                        balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                        preset_name=preset_name, scenario=_active_scenario_name,
+                    )
+                    return 0.0
+
+        profit_dist = abs(tp - entry)
+        loss_dist = abs(sl - entry)
+
+        if loss_dist == 0:
+            return 0.0
+
+        # min_profit_loss_ratio — with optional sl_adjust_to_rr (mirrors backtester lines 318-333)
+        if profit_dist / loss_dist < preset_settings.min_profit_loss_ratio:
+            if preset_settings.sl_adjust_to_rr and profit_dist > 0:
+                required_loss_dist = profit_dist / preset_settings.min_profit_loss_ratio
+                if side == 'BUY':
+                    sl = entry - required_loss_dist
+                    _new_sl_pct = required_loss_dist / entry * 100
+                else:
+                    sl = entry + required_loss_dist
+                    _new_sl_pct = required_loss_dist / entry * 100 * 1.5
+                if preset_settings.min_sl_pct > 0 and _new_sl_pct < preset_settings.min_sl_pct:
+                    dl_record(
+                        dl_path, candle_ts=candle_ts, symbol=symbol,
+                        decision='skip_sl_adjust_too_tight',
+                        reason=f'adjusted_sl={_new_sl_pct:.3f}% < min_sl={preset_settings.min_sl_pct}%',
+                        balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                        preset_name=preset_name, scenario=_active_scenario_name,
+                    )
+                    return 0.0
+            else:
+                rr = profit_dist / loss_dist
+                dl_record(
+                    dl_path, candle_ts=candle_ts, symbol=symbol,
+                    decision='skip_rr',
+                    reason=f'rr={rr:.2f} < min={preset_settings.min_profit_loss_ratio}',
+                    balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                    preset_name=preset_name, scenario=_active_scenario_name,
+                )
+                return 0.0
 
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
@@ -437,10 +544,10 @@ async def run() -> None:
         placed = await order_executor.place_order(
             symbol=symbol,
             preset_name=preset_name or 'default',
-            side=best.getSide(),
+            side=side,
             entry=entry,
-            tp=best.getTarget(),
-            sl=best.getStop() or 0.0,
+            tp=tp,
+            sl=sl,
             quantity=quantity,
             leverage=actual_lev,
             partial_take_pct=preset_settings.partial_take_pct,
@@ -453,6 +560,7 @@ async def run() -> None:
             scenario=_active_scenario_name,
         )
         if placed:
+            _placed_this_candle[symbol] = candle_ts
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision='placed', reason='',
@@ -562,8 +670,14 @@ async def run() -> None:
 
         candidates.sort(key=lambda x: x[3], reverse=True)
         if scenario.uses_weight_allocation:
+            deployable = risk_manager.get_deployable_budget()
+            deployed_w = 0.0
             for sym, best, sym_s, _ in candidates:
-                await _try_place_order(sym, best, sym_s, balance, candle_ts)
+                remaining_w = max(0.0, deployable - deployed_w)
+                if remaining_w <= 0:
+                    break
+                used_w = await _try_place_order(sym, best, sym_s, remaining_w, candle_ts)
+                deployed_w += used_w
         else:
             # BestGetsFirst: proportional caps derived from efficiency scores (disabled already excluded)
             bgf_top_n = int(risk_cfg.get("bgf_top_n", 0))
@@ -605,7 +719,9 @@ async def run() -> None:
 
         closed = await order_executor.check_symbol_price(symbol, price)
         for c in closed:
-            virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+            # Skip recording when pnl=0 and close==entry — indicates avgPrice fallback, not a real result.
+            if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
+                virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
             fresh_bal = await _get_fresh_balance()
@@ -626,7 +742,8 @@ async def run() -> None:
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         for vc in virtual_closed:
-            virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
+            if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
+                virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 
     async def on_switch_mode(target_mode: str) -> None:
         nonlocal virtual_tracker, virtual_order_simulator, scenario

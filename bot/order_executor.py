@@ -273,6 +273,8 @@ class OrderExecutor:
 
     async def check_symbol_price(self, symbol: str, current_price: float) -> list[dict]:
         """Call on every price tick for a specific symbol. Checks that symbol's FakeOrder only."""
+        if self._states.get(symbol) == OrderState.PLACING:
+            return []
         fake_order = self._fake_orders.get(symbol)
         if fake_order is None:
             return []
@@ -488,7 +490,9 @@ class OrderExecutor:
                 leverage=leverage,
             )
         except Exception as exc:
-            logger.warning(f"[{symbol}] Could not set leverage={leverage}: {exc}")
+            # Wrong leverage = wrong margin calc. Abort placement rather than trade at unexpected risk.
+            logger.error(f"[{symbol}] Leverage change to {leverage}x failed — aborting order: {exc}")
+            raise
 
         lot = await self._ensure_lot_size(symbol)
         qty_str = self._qty_str(quantity, lot['step_size'])
@@ -854,11 +858,18 @@ class OrderExecutor:
             self._placing_locks[symbol] = asyncio.Lock()
         return self._placing_locks[symbol]
 
+    # Binance Futures taker fee rate (both sides). 0.04% = 0.0004.
+    # Applied to entry notional (open) and close notional (close).
+    _TAKER_FEE_RATE: float = 0.0004
+
     @staticmethod
     def _calc_pnl(order: OpenOrder, close_price: float) -> float:
         if order.side == 'BUY':
-            return (close_price - order.entry_price) * order.quantity
-        return (order.entry_price - close_price) * order.quantity
+            raw = (close_price - order.entry_price) * order.quantity
+        else:
+            raw = (order.entry_price - close_price) * order.quantity
+        fees = (order.entry_price + close_price) * order.quantity * OrderExecutor._TAKER_FEE_RATE
+        return raw - fees
 
     def _record_failure(self, symbol: str) -> bool:
         """Increment failure counter. Returns True when consecutive threshold is reached or exceeded."""

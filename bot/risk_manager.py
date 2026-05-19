@@ -177,6 +177,13 @@ class RiskManager:
             cfg = self._load_config()
             return self._calc_allocation(symbol, cfg, active_symbols)
 
+    def get_allocation_for_balance(self, symbol: str, balance: float, active_symbols: list[str] | None = None) -> float:
+        """Same allocation formula as get_symbol_allocation but uses the provided balance instead of self._balance.
+        Used by VirtualOrderSimulator so each rank pool is sized from its own virtual balance."""
+        with self._lock:
+            cfg = self._load_config()
+            return self._calc_allocation_for_balance(symbol, cfg, balance, active_symbols)
+
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
             self._last_notify_event = event
@@ -282,6 +289,29 @@ class RiskManager:
         min_pct = cfg.get("min_balance_pct", 0.0)
         reserve = self._balance * (min_pct / 100.0) if min_pct > 0 else 0.0
         deployable_pool = max(0.0, self._balance - reserve) * tier["max_deploy_pct"] / 100.0
+        return deployable_pool * (w_sym / total_w)
+
+    def _get_tier_for_balance(self, cfg: dict, balance: float) -> dict:
+        tiers = sorted(cfg["balance_tiers"], key=lambda t: t["min_balance_usdt"])
+        active = tiers[0]
+        for t in tiers:
+            if balance >= t["min_balance_usdt"]:
+                active = t
+        return active
+
+    def _calc_allocation_for_balance(self, symbol: str, cfg: dict, balance: float, active_symbols: list[str] | None = None) -> float:
+        weights: dict = cfg.get("symbol_weights", {})
+        w_sym = float(weights.get(symbol, 1))
+        if active_symbols is not None:
+            total_w = sum(float(weights.get(s, 1)) for s in active_symbols)
+        else:
+            total_w = float(sum(weights.values())) if weights else 1.0
+        if total_w == 0:
+            total_w = 1.0
+        tier = self._get_tier_for_balance(cfg, balance)
+        min_pct = cfg.get("min_balance_pct", 0.0)
+        reserve = balance * (min_pct / 100.0) if min_pct > 0 else 0.0
+        deployable_pool = max(0.0, balance - reserve) * tier["max_deploy_pct"] / 100.0
         return deployable_pool * (w_sym / total_w)
 
     def _calc_leverage(self, symbol: str, cfg: dict) -> int:

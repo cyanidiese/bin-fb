@@ -50,7 +50,7 @@ class VirtualOrderSimulator:
         initial_balance: float,
         virtual_tracker: 'VirtualTracker',
         min_notionals: dict[str, float],
-        get_allocation: Optional[Callable[[str], float]] = None,
+        get_allocation: Optional[Callable[[str, float], float]] = None,
         get_scenario: Optional[Callable[[], str]] = None,
         rank_max: int = _DEFAULT_RANK_MAX,
         is_rank_disabled: Optional[Callable[[str, int], bool]] = None,
@@ -221,14 +221,11 @@ class VirtualOrderSimulator:
         if entry <= 0 or tp <= 0 or sl <= 0:
             return
 
-        # BUG-07: size from the rank pool balance, not the real account allocation.
-        # Using real-account allocation caused efficiency scores to scale with real
-        # balance changes rather than a stable virtual unit, making cross-preset and
-        # cross-time comparisons unreliable.
-        # 5% of rank pool ≈ 1/15 equal-weight symbols × 80% deployment — consistent
-        # regardless of what happens to the real account.
+        # Size from the rank pool balance using the same allocation formula as real
+        # orders (reserve%, deploy%, symbol weights, balance tiers from risk_config),
+        # but substituting the rank pool's own balance instead of the real account balance.
         rank_bal = self._rank_balance.get(rank, self._initial_balance)
-        alloc = rank_bal * 0.05
+        alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
         quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
         if quantity <= 0:
             return

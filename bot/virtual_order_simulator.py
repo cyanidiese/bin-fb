@@ -221,11 +221,15 @@ class VirtualOrderSimulator:
         if entry <= 0 or tp <= 0 or sl <= 0:
             return
 
-        if self._get_allocation:
-            alloc = self._get_allocation(symbol)
-            quantity = alloc * lev / entry if entry > 0 and alloc > 0 else min_notional / entry
-        else:
-            quantity = min_notional / entry if entry > 0 else 0.0
+        # BUG-07: size from the rank pool balance, not the real account allocation.
+        # Using real-account allocation caused efficiency scores to scale with real
+        # balance changes rather than a stable virtual unit, making cross-preset and
+        # cross-time comparisons unreliable.
+        # 5% of rank pool ≈ 1/15 equal-weight symbols × 80% deployment — consistent
+        # regardless of what happens to the real account.
+        rank_bal = self._rank_balance.get(rank, self._initial_balance)
+        alloc = rank_bal * 0.05
+        quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
         if quantity <= 0:
             return
 

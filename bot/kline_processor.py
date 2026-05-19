@@ -39,7 +39,7 @@ class KlineProcessor:
         n = self.neighbours
         high = float(klines[i][2])
         low = float(klines[i][3])
-        time_s = int(klines[i][6]) // 1000
+        time_s = int(klines[i][0]) // 1000
 
         is_high = (
             all(high > float(klines[i - j][2]) for j in range(1, n + 1))

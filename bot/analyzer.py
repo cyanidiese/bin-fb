@@ -5,7 +5,7 @@ from bot.recommendation import Recommendation
 from bot.recommendation_engine import RecommendationEngine
 from bot.trend import Trend
 
-_MAX_KLINES = 3000  # ~31 days of 15-minute candles; more than enough for ATR and swing detection
+_MAX_KLINES = 4000  # ~41 days of 15-minute candles; more than enough for ATR and swing detection
 
 
 class Analyzer:

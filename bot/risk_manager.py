@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PERF_CACHE_TTL = 60.0   # seconds before re-reading backtest results from disk
+_CONFIG_CACHE_TTL = 5.0  # seconds before re-reading risk_config.json from disk
 _MIN_PRESET_TRADES = 4   # presets with fewer trades are excluded from scoring
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -60,6 +61,9 @@ class RiskManager:
 
         self._last_notify_event: str = ""
         self._last_notify_time: str = ""
+
+        self._config_cache: dict | None = None
+        self._config_cache_ts: float = 0.0
 
         # {symbol: (score: float, timestamp: float, true_pf: float)}
         self._perf_cache: dict[str, tuple[float, float, float]] = {}
@@ -248,8 +252,13 @@ class RiskManager:
     # ------------------------------------------------------------------ #
 
     def _load_config(self) -> dict:
+        now = time.monotonic()
+        if self._config_cache is not None and now - self._config_cache_ts < _CONFIG_CACHE_TTL:
+            return self._config_cache
         from config.risk_config import load_risk_config
-        return load_risk_config(self._config_path)
+        self._config_cache = load_risk_config(self._config_path)
+        self._config_cache_ts = now
+        return self._config_cache
 
     def _get_tier(self, cfg: dict) -> dict:
         tiers = sorted(cfg["balance_tiers"], key=lambda t: t["min_balance_usdt"])

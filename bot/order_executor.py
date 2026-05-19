@@ -243,7 +243,7 @@ class OrderExecutor:
             software_close_price = fake_order.close_price or open_order.entry_price
             # Attempt to close on the exchange at market
             try:
-                actual_close_price = await self._market_close(symbol, open_order)
+                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
             except Exception as exc:
                 logger.error(f"Market close failed for {symbol}: {exc}")
                 self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
@@ -288,7 +288,7 @@ class OrderExecutor:
 
         software_close_price = fake_order.close_price or open_order.entry_price
         try:
-            actual_close_price = await self._market_close(symbol, open_order)
+            actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
         except Exception as exc:
             logger.error(f"Market close failed for {symbol}: {exc}")
             self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
@@ -437,7 +437,7 @@ class OrderExecutor:
         client = self._feed.client
         close_side = 'SELL' if side == 'BUY' else 'BUY'
         if not hasattr(client, 'futures_create_algo_order'):
-            logger.error(f"[{symbol}] python-binance too old — futures_create_algo_order missing. Upgrade to 1.0.19+")
+            logger.info(f"[{symbol}] Exchange SL skipped: futures_create_algo_order not available in installed python-binance — software SL active")
             return None
         lot = await self._ensure_lot_size(symbol)
         qty_str = self._qty_str(quantity, lot['step_size'])
@@ -544,7 +544,7 @@ class OrderExecutor:
 
             raise  # other errors → caller records failure
 
-    async def _market_close(self, symbol: str, order: OpenOrder) -> float:
+    async def _market_close(self, symbol: str, order: OpenOrder, fallback: float | None = None) -> float:
         # Cancel the exchange SL order first so it doesn't fight the market close
         await self._cancel_exchange_order(symbol, order.sl_order_id)
         if self._feed is None:
@@ -581,10 +581,12 @@ class OrderExecutor:
                     except Exception:
                         break
         if avg_price <= 0:
+            fb = fallback if fallback and fallback > 0 else order.entry_price
             logger.warning(
-                f"[{symbol}] avgPrice still 0 after retry — using entry_price={order.entry_price} as fallback"
+                f"[{symbol}] avgPrice still 0 after retry — using fallback={fb} as close price"
             )
-        return avg_price if avg_price > 0 else order.entry_price
+            return fb
+        return avg_price
 
     # ------------------------------------------------------------------ #
     # Account / position management                                        #

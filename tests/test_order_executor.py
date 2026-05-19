@@ -90,7 +90,7 @@ async def test_check_all_orders_sl_hit():
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id1'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 47000.0
 
     ex._submit_to_exchange = fake_submit
@@ -114,7 +114,7 @@ async def test_check_all_orders_tp_hit():
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id2'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 55100.0
 
     ex._submit_to_exchange = fake_submit
@@ -161,7 +161,7 @@ async def test_check_symbol_price_sl_hit():
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id_sl'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 47500.0
 
     ex._submit_to_exchange = fake_submit
@@ -184,7 +184,7 @@ async def test_check_symbol_price_tp_hit():
     async def fake_submit(symbol, side, quantity, leverage):
         return 'id_tp'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 55100.0
 
     ex._submit_to_exchange = fake_submit
@@ -209,7 +209,7 @@ async def test_check_symbol_price_scope_isolation():
     async def fake_submit(symbol, side, quantity, leverage):
         return f'id_{symbol}'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 47500.0 if symbol == 'BTCUSDT' else 2000.0
 
     ex._submit_to_exchange = fake_submit

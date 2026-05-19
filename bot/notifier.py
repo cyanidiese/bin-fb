@@ -110,6 +110,23 @@ class Notifier:
                     except Exception:
                         pass
 
+    @staticmethod
+    def _fmt_price(price: float) -> str:
+        """Format a price with enough decimal places to be meaningful regardless of magnitude."""
+        if price == 0:
+            return "0"
+        if price < 0.0001:
+            return f"{price:,.8f}"
+        if price < 0.01:
+            return f"{price:,.6f}"
+        if price < 1:
+            return f"{price:,.5f}"
+        if price < 100:
+            return f"{price:,.4f}"
+        if price < 10000:
+            return f"{price:,.2f}"
+        return f"{price:,.0f}"
+
     def notify_trade_close(
         self,
         symbol: str,
@@ -128,7 +145,7 @@ class Notifier:
             f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b> <i>[Real]</i>\n"
             f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
             f"Balance: {balance_after:,.2f} USDT\n"
-            f"Entry: {entry_price:,.4f} → Close: {close_price:,.4f}\n"
+            f"Entry: {self._fmt_price(entry_price)} → Close: {self._fmt_price(close_price)}\n"
             f"Preset: {html.escape(preset_name)}"
         )
         try:

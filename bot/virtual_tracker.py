@@ -101,9 +101,11 @@ class VirtualTracker:
         self._set_efficiency(symbol, preset, total_winning=eff["total_winning_usdt"] + profit_usdt, count=eff["trade_count"] + 1)
 
     def _set_efficiency(self, symbol: str, preset: str, total_winning: float, count: int) -> None:
+        existing = self._efficiency.get(symbol, {}).get(preset, {})
         self._efficiency.setdefault(symbol, {})[preset] = {
             "total_winning_usdt": total_winning,
             "trade_count": count,
+            "seeded_winning_usdt": existing.get("seeded_winning_usdt", 0.0),
         }
         self._save_efficiency()
 

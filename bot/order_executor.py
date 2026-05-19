@@ -508,6 +508,32 @@ class OrderExecutor:
             if exc_code in (-2019, -1013):
                 raise FundsError(str(exc)) from exc
 
+            # -4005: MARKET_LOT_SIZE.maxQty exceeded — update cache and retry once with capped qty
+            if exc_code == -4005:
+                try:
+                    info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
+                    for sym_info in info.get('symbols', []):
+                        if sym_info['symbol'] != symbol:
+                            continue
+                        for f in sym_info.get('filters', []):
+                            if f.get('filterType') == 'MARKET_LOT_SIZE':
+                                mkt_max = float(f.get('maxQty', 0) or 0)
+                                if mkt_max > 0:
+                                    self._lot_cache[symbol]['max_qty'] = mkt_max
+                                    capped = self._qty_str(
+                                        float(Decimal(str(mkt_max)).quantize(
+                                            Decimal(str(lot['step_size'])), rounding=ROUND_DOWN)),
+                                        lot['step_size'])
+                                    logger.warning(
+                                        f"[{symbol}] -4005 retry with MARKET_LOT_SIZE cap={mkt_max} qty={capped}")
+                                    result2 = await asyncio.to_thread(
+                                        client.futures_create_order,
+                                        symbol=symbol, side=side, type='MARKET', quantity=capped)
+                                    return str(result2.get('orderId'))
+                except Exception as retry_exc:
+                    logger.error(f"[{symbol}] -4005 retry failed: {retry_exc}")
+                raise  # still fails → caller increments failure count
+
             is_symbol_error = (
                 exc_code == -1121
                 or (exc_code == -2010 and "perpetual" in exc_str)
@@ -785,9 +811,16 @@ class OrderExecutor:
                     if ft == 'LOT_SIZE':
                         entry['step_size'] = f['stepSize']
                         entry['min_qty'] = float(f['minQty'])
-                        max_qty = float(f.get('maxQty', 0) or 0)
-                        if max_qty > 0:
-                            entry['max_qty'] = max_qty
+                        lot_max = float(f.get('maxQty', 0) or 0)
+                        if lot_max > 0:
+                            entry['max_qty'] = lot_max
+                    elif ft == 'MARKET_LOT_SIZE':
+                        # Market orders use MARKET_LOT_SIZE limits, not LOT_SIZE.
+                        # Take the stricter (smaller) maxQty of both filters.
+                        mkt_max = float(f.get('maxQty', 0) or 0)
+                        if mkt_max > 0:
+                            existing = entry.get('max_qty', 0.0)
+                            entry['max_qty'] = min(existing, mkt_max) if existing > 0 else mkt_max
                     elif ft == 'PRICE_FILTER':
                         ts = float(f.get('tickSize', 0) or 0)
                         if ts > 0:
@@ -804,7 +837,7 @@ class OrderExecutor:
         except Exception as exc:
             logger.warning(f"Failed to fetch exchange info: {exc}")
         cached = self._lot_cache.get(symbol, default)
-        logger.debug(
+        logger.info(
             f"[{symbol}] lot filters: step={cached['step_size']} "
             f"minQty={cached['min_qty']} maxQty={cached.get('max_qty', 0)} tick={cached['tick_size']}"
         )

@@ -51,8 +51,8 @@ export async function GET(req: NextRequest) {
     ? Array.from(new Set([...Object.keys(backtest.presets), ...Object.keys(symbolEfficiency)]))
     : Object.keys(symbolEfficiency)
 
-  // Mirror VirtualTracker._MIN_TRADES: use live score once enough trades exist,
-  // otherwise fall back to the backtest-seeded score so ranking works from day 1.
+  // Mirror VirtualTracker scoring: pure seeded until MIN_TRADES, pure live after.
+  // No linear blend — prevents early trades from displacing established preset rankings.
   const MIN_TRADES = 8
   function effectiveScore(stats: { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }): number {
     if ((stats.trade_count ?? 0) >= MIN_TRADES) return stats.total_winning_usdt

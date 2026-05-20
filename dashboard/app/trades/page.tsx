@@ -320,12 +320,17 @@ export default function TradesPage() {
     ? allRankOrdersFlat.filter(o => o.preset_name === selectedPreset)
     : allRankOrdersFlat
 
-  const tradingOrders: (RealOrder | RankOrder)[] = selectedPreset
+  const tradingOrders: (RealOrder | RankOrder)[] = (selectedPreset
     ? [
         ...data.real_orders.filter(o => o.preset_name === selectedPreset),
         ...filteredRankOrders,
       ]
     : [...data.real_orders, ...allRankOrdersFlat]
+  ).sort((a, b) => {
+    const ta = a.open_time ?? ''
+    const tb = b.open_time ?? ''
+    return tb.localeCompare(ta)
+  })
 
   // Open positions (live, not yet closed)
   const openRealPositions: OpenRealPosition[] = (data.open_real ?? []).filter(

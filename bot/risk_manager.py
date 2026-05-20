@@ -331,6 +331,9 @@ class RiskManager:
         ceiling = tier["max_leverage_ceiling"]
         base = cfg["base_leverage"]
         effective_max = min(cfg["max_leverage"], ceiling)
+        override = cfg.get("symbol_leverage", {}).get(symbol)
+        if override is not None:
+            return max(base, min(effective_max, int(override)))
         score = self._get_cross_symbol_score(symbol, cfg)
         raw = base + math.floor(score * (effective_max - base))
         return max(base, min(effective_max, raw))

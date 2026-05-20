@@ -19,6 +19,7 @@ export interface RiskConfig {
   use_allocation_weighting: boolean
   min_balance_pct: number
   scenario?: string
+  symbol_leverage?: Record<string, number>
 }
 
 export interface PerSymbol {

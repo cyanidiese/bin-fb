@@ -43,6 +43,28 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     return Math.max(0, balance - reserve) * (activeTier.max_deploy_pct / 100)
   })()
 
+  // Leverage formula: mirrors _calc_leverage in risk_manager.py
+  // effectiveMax = min(max_leverage, active_tier.max_leverage_ceiling)
+  // crossScore   = (raw_pct - lo) / (hi - lo) across all symbols with data
+  // leverage     = clamp(base + floor(crossScore * (effectiveMax - base)), base, effectiveMax)
+  const effectiveMax = activeTier
+    ? Math.min(config.max_leverage, activeTier.max_leverage_ceiling)
+    : config.max_leverage
+
+  const allRawScores = availableSymbols
+    .map(sym => state?.per_symbol[sym]?.performance_score ?? null)
+    .filter((s): s is number => s !== null)
+  const loScore = allRawScores.length > 0 ? Math.min(...allRawScores) : 0
+  const hiScore = allRawScores.length > 0 ? Math.max(...allRawScores) : 0
+
+  function computeLeverage(sym: string): number {
+    const raw = state?.per_symbol[sym]?.performance_score ?? null
+    if (raw === null) return config.base_leverage
+    const crossScore = hiScore > loScore ? (raw - loScore) / (hiScore - loScore) : 1.0
+    const lev = config.base_leverage + Math.floor(crossScore * (effectiveMax - config.base_leverage))
+    return Math.max(config.base_leverage, Math.min(effectiveMax, lev))
+  }
+
   // BGF: determine which symbols are in the active top-N set.
   // Score ranking is always by profit% desc, independent of the user's display sort.
   // null score (no backtest yet) sorts below all real scores including 0.
@@ -86,8 +108,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     if (groupA !== groupB) return groupA - groupB
     const shareA = totalScore > 0 && activeA ? scoreANum / totalScore : 0
     const shareB = totalScore > 0 && activeB ? scoreBNum / totalScore : 0
-    const levA = state?.per_symbol[a]?.leverage ?? 0
-    const levB = state?.per_symbol[b]?.leverage ?? 0
+    const levA = config.symbol_leverage?.[a] ?? computeLeverage(a)
+    const levB = config.symbol_leverage?.[b] ?? computeLeverage(b)
     let cmp = 0
     if (sortCol === 'symbol') cmp = a.localeCompare(b)
     else if (sortCol === 'score') cmp = scoreANum - scoreBNum
@@ -179,7 +201,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   <SortHdr col="score" title="Best preset's raw total profit % from the last backtest. Higher = larger allocation share.">Profit %</SortHdr>
                   <SortHdr col="alloc" title="score ÷ total scores of active (top-N) symbols">Alloc %</SortHdr>
                   <SortHdr col="usdt" title="USDT allocated to this symbol. Based on Backtest initial balance setting — update that field to see allocation change in real time.">Alloc USDT</SortHdr>
-                  <SortHdr col="leverage" title="Dynamic leverage currently assigned to this symbol.">Leverage</SortHdr>
+                  <SortHdr col="leverage" title={`Auto-computed from cross-symbol profit score. Range: ${config.base_leverage}× – ${effectiveMax}×. Edit any row to override; ⟳ resets to auto.`}>Leverage</SortHdr>
                 </>
               ) : (
                 <>
@@ -219,8 +241,46 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     <td className="py-1.5 pr-4 text-gray-400">
                       {isActive && deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
                     </td>
-                    <td className="py-1.5 pr-4 text-gray-400">
-                      {live ? `${live.leverage}×` : '—'}
+                    <td className="py-1.5 pr-4">
+                      {(() => {
+                        const savedLev = config.symbol_leverage?.[sym]
+                        const predictedLev = computeLeverage(sym)
+                        const isOverridden = savedLev !== undefined
+                        const displayLev = savedLev ?? predictedLev
+                        return (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={config.base_leverage}
+                              max={effectiveMax}
+                              step={1}
+                              value={displayLev}
+                              title={isOverridden
+                                ? `Override: ${displayLev}× (auto would be ${predictedLev}×)`
+                                : `Auto-computed: ${predictedLev}× — edit to override`}
+                              onChange={e => {
+                                const val = Math.max(config.base_leverage, Math.min(effectiveMax, parseInt(e.target.value, 10) || config.base_leverage))
+                                patchConfig({ symbol_leverage: { ...(config.symbol_leverage ?? {}), [sym]: val } })
+                              }}
+                              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs font-mono focus:outline-none focus:border-indigo-500 w-14"
+                            />
+                            <span className="text-gray-600 text-[10px]">×</span>
+                            {isOverridden ? (
+                              <button
+                                onClick={() => {
+                                  const sl = { ...(config.symbol_leverage ?? {}) }
+                                  delete sl[sym]
+                                  patchConfig({ symbol_leverage: sl })
+                                }}
+                                title={`Reset to auto (${predictedLev}×)`}
+                                className="text-[9px] text-amber-600 hover:text-amber-400 transition-colors leading-none"
+                              >⟳</button>
+                            ) : (
+                              <span className="text-[9px] text-gray-700">auto</span>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </td>
                   </tr>
                 )

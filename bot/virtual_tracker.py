@@ -8,6 +8,7 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 _MIN_TRADES = 8  # combined real + virtual trades before live score overrides the backtest seed
+_SENTINEL = object()  # distinguishes "never seen" from None in _last_best
 
 
 class VirtualTracker:
@@ -21,6 +22,7 @@ class VirtualTracker:
         self._orders_path = orders_path
         self._efficiency_path = efficiency_path
         self._efficiency: dict = self._load_efficiency()
+        self._last_best: dict[str, str | None] = {}
 
     def clear_session_data(self, symbols: list[str]) -> None:
         """Wipe in-memory and on-disk efficiency so the new session starts clean."""
@@ -70,18 +72,31 @@ class VirtualTracker:
             count = stats.get("trade_count", 0)
             seeded = stats.get("seeded_winning_usdt", 0.0)
             live = stats.get("total_winning_usdt", 0.0)
+            # Pure seeded until MIN_TRADES to prevent early trades from displacing an established preset
             if count >= _MIN_TRADES:
                 return live
-            if count == 0:
-                return seeded
-            # Linear blend: avoids abrupt ranking cliff at exactly _MIN_TRADES trades
-            t = count / _MIN_TRADES
-            return seeded * (1.0 - t) + live * t
+            return seeded
 
         best = max(symbol_data, key=lambda n: _score(symbol_data[n]))
-        # Return best if score >= 0. Only return None when score is negative (all known losers).
-        # score=0 (no data) is no worse than 'default'; returning None forces the untuned default.
-        return best if _score(symbol_data[best]) >= 0 else None
+        result = best if _score(symbol_data[best]) >= 0 else None
+
+        prev = self._last_best.get(symbol, _SENTINEL)
+        if prev is not _SENTINEL and prev != result:
+            prev_stats = symbol_data.get(prev or '', {})
+            new_stats = symbol_data.get(result or '', {})
+            logger.info(
+                f"[{symbol}] Best preset changed: {prev!r} -> {result!r} | "
+                f"prev(cnt={prev_stats.get('trade_count', 0)}, "
+                f"seeded={prev_stats.get('seeded_winning_usdt', 0.0):.2f}, "
+                f"live={prev_stats.get('total_winning_usdt', 0.0):.2f}, "
+                f"score={_score(prev_stats):.2f}) | "
+                f"new(cnt={new_stats.get('trade_count', 0)}, "
+                f"seeded={new_stats.get('seeded_winning_usdt', 0.0):.2f}, "
+                f"live={new_stats.get('total_winning_usdt', 0.0):.2f}, "
+                f"score={_score(new_stats):.2f})"
+            )
+        self._last_best[symbol] = result
+        return result
 
     def get_efficiency(self, symbol: str, preset: str) -> dict:
         return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0})
@@ -95,13 +110,7 @@ class VirtualTracker:
             count = stats.get('trade_count', 0)
             seeded = stats.get('seeded_winning_usdt', 0.0)
             live = stats.get('total_winning_usdt', 0.0)
-            if count >= _MIN_TRADES:
-                score = live
-            elif count == 0:
-                score = seeded
-            else:
-                t = count / _MIN_TRADES
-                score = seeded * (1.0 - t) + live * t
+            score = live if count >= _MIN_TRADES else seeded
             best = max(best, score)
         return best if best != float('-inf') else 0.0
 
@@ -110,12 +119,7 @@ class VirtualTracker:
         count = stats.get('trade_count', 0)
         seeded = stats.get('seeded_winning_usdt', 0.0)
         live = stats.get('total_winning_usdt', 0.0)
-        if count >= _MIN_TRADES:
-            return live
-        if count == 0:
-            return seeded
-        t = count / _MIN_TRADES
-        return seeded * (1.0 - t) + live * t
+        return live if count >= _MIN_TRADES else seeded
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)

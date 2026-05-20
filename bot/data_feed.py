@@ -79,7 +79,11 @@ class DataFeed:
         if cached:
             last_open_ms = int(cached[-1][0])
             logger.info(f"Cache has {len(cached)} klines, fetching updates since {last_open_ms}")
-            fresh = self._fetch(symbol, timeframe, limit=limit, start_ms=last_open_ms + 1)
+            try:
+                fresh = self._fetch(symbol, timeframe, limit=limit, start_ms=last_open_ms + 1)
+            except Exception as e:
+                logger.warning(f"[{symbol}] Kline update fetch failed (using cache): {e}")
+                fresh = []
         else:
             logger.info(f"No cache found, fetching {limit} klines")
             fresh = self._fetch(symbol, timeframe, limit=limit)

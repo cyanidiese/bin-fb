@@ -51,6 +51,7 @@ class VirtualOrderSimulator:
         virtual_tracker: 'VirtualTracker',
         min_notionals: dict[str, float],
         get_allocation: Optional[Callable[[str, float], float]] = None,
+        get_bgf_allocation: Optional[Callable[[float, float], float]] = None,
         get_scenario: Optional[Callable[[], str]] = None,
         rank_max: int = _DEFAULT_RANK_MAX,
         is_rank_disabled: Optional[Callable[[str, int], bool]] = None,
@@ -62,10 +63,14 @@ class VirtualOrderSimulator:
         self._virtual_tracker = virtual_tracker
         self._min_notionals = min_notionals
         self._get_allocation = get_allocation
+        self._get_bgf_allocation = get_bgf_allocation
         self._get_scenario = get_scenario
         self._rank_max = rank_max
         self._is_rank_disabled = is_rank_disabled
         self._initial_balance = initial_balance
+        # Candle-level allocation context — set by main.py before each on_candle_close call
+        self._uses_weight_alloc: bool = True
+        self._bgf_fractions: dict[str, float] = {}
 
         # rank -> symbol -> open order record
         self._rank_open: dict[int, dict[str, dict]] = {}
@@ -122,13 +127,23 @@ class VirtualOrderSimulator:
                 result.append({**record, 'symbol': symbol})
         return result
 
-    def apply_real_balance_if_fresh(self, balance: float) -> None:
-        """Seed each rank pool from the real account balance on first start."""
+    def sync_real_balance_on_start(self, balance: float) -> None:
+        """Sync every rank pool balance to the real account balance on each bot start.
+        Ensures virtual pools begin each session from the same baseline as the real account."""
+        if balance <= 0:
+            return
         for rank in range(2, self._rank_max + 1):
-            if not self._rank_balance_path(rank).exists() and balance > 0:
-                self._rank_balance[rank] = balance
-                self._save_rank_balance(rank)
-                logger.info(f"Rank-{rank} virtual balance seeded from real account: {balance:.2f} USDT")
+            self._rank_balance[rank] = balance
+            self._save_rank_balance(rank)
+            logger.info(f"Rank-{rank} virtual balance synced to real account: {balance:.2f} USDT")
+
+    def set_candle_alloc_context(
+        self, uses_weight_alloc: bool, bgf_fractions: dict[str, float]
+    ) -> None:
+        """Set the allocation context for the current candle batch.
+        Must be called by main.py before on_candle_close so _try_open uses the correct formula."""
+        self._uses_weight_alloc = uses_weight_alloc
+        self._bgf_fractions = bgf_fractions
 
     # ------------------------------------------------------------------ #
     # Candle close — open / evict rank positions                          #
@@ -229,11 +244,16 @@ class VirtualOrderSimulator:
         if entry <= 0 or tp <= 0 or sl <= 0:
             return
 
-        # Size from the rank pool balance using the same allocation formula as real
-        # orders (reserve%, deploy%, symbol weights, balance tiers from risk_config),
-        # but substituting the rank pool's own balance instead of the real account balance.
+        # Size from the rank pool balance using the same allocation formula as real orders,
+        # substituting the rank pool's own balance instead of the real account balance.
+        # For BGF scenarios: use score-proportional fraction of the rank pool's deployable budget.
+        # For weight-allocation scenarios: use the weight-split formula (existing behaviour).
         rank_bal = self._rank_balance.get(rank, self._initial_balance)
-        alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
+        fraction = self._bgf_fractions.get(symbol) if not self._uses_weight_alloc else None
+        if fraction is not None and self._get_bgf_allocation is not None:
+            alloc = self._get_bgf_allocation(rank_bal, fraction)
+        else:
+            alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
         quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
         if quantity <= 0:
             return

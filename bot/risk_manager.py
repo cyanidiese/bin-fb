@@ -185,6 +185,17 @@ class RiskManager:
             cfg = self._load_config()
             return self._calc_allocation_for_balance(symbol, cfg, balance, active_symbols)
 
+    def get_bgf_allocation_for_balance(self, balance: float, fraction: float) -> float:
+        """BGF-proportional allocation for virtual orders: fraction * deployable pool of the given balance.
+        fraction = this symbol's efficiency score / total score across all BGF candidates."""
+        with self._lock:
+            cfg = self._load_config()
+            tier = self._get_tier_for_balance(cfg, balance)
+            min_pct = cfg.get("min_balance_pct", 0.0)
+            reserve = balance * (min_pct / 100.0) if min_pct > 0 else 0.0
+            deployable = max(0.0, balance - reserve) * tier["max_deploy_pct"] / 100.0
+            return deployable * max(0.0, fraction)
+
     def notify(self, event: str, payload: dict) -> None:
         with self._lock:
             self._last_notify_event = event
@@ -320,9 +331,30 @@ class RiskManager:
         ceiling = tier["max_leverage_ceiling"]
         base = cfg["base_leverage"]
         effective_max = min(cfg["max_leverage"], ceiling)
-        score, _ = self._get_perf_score(symbol, cfg)
+        score = self._get_cross_symbol_score(symbol, cfg)
         raw = base + math.floor(score * (effective_max - base))
         return max(base, min(effective_max, raw))
+
+    def _get_cross_symbol_score(self, symbol: str, cfg: dict) -> float:
+        """0-1 score for leverage: this symbol's raw profit% normalised across all active symbols.
+        Better cross-symbol performers get higher leverage, consistent with allocation ranking."""
+        symbols = list(cfg.get("symbol_weights", {}).keys())
+        raw_pcts: list[float] = []
+        for sym in symbols:
+            self._get_perf_score(sym, cfg)  # populate cache
+            cached = self._perf_cache.get(sym)
+            pct = cached[3] if cached and len(cached) > 3 else None
+            if pct is not None:
+                raw_pcts.append(pct)
+
+        self._get_perf_score(symbol, cfg)
+        cached = self._perf_cache.get(symbol)
+        my_pct = cached[3] if cached and len(cached) > 3 else None
+
+        if my_pct is None or not raw_pcts:
+            return 0.5
+        lo, hi = min(raw_pcts), max(raw_pcts)
+        return (my_pct - lo) / (hi - lo) if hi > lo else 1.0
 
     def _get_perf_score(self, symbol: str, cfg: dict) -> tuple[float, float]:
         """Returns (intra_score, true_pf). Updates cache if stale."""

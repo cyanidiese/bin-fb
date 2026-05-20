@@ -190,6 +190,7 @@ async def run() -> None:
         virtual_tracker=virtual_tracker,
         min_notionals=min_notionals,
         get_allocation=risk_manager.get_allocation_for_balance,
+        get_bgf_allocation=risk_manager.get_bgf_allocation_for_balance,
         get_scenario=lambda: _active_scenario_name,
         rank_max=len(all_presets),
         is_rank_disabled=symbol_registry.is_rank_disabled,
@@ -270,7 +271,7 @@ async def run() -> None:
     if startup_balance > 0:
         risk_manager.seed_real_balance(startup_balance)
     bh_record(bh_path, balance=risk_manager.get_balance(), trigger='startup')
-    virtual_order_simulator.apply_real_balance_if_fresh(risk_manager.get_balance())
+    virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
 
     # Kline bootstrap + initial export
     for symbol in symbols:
@@ -688,6 +689,7 @@ async def run() -> None:
 
         candidates.sort(key=lambda x: x[3], reverse=True)
         if scenario.uses_weight_allocation:
+            virtual_order_simulator.set_candle_alloc_context(True, {})
             deployable = risk_manager.get_deployable_budget()
             deployed_w = 0.0
             for sym, best, sym_s, _ in candidates:
@@ -703,6 +705,11 @@ async def run() -> None:
                 candidates = candidates[:bgf_top_n]
             deployable = risk_manager.get_deployable_budget()
             total_score = sum(max(0.0, s) for _, _, _, s in candidates)
+            bgf_fractions = {
+                sym: (max(0.0, score) / total_score if total_score > 0 else 1.0 / len(candidates))
+                for sym, _, _, score in candidates
+            } if candidates else {}
+            virtual_order_simulator.set_candle_alloc_context(False, bgf_fractions)
             deployed = 0.0
             for sym, best, sym_s, score in candidates:
                 remaining = max(0.0, deployable - deployed)
@@ -858,7 +865,7 @@ async def run() -> None:
         switch_balance = await order_executor.fetch_account_balance()
         if switch_balance > 0:
             risk_manager.update_balance(switch_balance)
-        virtual_order_simulator.apply_real_balance_if_fresh(risk_manager.get_balance())
+        virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 
     def _write_open_positions() -> None:

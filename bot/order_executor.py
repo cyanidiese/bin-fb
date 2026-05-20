@@ -639,14 +639,25 @@ class OrderExecutor:
         close_side = 'SELL' if order.side == 'BUY' else 'BUY'
         lot = await self._ensure_lot_size(symbol)
         qty_str = self._qty_str(order.quantity, lot['step_size'])
-        result = await asyncio.to_thread(
-            client.futures_create_order,
-            symbol=symbol,
-            side=close_side,
-            type='MARKET',
-            quantity=qty_str,
-            reduceOnly=True,
-        )
+        try:
+            result = await asyncio.to_thread(
+                client.futures_create_order,
+                symbol=symbol,
+                side=close_side,
+                type='MARKET',
+                quantity=qty_str,
+                reduceOnly=True,
+            )
+        except Exception as exc:
+            # -2022: position already closed by the exchange SL order — not an error, use fallback price
+            if getattr(exc, 'code', None) == -2022:
+                fb = fallback if fallback and fallback > 0 else order.entry_price
+                logger.info(
+                    f"[{symbol}] Position already closed on exchange (SL filled) — "
+                    f"using software close price {fb:.6f}"
+                )
+                return fb
+            raise
         avg_price = float(result.get('avgPrice', 0) or 0)
         # Testnet often returns avgPrice="0" in the immediate response for market orders.
         # Retry-query the order to get the actual fill price before falling back to entry.

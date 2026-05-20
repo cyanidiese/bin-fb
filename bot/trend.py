@@ -273,7 +273,7 @@ class Trend:
 
         if point.isHigh():
             self.setHighPoint(point)
-        elif point.isLow():
+        if point.isLow():
             self.setLowPoint(point)
 
     def checkIfHigherThanDescBreakOfStructure(self, point: Point) -> None:

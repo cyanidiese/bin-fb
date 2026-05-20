@@ -694,7 +694,7 @@ async def run() -> None:
                 remaining_w = max(0.0, deployable - deployed_w)
                 if remaining_w <= 0:
                     break
-                used_w = await _try_place_order(sym, best, sym_s, remaining_w, candle_ts)
+                used_w = await _try_place_order(sym, best, sym_s, risk_manager.get_balance(), candle_ts)
                 deployed_w += used_w
         else:
             # BestGetsFirst: proportional caps derived from efficiency scores (disabled already excluded)
@@ -718,10 +718,11 @@ async def run() -> None:
                 deployed += used
 
         # D1: OHLC-level SL/TP check — catches gaps that per-tick checks miss.
-        candle_high = float(kline[2])
-        candle_low = float(kline[3])
-        candle_open_price = float(kline[1])
-        candle_close_price = float(kline[4])
+        # Use REST-refreshed candle_to_add when available; it has more accurate OHLC than the WS close event.
+        candle_high = float(candle_to_add[2])
+        candle_low = float(candle_to_add[3])
+        candle_open_price = float(candle_to_add[1])
+        candle_close_price = float(candle_to_add[4])
         candle_closed = await order_executor.check_symbol_candle(
             symbol, candle_high, candle_low, candle_open_price, candle_close_price,
         )

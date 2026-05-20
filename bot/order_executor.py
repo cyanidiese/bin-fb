@@ -171,7 +171,10 @@ class OrderExecutor:
                         else:
                             raise FundsError(f"notional {rounded_qty * entry:.4f} < min_notional {min_notional_c2:.4f} even after bump")
 
-                order_id = await self._submit_to_exchange(symbol, side, rounded_qty, leverage)
+                order_id = await asyncio.wait_for(
+                    self._submit_to_exchange(symbol, side, rounded_qty, leverage),
+                    timeout=self.PLACING_TIMEOUT,
+                )
                 self._open_orders[symbol] = OpenOrder(
                     symbol=symbol, preset_name=preset_name, side=side,
                     entry_price=entry, tp_price=tp, sl_price=sl,

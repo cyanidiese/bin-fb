@@ -136,7 +136,8 @@ class RiskManager:
                 return False, "hard_stop_active"
 
             _, pf = self._get_perf_score(symbol, cfg)
-            if pf < cfg["min_profit_factor"]:
+            # pf=0.0 means no backtest data yet — treat as unknown, not as a loser
+            if pf > 0 and pf < cfg["min_profit_factor"]:
                 return (
                     False,
                     f"profit_factor={pf:.2f} below threshold={cfg['min_profit_factor']}",

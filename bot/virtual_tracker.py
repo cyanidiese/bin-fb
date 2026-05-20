@@ -67,12 +67,16 @@ class VirtualTracker:
             return None
 
         def _score(stats: dict) -> float:
-            # Once a preset has enough live virtual trades, use the live score.
-            # Otherwise fall back to the backtest-seeded score so the bot can
-            # still pick a best preset before any runtime data accumulates.
-            if stats.get("trade_count", 0) >= _MIN_TRADES:
-                return stats.get("total_winning_usdt", 0.0)
-            return stats.get("seeded_winning_usdt", 0.0)
+            count = stats.get("trade_count", 0)
+            seeded = stats.get("seeded_winning_usdt", 0.0)
+            live = stats.get("total_winning_usdt", 0.0)
+            if count >= _MIN_TRADES:
+                return live
+            if count == 0:
+                return seeded
+            # Linear blend: avoids abrupt ranking cliff at exactly _MIN_TRADES trades
+            t = count / _MIN_TRADES
+            return seeded * (1.0 - t) + live * t
 
         best = max(symbol_data, key=lambda n: _score(symbol_data[n]))
         # Return best if score >= 0. Only return None when score is negative (all known losers).
@@ -88,17 +92,30 @@ class VirtualTracker:
             return 0.0
         best = float('-inf')
         for stats in symbol_data.values():
-            if stats.get('trade_count', 0) >= _MIN_TRADES:
-                best = max(best, stats.get('total_winning_usdt', 0.0))
+            count = stats.get('trade_count', 0)
+            seeded = stats.get('seeded_winning_usdt', 0.0)
+            live = stats.get('total_winning_usdt', 0.0)
+            if count >= _MIN_TRADES:
+                score = live
+            elif count == 0:
+                score = seeded
             else:
-                best = max(best, stats.get('seeded_winning_usdt', 0.0))
+                t = count / _MIN_TRADES
+                score = seeded * (1.0 - t) + live * t
+            best = max(best, score)
         return best if best != float('-inf') else 0.0
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})
-        if stats.get('trade_count', 0) >= _MIN_TRADES:
-            return stats.get('total_winning_usdt', 0.0)
-        return stats.get('seeded_winning_usdt', 0.0)
+        count = stats.get('trade_count', 0)
+        seeded = stats.get('seeded_winning_usdt', 0.0)
+        live = stats.get('total_winning_usdt', 0.0)
+        if count >= _MIN_TRADES:
+            return live
+        if count == 0:
+            return seeded
+        t = count / _MIN_TRADES
+        return seeded * (1.0 - t) + live * t
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)

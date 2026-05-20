@@ -5,6 +5,7 @@ import logging
 import logging.handlers
 import math
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -672,6 +673,8 @@ async def run() -> None:
                 continue
             if symbol_registry.is_symbol_paused(sym):
                 continue
+            if symbol_registry.get_weight(sym) == 0.0:
+                continue
             if order_executor.get_state(sym) != OrderState.IDLE:
                 continue
             best_sym = (
@@ -709,6 +712,8 @@ async def run() -> None:
                     sym_cap = deployable * max(0.0, score) / total_score
                 else:
                     sym_cap = deployable / len(candidates) if candidates else 0.0
+                if sym_cap <= 0:
+                    continue
                 used = await _try_place_order(sym, best, sym_s, remaining, candle_ts, trade_cap=sym_cap)
                 deployed += used
 
@@ -741,18 +746,24 @@ async def run() -> None:
                 balance_after=fresh_bal,
             )
 
-        await virtual_order_simulator.on_candle_close(
-            symbol=symbol,
-            analyzer=analyzer,
-            best_preset_name=virtual_tracker.best_preset(symbol),
-            base_settings=settings,
-        )
+        if symbol_registry.get_weight(symbol) > 0.0:
+            await virtual_order_simulator.on_candle_close(
+                symbol=symbol,
+                analyzer=analyzer,
+                best_preset_name=virtual_tracker.best_preset(symbol),
+                base_settings=settings,
+            )
 
         export(
             symbol, timeframe, mode_manager.current_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
             analyzer.get_klines(), recs, analyzer.get_all_points(), best_for_this,
         )
+
+        try:
+            _write_open_positions()
+        except Exception as _wop_exc:
+            logger.debug(f"open_positions write failed: {_wop_exc}")
 
         if best_for_this:
             trades_logger.info(f"BEST | symbol={symbol} | {best_for_this}")
@@ -849,12 +860,49 @@ async def run() -> None:
         virtual_order_simulator.apply_real_balance_if_fresh(risk_manager.get_balance())
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 
+    def _write_open_positions() -> None:
+        """Snapshot current open orders (real + virtual) to disk for the dashboard."""
+        real_open = []
+        for sym, oo in order_executor.get_open_orders().items():
+            real_open.append({
+                'symbol': sym,
+                'preset_name': oo.preset_name,
+                'side': oo.side,
+                'entry_price': oo.entry_price,
+                'tp': oo.tp_price,
+                'sl': oo.sl_price,
+                'quantity': oo.quantity,
+                'leverage': oo.leverage,
+                'scenario': oo.scenario,
+                'open_time': oo.open_time,
+                'status': 'open',
+            })
+        virtual_open = virtual_order_simulator.get_open_positions()
+        payload = {
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'real': real_open,
+            'virtual': virtual_open,
+        }
+        _path = _PROJECT_ROOT / 'data' / f'open_positions_{mode_manager.current_mode}.json'
+        _path.parent.mkdir(parents=True, exist_ok=True)
+        _tmp = _path.with_suffix('.json.tmp')
+        _tmp.write_text(json.dumps(payload))
+        _tmp.replace(_path)
+
     async def on_stop_bot() -> None:
         current_symbols = symbol_registry.get_symbols()
         await virtual_order_simulator.close_all_open(current_symbols, feed)
         await order_executor.close_all_orders_at_market()
+        _write_open_positions()  # clears to empty after all orders closed
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
+
+    # Register SIGTERM handler so `docker stop` / deploy triggers the same graceful
+    # shutdown as the dashboard Stop button (closes virtual + real orders before exit).
+    asyncio.get_running_loop().add_signal_handler(
+        signal.SIGTERM,
+        lambda: asyncio.create_task(on_stop_bot()),
+    )
 
     # ── Task setup ─────────────────────────────────────────────────────── #
 

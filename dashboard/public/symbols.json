@@ -1,10 +1,6 @@
 {
   "symbols": [
-    "BTCUSDT",
-    "XAUUSDT",
-    "ETHUSDT",
     "SOLUSDT",
-    "BNBUSDT",
     "THETAUSDT",
     "REZUSDT",
     "DOGEUSDT",
@@ -14,6 +10,10 @@
     "AVAXUSDT",
     "ETHFIUSDT",
     "TIAUSDT",
-    "EIGENUSDT"
+    "EIGENUSDT",
+    "1000SHIBUSDT",
+    "INJUSDT",
+    "JUPUSDT",
+    "APTUSDT"
   ]
 }

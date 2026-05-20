@@ -113,12 +113,14 @@ Prevents repeated entries after losses and reduces overtrading in choppy markets
 ## Backtesting System
 
 ### Preset Definition & Execution
-100+ presets (parameter combinations) defined in `backtest.py`. Each preset is a dict of Settings field overrides. Backtester replays klines and simulates fake orders to compute win rate, profit %, max drawdown, etc.
+100+ presets (parameter combinations) defined in `config/presets.py` (centralized). Each preset is a dict of Settings field overrides. Backtester replays klines and simulates fake orders to compute win rate, profit %, max drawdown, etc.
 
-**Files**: `backtest.py`, `bot/backtester.py`
+**Files**: `config/presets.py` (PRESETS, LOCKED_PRESETS, ALL_PRESETS), `backtest.py`, `bot/backtester.py`
 **Key details**:
-- 4 locked presets (code-level, can only be unlocked by source edit): `trail_15_from_30_full`, `trail_15_from_30_cooldown`, `sl_adjust_rr_tp95`, `trail_20_from_30_cooldown`
+- Presets centralized in `config/presets.py` (session 22) — PRESETS dict (user-modifiable), LOCKED_PRESETS dict (code-level, only unlocked by source edit)
+- Locked presets: `trail_15_from_30_full`, `trail_15_from_30_cooldown`, `sl_adjust_rr_tp95`, `trail_20_from_30_cooldown`
 - User can lock/unlock additional presets via dashboard; lock status persists in JSON
+- `backtest.py` and `discover.py` import from `config/presets.py`
 - Backtest output: `backtest_results.json` (live feed) and `backtest_{timestamp}.json` (archive)
 - Klines limit control: `--klines-count N` CLI flag for faster reruns on cached data
 
@@ -175,6 +177,10 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
 **Position sizing**:
 - Quantity = `margin / current_price` where `margin = min_notional / current_leverage`
 - `min_notional`: symbol-specific minimum notional from exchange (lot size cache fetched at startup)
+- **Min notional safeguards** (session 22):
+  - When balance < min_notional / leverage: auto-bump leverage up to needed level (capped at bracket_max)
+  - If even bracket_max insufficient: skip order with `skip_min_notional` decision log entry
+  - 2% quantity buffer applied after margin calculation to prevent rounding below Binance floor
 - Leverage gated by RiskManager; per-symbol leverage determined by LeverageScenario
 
 **Real order persistence**:
@@ -600,4 +606,4 @@ If `data/STOP` file exists, main loop checks and halts gracefully.
 
 ---
 
-**Last updated**: Session 21 (2026-05-17) — Telegram interactive menu (3-tier access, pause/resume symbols, view trades/backtest, owner controls).
+**Last updated**: Session 22 (2026-05-17) — Min notional order sizing fix (leverage bump + 2% buffer) + preset refactoring (centralized config/presets.py) + deployment to VPS.

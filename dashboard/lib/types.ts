@@ -268,6 +268,36 @@ export interface DisabledSymbolEntry {
   disabled_at: string;
 }
 
+export interface OpenRealPosition {
+  symbol: string;
+  preset_name: string;
+  side: 'BUY' | 'SELL';
+  entry_price: number;
+  tp: number;
+  sl: number;
+  quantity: number;
+  leverage: number;
+  scenario: string | null;
+  open_time: string | null;
+  status: 'open';
+}
+
+export interface OpenVirtualPosition {
+  symbol: string;
+  rank: number;
+  preset_name: string;
+  side: 'BUY' | 'SELL';
+  entry_price: number;
+  tp: number;
+  sl: number;
+  quantity: number;
+  leverage: number;
+  scenario: string | null;
+  open_time: string;
+  rank_balance_at_open: number | null;
+  status: 'open';
+}
+
 export interface TradesData {
   symbol: string;
   mode: string;
@@ -279,4 +309,6 @@ export interface TradesData {
   preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
   disabled_ranks: number[];                    // ranks disabled for this symbol
   disabled_symbols: Record<string, DisabledSymbolEntry>;  // globally disabled symbols
+  open_real: OpenRealPosition[];
+  open_virtual: OpenVirtualPosition[];
 }

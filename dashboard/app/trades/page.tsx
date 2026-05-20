@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
-import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry } from '@/lib/types'
+import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry, OpenRealPosition, OpenVirtualPosition } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
@@ -21,6 +21,24 @@ function pnlClass(v: number) {
 
 function pnlFmt(v: number) {
   return (v >= 0 ? '+' : '') + v.toFixed(2)
+}
+
+function fmtPrice(price: number): string {
+  if (!price) return '0'
+  const a = Math.abs(price)
+  if (a >= 1000) return price.toFixed(2)
+  if (a >= 10)   return price.toFixed(3)
+  if (a >= 1)    return price.toFixed(4)
+  if (a >= 0.1)  return price.toFixed(5)
+  if (a >= 0.01) return price.toFixed(6)
+  if (a >= 0.001) return price.toFixed(7)
+  return price.toPrecision(4)
+}
+
+function fmtQty(qty: number): string {
+  if (qty >= 10000) return qty.toLocaleString('en', { maximumFractionDigits: 0 })
+  if (qty >= 1)     return qty.toFixed(2)
+  return qty.toPrecision(4)
 }
 
 // ── Preset Efficiency ──────────────────────────────────────────────────────
@@ -309,9 +327,18 @@ export default function TradesPage() {
       ]
     : [...data.real_orders, ...allRankOrdersFlat]
 
+  // Open positions (live, not yet closed)
+  const openRealPositions: OpenRealPosition[] = (data.open_real ?? []).filter(
+    o => !selectedPreset || o.preset_name === selectedPreset
+  )
+  const openVirtualPositions: OpenVirtualPosition[] = (data.open_virtual ?? []).filter(
+    o => !selectedPreset || o.preset_name === selectedPreset
+  )
+  const totalOpen = openRealPositions.length + openVirtualPositions.length
+
   const tradingOrdersLabel = selectedPreset
-    ? `Trading Orders — ${selectedPreset} (${tradingOrders.length})`
-    : `Trading Orders (${data.real_orders.length} real · ${allRankOrdersFlat.length} rank virtual)`
+    ? `Trading Orders — ${selectedPreset} (${tradingOrders.length}${totalOpen > 0 ? ` · ${totalOpen} live` : ''})`
+    : `Trading Orders (${data.real_orders.length} real · ${allRankOrdersFlat.length} rank virtual${totalOpen > 0 ? ` · ${totalOpen} live` : ''})`
 
   const thProps = { sortKey, sortDir, onSort: handleSort }
 
@@ -543,7 +570,7 @@ export default function TradesPage() {
         storageKey="trades-real-orders"
         defaultOpen={data.real_orders.length > 0}
       >
-        {tradingOrders.length === 0 ? (
+        {totalOpen === 0 && tradingOrders.length === 0 ? (
           <p className="text-gray-500 text-sm py-4">
             {selectedPreset ? `No orders for preset "${selectedPreset}".` : 'No orders recorded yet.'}
           </p>
@@ -557,14 +584,62 @@ export default function TradesPage() {
                   <th className="py-2 pr-3">Side</th>
                   <th className="py-2 pr-3 text-right">Lev</th>
                   <th className="py-2 pr-3">Scenario</th>
+                  <th className="py-2 pr-3 text-right">Qty</th>
                   <th className="py-2 pr-3 text-right">Entry</th>
                   <th className="py-2 pr-3 text-right">Close</th>
                   <th className="py-2 pr-3 text-right">PnL USDT</th>
                   <th className="py-2 pr-3">Result</th>
-                  <th className="py-2 text-right">Closed At</th>
+                  <th className="py-2 text-right">Time</th>
                 </tr>
               </thead>
               <tbody>
+                {/* ── Live open positions (real) ── */}
+                {openRealPositions.map((order, i) => (
+                  <tr key={`open-real-${i}`} className="border-b border-gray-800 bg-emerald-950/30">
+                    <td className="py-1.5 pr-3 font-mono text-xs text-white">{order.preset_name}</td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-green-400">Real</span>
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-800/60 text-emerald-300 font-semibold tracking-wide">LIVE</span>
+                      </span>
+                    </td>
+                    <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{order.leverage != null ? `${order.leverage}×` : '—'}</td>
+                    <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">{order.scenario || '—'}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{fmtQty(order.quantity)}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">{fmtPrice(order.entry_price)}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
+                    <td className="py-1.5 pr-3 text-gray-600">—</td>
+                    <td className="py-1.5 text-right text-gray-500 text-xs">
+                      {order.open_time ? new Date(order.open_time).toLocaleString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {/* ── Live open positions (virtual / rank) ── */}
+                {openVirtualPositions.map((order, i) => (
+                  <tr key={`open-virt-${i}`} className="border-b border-gray-800 bg-sky-950/30">
+                    <td className="py-1.5 pr-3 font-mono text-xs text-white">{order.preset_name}</td>
+                    <td className="py-1.5 pr-3 text-xs">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-gray-400">Rank #{order.rank}</span>
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-sky-800/60 text-sky-300 font-semibold tracking-wide">LIVE</span>
+                      </span>
+                    </td>
+                    <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{order.leverage != null ? `${order.leverage}×` : '—'}</td>
+                    <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">{order.scenario || '—'}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{fmtQty(order.quantity)}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">{fmtPrice(order.entry_price)}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
+                    <td className="py-1.5 pr-3 text-gray-600">—</td>
+                    <td className="py-1.5 text-right text-gray-500 text-xs">
+                      {new Date(order.open_time).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+                {/* ── Closed orders ── */}
                 {tradingOrders.map((order, i) => {
                   const isReal = !('status' in order)
                   const realOrder = isReal ? (order as RealOrder) : null
@@ -572,6 +647,7 @@ export default function TradesPage() {
                   const pnl = realOrder?.pnl_usdt ?? rankOrder?.pnl_usdt ?? null
                   const entryPrice = realOrder?.entry_price ?? rankOrder?.entry_price ?? 0
                   const closePrice = realOrder?.close_price ?? rankOrder?.close_price ?? null
+                  const quantity = realOrder?.quantity ?? rankOrder?.quantity ?? null
                   const closedAt = realOrder?.close_time ?? rankOrder?.close_time ?? null
                   const result = realOrder?.result ?? rankOrder?.result ?? ''
                   const leverage = order.leverage ?? null
@@ -592,9 +668,12 @@ export default function TradesPage() {
                       <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">
                         {scenario || '—'}
                       </td>
-                      <td className="py-1.5 pr-3 text-right text-gray-300">{entryPrice.toFixed(2)}</td>
-                      <td className="py-1.5 pr-3 text-right text-gray-300">
-                        {closePrice != null ? closePrice.toFixed(2) : '—'}
+                      <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">
+                        {quantity != null ? fmtQty(quantity) : '—'}
+                      </td>
+                      <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">{fmtPrice(entryPrice)}</td>
+                      <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
+                        {closePrice != null ? fmtPrice(closePrice) : '—'}
                       </td>
                       <td className={`py-1.5 pr-3 text-right font-medium ${pnl != null ? pnlClass(pnl) : 'text-gray-600'}`}>
                         {pnl != null ? pnlFmt(pnl) : '—'}

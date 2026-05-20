@@ -215,9 +215,9 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] Trades page: virtualBalance removed from header
 - [x] `/api/trades` returns rank_orders, rank_balances, preset_ranks
 - [x] `/api/trades/balances` returns rankBalances (no virtualBalance)
-- [ ] Reset hard stop on server (manual: user must dismiss via Risk page dashboard)
-- [ ] Update `test_virtual_order_simulator.py` for new rank-based internals (Tester task)
-- [ ] Consider XAUUSDT removal (gold is highly correlated to USD macro, may not fit bot strategy)
+- [ ] Reset hard stop on server (manual: user must dismiss via Risk page dashboard) — pending
+- [ ] Update `test_virtual_order_simulator.py` for new rank-based internals (Tester task) — pending
+- [ ] Consider XAUUSDT removal (gold is highly correlated to USD macro, may not fit bot strategy) — pending
 
 ## Phase 3.11 — Telegram Interactive Menu (session 21)
 
@@ -237,6 +237,7 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 
 **Preset cleanup** (done):
 - [x] Remove 22 presets with Total% < −10 from `backtest.py` (100 remain + 4 locked)
+- [x] Centralize presets in `config/presets.py` (PRESETS, LOCKED_PRESETS, ALL_PRESETS)
 
 **Python backend:**
 - [x] Fix `VirtualTracker.seed_from_backtest` — skips if symbol already in efficiency file
@@ -290,11 +291,56 @@ Design approved + implemented in session 14.
 - [ ] Order manager (market/limit, SL, TP)
 - [ ] Position state tracker
 
+## Bug fixes — five batches completed (2026-05-19, session 23–24)
+
+**First batch (commit b915ebf)**:
+- [x] `VirtualTracker._set_efficiency()` preserves `seeded_winning_usdt` on trade count updates
+- [x] `Notifier._fmt_price()` dynamic precision for Telegram display
+- [x] `OrderExecutor._market_close()` fallback parameter for avgPrice=0
+- [x] `OrderExecutor._place_sl_on_exchange()` downgraded to info level
+
+**Second batch (commit 4c80dd2)**:
+- [x] C1+A3: Full preset filter chain applied live + current market price as entry
+- [x] G1/I2: `_placed_this_candle` dict prevents double-orders per candle
+- [x] E4: Skip trade recording when pnl=0 and close==entry
+- [x] C3: Weight allocation tracks deployed vs deployable capital
+- [x] H1/C4: Leverage change failure raises (aborts order)
+- [x] G2: `check_symbol_price()` early return when PLACING
+- [x] B1: `best_preset()` returns at score>=0
+- [x] E2: Taker fee deducted from PnL in both OrderExecutor and VirtualOrderSimulator
+
+**Third batch (commit 241ae28)**:
+- [x] Retry guard: set `_placed_this_candle` after both success and failure
+- [x] D1: OHLC-level SL/TP checks via `check_symbol_candle()` for gaps
+- [x] C2: Post-rounding min-notional bump with FundsError fallback
+- [x] H2: `_market_close()` warning when avgPrice fallback used
+- [x] H4: `_auto_disable()` raises BotHaltError instead of sys.exit(1)
+
+**Fourth batch (commit 12696db)**:
+- [x] A1: `analyzer.add_candle()` calls `_refresh_recommendations()` every candle
+
+**Fifth batch (session 24 — deep audit fixes, commit 36caeea)**:
+- [x] BUG-02: `virtual_order_simulator.py:233-234` read preset_settings not base_settings (critical)
+- [x] BUG-01: `risk_manager.py:true_pf()` returns 99.0 for 100% win (was 0.0, blocking orders)
+- [x] BUG-03: Drawdown events now notify Telegram (was logger-only)
+- [x] BUG-04: Virtual SL skipped when `sl <= 0` (no fallback for high-price instruments)
+- [x] BUG-05: `analyzer.add_candle()` sets `_current_price` from REST close before recommendations
+- [x] BUG-06: Non-weight allocation loop breaks when budget exhausted (was redundant iteration)
+- [x] BUG-11: `_klines` list capped at 3000 (was unbounded, memory degradation)
+- [x] BUG-17: Negative efficiency scores returned for net-losing symbols (was 0, same as no-data)
+- [x] BUG-18: `_existing_bigger_points` set now persistent (was O(N²) rebuild every call)
+
+**Open audit findings (not yet fixed)**:
+- [ ] BUG-07: Virtual order sizing uses real account allocation, not rank-pool balance
+- [ ] BUG-09: Swing point timestamps use close-time not open-time (shows 15m ahead)
+- [ ] BUG-16: `get_symbol_allocation` reads risk_config.json on every call (hot path caching)
+
 ## Open investigations (pending session)
 
-- [ ] SOLUSDT -4164 notional error (order quantity precision)
-- [ ] Hard stop still active after restart (balance recovery edge case)
-- [ ] XAUUSDT zero signals (strategy fit or data issue)
+- [x] ETHFIUSDT -4164 notional error (order quantity precision) — FIXED in session 22 (leverage bump + 2% buffer)
+- [ ] Hard stop still active after restart (balance recovery edge case) — pending user investigation
+- [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
+- [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
 
 ## Phase 5 — Deployment
 

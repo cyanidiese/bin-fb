@@ -99,6 +99,15 @@ export async function GET(req: NextRequest) {
   const disabledRanks: number[] = registry.disabled_ranks?.[symbol] ?? []
   const disabledSymbols: Record<string, { reason: string; disabled_at: string }> = registry.disabled ?? {}
 
+  // Read currently open positions from in-memory snapshot written after each candle
+  const openPositionsPath = path.join(BOT_ROOT, 'data', `open_positions_${mode}.json`)
+  const openPositions = readJson(openPositionsPath, { real: [], virtual: [] }) as {
+    real?: unknown[]
+    virtual?: unknown[]
+  }
+  const openReal    = (openPositions.real    ?? []).filter((o: unknown) => (o as { symbol: string }).symbol === symbol)
+  const openVirtual = (openPositions.virtual ?? []).filter((o: unknown) => (o as { symbol: string }).symbol === symbol)
+
   return NextResponse.json({
     symbol,
     mode,
@@ -110,5 +119,7 @@ export async function GET(req: NextRequest) {
     preset_ranks: presetRanks,
     disabled_ranks: disabledRanks,
     disabled_symbols: disabledSymbols,
+    open_real: openReal,
+    open_virtual: openVirtual,
   })
 }

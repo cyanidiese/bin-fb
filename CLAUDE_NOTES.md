@@ -1,6 +1,103 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-17 (session 21)
+## Last updated: 2026-05-19 (session 24)
+
+---
+
+## ⟳ RESUME POINT — session 24 ended here (2026-05-19)
+
+**What was completed this session:**
+
+Deep pipeline audit — second batch of 9 bug fixes from the full 20-bug audit (Architect report, commit 36caeea):
+
+**Fixed bugs (commits merged to main):**
+
+1. **BUG-02 (CRITICAL)** — `VirtualTracker` reading `base_settings` instead of `preset_settings` for trailing/partial config, corrupting virtual efficiency scores used for real preset selection.
+
+2. **BUG-01 (CRITICAL)** — `risk_manager.py:true_pf()` returned 0.0 for 100% win presets, blocking them via `min_profit_factor` gate.
+
+3. **BUG-03 (HIGH)** — Drawdown hard-stop and warning events only logged; no Telegram notification sent.
+
+4. **BUG-04 (HIGH)** — Virtual SL fallback 1%-from-entry too tight for high-price instruments (gold, BTC).
+
+5. **BUG-05 (HIGH)** — Analyzer price mismatch between WebSocket tick and REST-refreshed candle close before recommendation generation.
+
+6. **BUG-06 (HIGH)** — Non-weight allocation loop had no `break` when budget exhausted, generating redundant API calls and log entries.
+
+7. **BUG-11 (HIGH)** — `_klines` list in Analyzer grew unbounded (memory/IO degradation); now capped at 3000 candles.
+
+8. **BUG-17 (MEDIUM)** — Virtual efficiency returned 0 for net-losing symbols (same as no-data), preventing deprioritization in cross-symbol ranking.
+
+9. **BUG-18 (MEDIUM)** — Swing point dedup set rebuilt O(N²) on every `_capture_bigger_trends` call; now maintains persistent `_existing_bigger_points` set.
+
+**Remaining open findings from audit (not yet fixed):**
+- **BUG-07**: Virtual order sizing uses real account allocation, not rank-pool balance
+- **BUG-09**: Swing point timestamps use close-time not open-time
+- **BUG-16**: `get_symbol_allocation` reads risk_config.json from disk on every call (hot path)
+- **BUG-10**: No explicit state guard before `_market_close` (fragile under future parallel execution)
+
+**Immediate next action**: Continue with planned feature work. All 9 fixes have been merged to main and deployed.
+
+---
+
+## ⟳ RESUME POINT — session 23 ended here (2026-05-19)
+
+**What was completed this session:**
+
+Four batches of bug fixes merged and deployed to VPS (commits b915ebf, 4c80dd2, 241ae28, 12696db):
+
+**First batch (commit b915ebf)**:
+1. `VirtualTracker._set_efficiency()` now preserves `seeded_winning_usdt` when updating trade counts
+2. `Notifier._fmt_price()` helper — dynamic precision for Telegram close price display
+3. `OrderExecutor._market_close()` accepts `fallback` parameter used when avgPrice=0
+4. `OrderExecutor._place_sl_on_exchange()` downgraded to logger.info (not error) for missing API
+
+**Second batch (commit 4c80dd2)**:
+1. C1+A3: `_try_place_order()` applies full preset filter chain live (tp_multiplier, max_profit_pct, min/max_sl_pct, ATR floor, min_profit_loss_ratio/sl_adjust_to_rr) AND uses analyzer's current market price as entry (not stale signal price)
+2. G1/I2: `_placed_this_candle` dict prevents placing >1 real order per symbol per candle
+3. E4: `record_closed_trade()` skipped when pnl=0 and close==entry (avgPrice fallback guard)
+4. C3: Weight allocation tracks deployed capital against deployable budget
+5. H1/C4: Leverage change failure now raises (aborts order)
+6. G2: `check_symbol_price()` returns early when symbol is PLACING
+7. B1: `best_preset()` returns preset at score>=0 (not just >0)
+8. E2: Taker fee (0.04%/side) deducted from `_calc_pnl()` in both `OrderExecutor` and `VirtualOrderSimulator`
+
+**Third batch (commit 241ae28)**:
+1. Retry guard: `_placed_this_candle[symbol] = candle_ts` set after BOTH successful and failed placement — prevents repeated exchange API calls when a symbol fails (e.g. insufficient funds) and other symbols' candle-close events retry it
+2. D1: Added `check_symbol_candle(symbol, high, low, candle_open, candle_close)` to `OrderExecutor` with per-symbol `_symbol_candle_index`; wired into `on_candle_close` in main.py — OHLC-level SL/TP checks now fire for gap scenarios
+3. C2: Post-rounding min-notional bump — if rounded_qty * entry < min_notional, add one step_size; raises FundsError if still below
+4. H2: `_market_close()` fires a `notifier.notify("warning", ...)` when avgPrice fallback is used
+5. H4: `_auto_disable()` raises `BotHaltError(BaseException)` instead of `sys.exit(1)`; `run()` catches it and closes virtual positions before task cleanup
+
+**Fourth batch (commit 12696db)**:
+1. A1: `analyzer.py: add_candle()` now calls `_refresh_recommendations()` on every candle (not just when new swing points are detected), so entry scoring uses current price proximity at all times
+
+**F2 resolution (existing task)**: `clear_session_data()` is defined in `VirtualTracker` but intentionally NOT called anywhere in normal flow. Calling it would destroy all accumulated efficiency data. Treat as emergency maintenance escape hatch only.
+
+**Pre-existing test failures (NOT fixed, still open)**:
+- `test_place_order_happy_path` — "argument of type 'float' is not iterable" — unrelated to our changes
+- `test_perf_cache_ttl` — "not enough values to unpack" — unrelated
+
+**Immediate next action**: Investigate and fix pre-existing test failures if resources allow; otherwise continue with planned feature work.
+
+---
+
+## ⟳ RESUME POINT — session 22 ended here (2026-05-17)
+
+**Branch**: `feature/test-live-preparation` (all work merged to main; deployed to VPS)
+
+**What was completed this session:**
+1. **Min notional order sizing fix** — ETHFIUSDT was auto-disabled after 3 consecutive -4164 errors ("Order's notional must be no smaller than 5"). Root cause: computed quantity rounded down below $5 minimum. Fix: added leverage-bump block in `main.py` `_try_place_order()` — when balance is insufficient for min_notional at current leverage, compute needed leverage and bump up (capped at bracket_max). Also added 2% quantity buffer (multiply by 1.02 before rounding) so Binance step-rounding never drops below floor. ETHFIUSDT re-enabled and now active.
+2. **Preset refactoring committed** — `config/presets.py` now centralized (PRESETS, LOCKED_PRESETS, ALL_PRESETS); backtest.py and discover.py import from it instead of inlining. Commit `477da68`.
+3. **Deployment successful** — all 11 commits (Telegram menu work + order sizing fixes) pushed to main. Docker image rebuilt on VPS 185.237.14.105. Bot restarted; 14 symbols connected and running.
+
+**Key decision**:
+- -4164 min notional error is NOT treated as FundsError (user declined). Instead: scale order up via leverage or 2% buffer to meet minimum before submission.
+
+**Bugs fixed**:
+1. **ETHFIUSDT -4164 auto-disable**: Quantity rounded below min $5 notional → 3 consecutive failures → auto-disabled. Fixed by 2% quantity buffer + leverage-bump for low-balance scenarios.
+
+**Immediate next action**: Monitor bot operation; investigate hard stop and XAUUSDT zero signals if they recur.
 
 ---
 
@@ -20,8 +117,6 @@
 - Three-tier access: owner/viewer/unknown — viewers get full read menu, write actions absent from their messages.
 - HTML escaping: all user-supplied and bot-internal strings passed through `html.escape()` before Telegram HTML parse mode.
 - Blocking I/O: wrapped in `asyncio.to_thread` to avoid event loop blocking.
-
-**Immediate next action**: User testing of Telegram menu on live server; next planned work is investigative (SOLUSDT notional error, hard stop reset, XAUUSDT zero signals).
 
 ---
 
@@ -367,6 +462,9 @@ Solution: `Analyzer` maintains `_all_points` — a list that accumulates every d
 - **Multiple bot instances**: Two concurrent `python main.py` processes race to write `results.json` and the kline cache. Always kill old process before starting new one.
 - **Cache corruption**: If a bot instance is killed mid-write, the cache JSON can truncate. Next run logs "No cache found" and re-fetches 1000 klines from testnet automatically.
 - **RiskManager peak_balance persistence (FIXED in session 17)**: Was being reset to hardcoded value on every restart, triggering hard stops. Now initializes from persisted virtual balance file.
+- **ETHFIUSDT min notional (FIXED in session 22)**: -4164 errors on order submission (notional < $5) caused auto-disable. Leverage bump + 2% quantity buffer now prevents this by scaling order before submission.
+- **Hard stop still active after restart (pending)**: From session 17 investigation — may be real balance drop, not code bug. User to verify via dashboard Risk page.
+- **XAUUSDT zero signals (pending)**: Zero trading signals on XAUUSDT. Strategy fit or data issue to investigate.
 
 ---
 

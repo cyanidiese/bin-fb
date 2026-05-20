@@ -114,6 +114,14 @@ class VirtualOrderSimulator:
         """Return a snapshot of all rank pool balances."""
         return dict(self._rank_balance)
 
+    def get_open_positions(self) -> list[dict]:
+        """Return all currently open virtual positions as serialisable dicts."""
+        result = []
+        for rank, by_sym in self._rank_open.items():
+            for symbol, record in by_sym.items():
+                result.append({**record, 'symbol': symbol})
+        return result
+
     def apply_real_balance_if_fresh(self, balance: float) -> None:
         """Seed each rank pool from the real account balance on first start."""
         for rank in range(2, self._rank_max + 1):

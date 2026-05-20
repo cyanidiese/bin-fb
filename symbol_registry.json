@@ -1,10 +1,6 @@
 {
   "symbols": [
-    "BTCUSDT",
-    "XAUUSDT",
-    "ETHUSDT",
     "SOLUSDT",
-    "BNBUSDT",
     "THETAUSDT",
     "REZUSDT",
     "DOGEUSDT",
@@ -14,27 +10,15 @@
     "AVAXUSDT",
     "ETHFIUSDT",
     "TIAUSDT",
-    "EIGENUSDT"
+    "EIGENUSDT",
+    "1000SHIBUSDT",
+    "INJUSDT",
+    "JUPUSDT",
+    "APTUSDT"
   ],
-  "updated_at": "2026-05-07T17:24:38.689Z",
+  "updated_at": "2026-05-18T20:11:15.576Z",
   "status": {
-    "BTCUSDT": {
-      "backtest": "complete",
-      "pid": null
-    },
-    "XAUUSDT": {
-      "backtest": "complete",
-      "pid": null
-    },
-    "ETHUSDT": {
-      "backtest": "complete",
-      "pid": null
-    },
     "SOLUSDT": {
-      "backtest": "complete",
-      "pid": null
-    },
-    "BNBUSDT": {
       "backtest": "complete",
       "pid": null
     },
@@ -77,6 +61,42 @@
     "EIGENUSDT": {
       "backtest": "complete",
       "pid": null
+    },
+    "1000SHIBUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "INJUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "JUPUSDT": {
+      "backtest": "complete",
+      "pid": null
+    },
+    "APTUSDT": {
+      "backtest": "complete",
+      "pid": null
     }
+  },
+  "disabled": {},
+  "disabled_ranks": {},
+  "paused": {},
+  "weights": {
+    "SOLUSDT": 1,
+    "THETAUSDT": 1,
+    "REZUSDT": 1,
+    "DOGEUSDT": 1,
+    "1000PEPEUSDT": 1,
+    "WLDUSDT": 1,
+    "MEMEUSDT": 1,
+    "AVAXUSDT": 1,
+    "ETHFIUSDT": 1,
+    "TIAUSDT": 1,
+    "EIGENUSDT": 1,
+    "1000SHIBUSDT": 1,
+    "INJUSDT": 1,
+    "JUPUSDT": 0,
+    "APTUSDT": 1
   }
 }

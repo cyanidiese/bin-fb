@@ -23,19 +23,20 @@ SSH="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no"
 echo "==> Deploying to $HOST:$DIR"
 
 # Step 1 — Gracefully stop the bot (SIGTERM triggers close_all_open + close_all_orders)
+# Use /proc to find the PID since the slim container has no pkill/pgrep.
 echo "==> Stopping bot gracefully..."
 $SSH "$HOST" \
-  "docker exec bot-app-1 pkill -SIGTERM -f 'python3 main.py' 2>/dev/null && echo 'Sent SIGTERM to bot' || echo 'Bot was not running'"
+  "PID=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | head -1 | grep -o \"[0-9]*\"' 2>/dev/null); if [ -n \"\$PID\" ]; then docker exec bot-app-1 /bin/sh -c \"kill -TERM \$PID\" 2>/dev/null && echo \"Sent SIGTERM to PID \$PID\"; else echo 'Bot was not running'; fi"
 
 # Wait up to 25 s for cleanup (close_all_open + market close of real orders)
 echo "==> Waiting for order cleanup..."
 $SSH "$HOST" \
-  "for i in \$(seq 1 25); do docker exec bot-app-1 pgrep -f 'python3 main.py' > /dev/null 2>&1 || { echo \"Bot exited after \${i}s\"; exit 0; }; sleep 1; done; echo 'Timeout — proceeding anyway'"
+  "for i in \$(seq 1 25); do PID=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | head -1 | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PID\" ] && echo \"Bot exited after \${i}s\" && break; sleep 1; done; echo 'Proceeding with deploy'"
 
-# Step 2 — Pull latest code and rebuild container
+# Step 2 — Reset any server-side runtime file modifications, pull latest code and rebuild container
 echo "==> Pulling code and rebuilding container..."
 $SSH "$HOST" \
-  "cd $DIR && git pull origin main && docker compose up -d --build 2>&1 | tail -30"
+  "cd $DIR && git reset --hard HEAD && git clean -f dashboard/public/ && git pull origin main && docker compose up -d --build 2>&1 | tail -30"
 
 # Step 3 — Start bot in the new container
 echo "==> Starting bot..."

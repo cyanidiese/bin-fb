@@ -287,7 +287,11 @@ class Trend:
             lowest_since = self.findLowestSince(time_of_last_high)
             if lowest_since is not None:
                 self.getBiggerTrend().setLowPoint(lowest_since)
-                self.removePointsUpTo(lowest_since.getTime())
+                # Only prune L1 history when L2 had a real anchor (prior high).
+                # Without an anchor, findLowestSince(None) returns the all-time
+                # minimum, and removePointsUpTo would wipe almost all L1 history.
+                if time_of_last_high is not None:
+                    self.removePointsUpTo(lowest_since.getTime())
 
     def checkIfLowerThanAscBreakOfStructure(self, point: Point) -> None:
         if self.isAscending() and self.hasBreakOfStructure() and point.getCloseValue() < self.getBreakOfStructure():
@@ -300,7 +304,8 @@ class Trend:
             highest_since = self.findHighestSince(time_of_last_low)
             if highest_since is not None:
                 self.getBiggerTrend().setHighPoint(highest_since)
-                self.removePointsUpTo(highest_since.getTime())
+                if time_of_last_low is not None:
+                    self.removePointsUpTo(highest_since.getTime())
 
     def setHighPoint(self, point: Point) -> None:
         self._correction_end_info = None

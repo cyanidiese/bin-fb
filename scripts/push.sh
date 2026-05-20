@@ -22,16 +22,17 @@ SSH="ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no"
 
 echo "==> Deploying to $HOST:$DIR"
 
-# Step 1 — Gracefully stop the bot (SIGTERM triggers close_all_open + close_all_orders)
-# Use /proc to find the PID since the slim container has no pkill/pgrep.
+# Step 1 — Gracefully stop ALL bot instances (SIGTERM triggers close_all_open + close_all_orders)
+# Use /proc to find PIDs since the slim container has no pkill/pgrep.
+# Kill ALL matching PIDs (not just head -1) to prevent stale instances accumulating across deploys.
 echo "==> Stopping bot gracefully..."
 $SSH "$HOST" \
-  "PID=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | head -1 | grep -o \"[0-9]*\"' 2>/dev/null); if [ -n \"\$PID\" ]; then docker exec bot-app-1 /bin/sh -c \"kill -TERM \$PID\" 2>/dev/null && echo \"Sent SIGTERM to PID \$PID\"; else echo 'Bot was not running'; fi"
+  "PIDS=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); if [ -n \"\$PIDS\" ]; then docker exec bot-app-1 /bin/sh -c \"kill -TERM \$PIDS\" 2>/dev/null && echo \"Sent SIGTERM to PIDs: \$PIDS\"; else echo 'Bot was not running'; fi"
 
 # Wait up to 25 s for cleanup (close_all_open + market close of real orders)
 echo "==> Waiting for order cleanup..."
 $SSH "$HOST" \
-  "for i in \$(seq 1 25); do PID=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | head -1 | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PID\" ] && echo \"Bot exited after \${i}s\" && break; sleep 1; done; echo 'Proceeding with deploy'"
+  "for i in \$(seq 1 25); do PIDS=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PIDS\" ] && echo \"All bot instances exited after \${i}s\" && break; sleep 1; done; echo 'Proceeding with deploy'"
 
 # Step 2 — Reset any server-side runtime file modifications, pull latest code and rebuild container
 echo "==> Pulling code and rebuilding container..."

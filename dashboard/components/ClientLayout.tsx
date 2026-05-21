@@ -16,9 +16,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const isLoginPage = pathname === '/login'
 
   const [perfScores, setPerfScores] = useState<Record<string, number | null>>({})
+  const [disabledSymbols, setDisabledSymbols] = useState<Set<string>>(new Set())
+  const [symbolsWithOrders, setSymbolsWithOrders] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    function loadScores() {
+    function loadMeta() {
+      // Performance scores from risk state
       fetch('/api/public-file?f=risk_state.json')
         .then(r => (r.ok ? r.json() : null))
         .then(data => {
@@ -31,9 +34,33 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           setPerfScores(scores)
         })
         .catch(() => {})
+
+      // Disabled symbols from registry
+      fetch('/api/symbols')
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (!data?.disabled) return
+          setDisabledSymbols(new Set(Object.keys(data.disabled as Record<string, unknown>)))
+        })
+        .catch(() => {})
+
+      // Symbols with live orders from efficiency data
+      fetch('/api/public-file?f=preset_efficiency_test.json')
+        .then(r => (r.ok ? r.json() : null))
+        .then((data: Record<string, Record<string, { trade_count?: number }>> | null) => {
+          if (!data) return
+          const withOrders = new Set<string>()
+          for (const [sym, presets] of Object.entries(data)) {
+            if (Object.values(presets).some(p => (p.trade_count ?? 0) > 0)) {
+              withOrders.add(sym)
+            }
+          }
+          setSymbolsWithOrders(withOrders)
+        })
+        .catch(() => {})
     }
-    loadScores()
-    const id = setInterval(loadScores, SCORE_POLL_MS)
+    loadMeta()
+    const id = setInterval(loadMeta, SCORE_POLL_MS)
     return () => clearInterval(id)
   }, [])
 
@@ -51,7 +78,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }, [availableSymbols, perfScores])
 
   return (
-    <SymbolContext.Provider value={{ symbol, setSymbol, availableSymbols: sortedSymbols }}>
+    <SymbolContext.Provider value={{ symbol, setSymbol, availableSymbols: sortedSymbols, disabledSymbols, symbolsWithOrders }}>
       {!isLoginPage && <NavBar />}
       <div className={isLoginPage ? undefined : 'pt-11'}>
         {!isLoginPage && <AlertBanner />}

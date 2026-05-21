@@ -531,7 +531,7 @@ class OrderExecutor:
                 symbol=symbol,
                 side=close_side,
                 type='STOP_MARKET',
-                triggerPrice=str(sl_price),
+                triggerPrice=self._price_str(sl_price, lot['tick_size']),
                 quantity=qty_str,
                 reduceOnly='true',
                 workingType='MARK_PRICE',
@@ -892,18 +892,29 @@ class OrderExecutor:
             decimals = 0
         return f"{quantity:.{decimals}f}"
 
+    @staticmethod
+    def _price_str(price: float, tick_size: str) -> str:
+        """Format price as an exchange-safe string with exactly the precision Binance requires.
+        tick_size is the PRICE_FILTER tickSize string (e.g. '0.001', '0.00001').
+        Using str(float) risks wrong decimal count when the lot cache fell back to defaults."""
+        if '.' in tick_size:
+            decimals = len(tick_size.rstrip('0').split('.')[1])
+        else:
+            decimals = 0
+        return f"{price:.{decimals}f}"
+
     async def round_price(self, symbol: str, price: float) -> float:
         """Round price to the symbol's PRICE_FILTER tick size."""
         lot = await self._ensure_lot_size(symbol)
-        tick = lot['tick_size']
+        tick = lot['tick_size']  # always a string now
         d_price = Decimal(str(price))
-        d_tick = Decimal(str(tick))
+        d_tick = Decimal(tick)
         return float(d_price.quantize(d_tick, rounding=ROUND_DOWN))
 
     async def _ensure_lot_size(self, symbol: str) -> dict:
         if symbol in self._lot_cache:
             return self._lot_cache[symbol]
-        default = {'step_size': '0.001', 'min_qty': 0.001, 'max_qty': 0.0, 'min_notional': 0.0, 'tick_size': 0.00001}
+        default = {'step_size': '0.001', 'min_qty': 0.001, 'max_qty': 0.0, 'min_notional': 0.0, 'tick_size': '0.00001'}
         if self._feed is None:
             return default
         try:
@@ -927,9 +938,9 @@ class OrderExecutor:
                             existing = entry.get('max_qty', 0.0)
                             entry['max_qty'] = min(existing, mkt_max) if existing > 0 else mkt_max
                     elif ft == 'PRICE_FILTER':
-                        ts = float(f.get('tickSize', 0) or 0)
-                        if ts > 0:
-                            entry['tick_size'] = ts
+                        ts = f.get('tickSize', '') or ''
+                        if ts and float(ts) > 0:
+                            entry['tick_size'] = ts  # keep as original string for exact decimal formatting
                     elif ft == 'MIN_NOTIONAL':
                         entry['min_notional'] = float(f.get('notional') or f.get('minNotional') or 0)
                 self._lot_cache[sym] = {
@@ -937,7 +948,7 @@ class OrderExecutor:
                     'min_qty':      entry.get('min_qty', 0.001),
                     'max_qty':      entry.get('max_qty', 0.0),
                     'min_notional': entry.get('min_notional', 0.0),
-                    'tick_size':    entry.get('tick_size', 0.00001),
+                    'tick_size':    entry.get('tick_size', '0.00001'),  # string for exact formatting
                 }
         except Exception as exc:
             logger.warning(f"Failed to fetch exchange info: {exc}")

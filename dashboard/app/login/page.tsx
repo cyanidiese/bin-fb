@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, FormEvent } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 
 function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -23,7 +22,9 @@ function LoginForm() {
       })
       if (res.ok) {
         const next = searchParams.get('next') ?? '/'
-        router.push(next)
+        // Full page reload so the new auth cookie is sent on the very first request
+        // and the middleware sees it immediately (avoids stale SPA navigation issues).
+        window.location.replace(next)
       } else {
         setError('Invalid password')
         setPassword('')

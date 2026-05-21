@@ -192,6 +192,8 @@ class Backtester:
         blocked_until: Dict[str, int] = {'BUY': 0, 'SELL': 0}
         last_loss_candle: Dict[str, int] = {'BUY': -9999, 'SELL': -9999}
         global_blocked_until: int = 0
+        # Duplicate-signal skip: last SL-hit signal per side (only active when duplicate_skip_candles > 0)
+        last_sl_signal: Dict[str, dict] = {'BUY': {}, 'SELL': {}}
 
         for i in range(len(klines)):
             candle = klines[i]
@@ -236,6 +238,13 @@ class Backtester:
                                 logger.debug(f"  {name}: global pause until candle {global_blocked_until}")
                         else:
                             consecutive_losses[side_closed] = 0
+                    if outcome == 'loss' and settings.duplicate_skip_candles > 0:
+                        last_sl_signal[open_order.side] = {
+                            'candle_idx': i,
+                            'entry': open_order.entry_price,
+                            'sl': open_order.sl,
+                            'tp': open_order.tp,
+                        }
                     open_order = None
 
             # ── Feed this candle to the analyzer ────────────────────────
@@ -331,6 +340,16 @@ class Backtester:
                             continue
                     elif loss_dist == 0:
                         continue
+
+                    # Duplicate-signal skip: skip if this signal closely resembles the last SL hit
+                    if settings.duplicate_skip_candles > 0:
+                        _prev = last_sl_signal.get(side)
+                        if _prev and (i + 1) - _prev['candle_idx'] <= settings.duplicate_skip_candles:
+                            _p = settings.duplicate_skip_pct / 100.0
+                            if (_prev['entry'] > 0 and abs(entry_price - _prev['entry']) / _prev['entry'] <= _p and
+                                    _prev['sl'] > 0 and abs(sl - _prev['sl']) / _prev['sl'] <= _p and
+                                    _prev['tp'] > 0 and abs(tp - _prev['tp']) / _prev['tp'] <= _p):
+                                continue
 
                     open_order = FakeOrder(
                         side=side,

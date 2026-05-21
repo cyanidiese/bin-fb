@@ -156,6 +156,10 @@ export default function TradesPage() {
   const [disabledRanks, setDisabledRanks] = useState<number[]>([])
   const [disabledSymbols, setDisabledSymbols] = useState<Record<string, DisabledSymbolEntry>>({})
 
+  // Chart date range filter
+  const [chartFrom, setChartFrom] = useState<string>('')  // datetime-local value
+  const [chartTo, setChartTo]     = useState<string>('')  // datetime-local value
+
   // Preset Efficiency filters
   const [hideNoOrders, setHideNoOrders]       = useState(true)   // hide presets with 0 total trades
   const [hideHasVirtual, setHideHasVirtual]   = useState(false)  // hide presets that have any virtual orders
@@ -559,15 +563,61 @@ export default function TradesPage() {
       </CollapsibleSection>
 
       {/* ── Price chart ── */}
-      {klines.length > 0 && (
-        <CollapsibleSection title="Price Chart + Trade Markers" storageKey="trades-chart" defaultOpen>
-          <TradesChart
-            klines={klines}
-            realOrders={selectedPreset ? data.real_orders.filter(o => o.preset_name === selectedPreset) : data.real_orders}
-            virtualOrders={chartVirtualOrders}
-          />
-        </CollapsibleSection>
-      )}
+      {klines.length > 0 && (() => {
+        const fromTs = chartFrom ? new Date(chartFrom).getTime() / 1000 : null
+        const toTs   = chartTo   ? new Date(chartTo).getTime()   / 1000 : null
+        const filteredKlines = (fromTs || toTs)
+          ? klines.filter(k => (!fromTs || k.time >= fromTs) && (!toTs || k.time <= toTs))
+          : klines
+        const fromMin = klines.length > 0
+          ? new Date(klines[0].time * 1000).toISOString().slice(0, 16)
+          : undefined
+        const toMax = klines.length > 0
+          ? new Date(klines[klines.length - 1].time * 1000).toISOString().slice(0, 16)
+          : undefined
+        return (
+          <CollapsibleSection title="Price Chart + Trade Markers" storageKey="trades-chart" defaultOpen>
+            <div className="flex items-center gap-3 mb-3 text-xs text-gray-400 flex-wrap">
+              <span className="shrink-0">Range:</span>
+              <input
+                type="datetime-local"
+                value={chartFrom}
+                min={fromMin}
+                max={chartTo || toMax}
+                onChange={e => setChartFrom(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
+              />
+              <span className="shrink-0 text-gray-600">→</span>
+              <input
+                type="datetime-local"
+                value={chartTo}
+                min={chartFrom || fromMin}
+                max={toMax}
+                onChange={e => setChartTo(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
+              />
+              {(chartFrom || chartTo) && (
+                <button
+                  onClick={() => { setChartFrom(''); setChartTo('') }}
+                  className="text-indigo-400 hover:text-white transition-colors"
+                >
+                  Reset
+                </button>
+              )}
+              {filteredKlines.length < klines.length && (
+                <span className="text-gray-600">
+                  {filteredKlines.length} of {klines.length} candles
+                </span>
+              )}
+            </div>
+            <TradesChart
+              klines={filteredKlines}
+              realOrders={selectedPreset ? data.real_orders.filter(o => o.preset_name === selectedPreset) : data.real_orders}
+              virtualOrders={chartVirtualOrders}
+            />
+          </CollapsibleSection>
+        )
+      })()}
 
       {/* ── Trading Orders ── */}
       <CollapsibleSection

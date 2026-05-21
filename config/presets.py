@@ -44,6 +44,9 @@ class PresetOverrides(TypedDict, total=False):
     # Pre-confirmation entry flags
     lower_high_sell: bool
     higher_low_buy: bool
+    # Duplicate-signal skip (0 = disabled)
+    duplicate_skip_candles: int
+    duplicate_skip_pct: float
 
 
 # ── Locked presets ─────────────────────────────────────────────────────────────

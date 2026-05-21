@@ -24,6 +24,11 @@ _DEFAULT_MIN_NOTIONAL = 5.0
 _DEFAULT_RANK_MAX = 6   # fallback; callers pass len(all_presets) at runtime
 
 
+def _tf_to_ms(timeframe: str) -> int:
+    units = {'m': 60_000, 'h': 3_600_000, 'd': 86_400_000}
+    return int(timeframe[:-1]) * units.get(timeframe[-1], 60_000)
+
+
 class VirtualOrderSimulator:
     """
     Tracks rank-based virtual positions for the top N non-best presets per symbol.
@@ -80,6 +85,9 @@ class VirtualOrderSimulator:
         self._rank_balance: dict[int, float] = {}
         # rank -> asyncio.Lock (for file writes)
         self._rank_locks: dict[int, asyncio.Lock] = {}
+
+        # Duplicate-signal skip: records last SL-hit signal per "symbol:preset" key
+        self._recent_sl_hit: dict[str, dict] = {}
 
         for r in range(2, self._rank_max + 1):
             self._rank_open[r] = {}
@@ -244,6 +252,27 @@ class VirtualOrderSimulator:
         if entry <= 0 or tp <= 0 or sl <= 0:
             return
 
+        # Duplicate-signal skip
+        if preset_settings.duplicate_skip_candles > 0:
+            _key = f"{symbol}:{preset_name}"
+            _prev = self._recent_sl_hit.get(_key)
+            if _prev:
+                _now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                _dur = _tf_to_ms(base_settings.timeframe)
+                _candles_since = (_now_ms - _prev['ts_ms']) // _dur if _dur else 0
+                if _candles_since <= preset_settings.duplicate_skip_candles:
+                    _side = rec.getSide()
+                    if _side == _prev['side']:
+                        _p = preset_settings.duplicate_skip_pct / 100.0
+                        if (_prev['entry'] > 0 and abs(entry - _prev['entry']) / _prev['entry'] <= _p and
+                                _prev['sl'] > 0 and abs(sl - _prev['sl']) / _prev['sl'] <= _p and
+                                _prev['tp'] > 0 and abs(tp - _prev['tp']) / _prev['tp'] <= _p):
+                            logger.debug(
+                                f"[{symbol}] Rank-{rank} duplicate skip: "
+                                f"similar to SL-hit signal {_candles_since} candle(s) ago"
+                            )
+                            return
+
         # Size from the rank pool balance using the same allocation formula as real orders,
         # substituting the rank pool's own balance instead of the real account balance.
         # For BGF scenarios: use score-proportional fraction of the rank pool's deployable budget.
@@ -329,6 +358,14 @@ class VirtualOrderSimulator:
                 'result': result,
                 'rank_balance_after': self._rank_balance[rank],
             })
+            if result == 'loss':
+                self._recent_sl_hit[f"{symbol}:{record['preset_name']}"] = {
+                    'ts_ms': int(datetime.now(timezone.utc).timestamp() * 1000),
+                    'side': record['side'],
+                    'entry': record['entry_price'],
+                    'sl': record.get('sl', 0.0),
+                    'tp': record.get('tp', 0.0),
+                }
             await self._append_rank_closed(symbol, rank, record)
             closed.append({
                 'preset_name': record['preset_name'],

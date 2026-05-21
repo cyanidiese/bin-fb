@@ -37,6 +37,11 @@ _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
 
 
+def _tf_to_ms(timeframe: str) -> int:
+    units = {'m': 60_000, 'h': 3_600_000, 'd': 86_400_000}
+    return int(timeframe[:-1]) * units.get(timeframe[-1], 60_000)
+
+
 def _write_pid() -> None:
     _BOT_PID_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _BOT_PID_PATH.with_suffix(".json.tmp")
@@ -302,6 +307,8 @@ async def run() -> None:
     _candle_counter: list[int] = [0]
     _last_refresh_candle_open: list[int] = [0]
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
+    _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
+    _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
 
     async def _get_fresh_balance() -> float:
         now = time.monotonic()
@@ -466,6 +473,27 @@ async def run() -> None:
                 )
                 return 0.0
 
+        # Duplicate-signal skip: avoid re-entering a signal that closely resembles a recent SL hit
+        if preset_settings.duplicate_skip_candles > 0 and candle_ts > 0:
+            _key = f"{symbol}:{preset_name or 'default'}"
+            _prev = _recent_sl_hit.get(_key)
+            if _prev and _prev['side'] == side:
+                _dur = _tf_to_ms(settings.timeframe)
+                _candles_since = (candle_ts - _prev['candle_ts']) // _dur
+                if _candles_since <= preset_settings.duplicate_skip_candles:
+                    _p = preset_settings.duplicate_skip_pct / 100.0
+                    if (_prev['entry'] > 0 and abs(entry - _prev['entry']) / _prev['entry'] <= _p and
+                            _prev['sl'] > 0 and abs(sl - _prev['sl']) / _prev['sl'] <= _p and
+                            _prev['tp'] > 0 and abs(tp - _prev['tp']) / _prev['tp'] <= _p):
+                        dl_record(
+                            dl_path, candle_ts=candle_ts, symbol=symbol,
+                            decision='skip_duplicate_sl',
+                            reason=f'duplicate of SL-hit signal {_candles_since} candle(s) ago',
+                            balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                            preset_name=preset_name, scenario=_active_scenario_name,
+                        )
+                        return 0.0
+
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
         base_lev = risk_cfg.get('base_leverage', 1)
@@ -578,6 +606,14 @@ async def run() -> None:
         # in the same candle batch when other symbols' close events trigger the loop.
         _placed_this_candle[symbol] = candle_ts
         if placed:
+            _pending_signals[symbol] = {
+                'preset_name': preset_name or 'default',
+                'side': side,
+                'entry': entry,
+                'sl': sl,
+                'tp': tp,
+                'candle_ts': candle_ts,
+            }
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision='placed', reason='',
@@ -736,6 +772,10 @@ async def run() -> None:
         for c in candle_closed:
             if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
                 virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+            if c.get('result') == 'loss':
+                _sig = _pending_signals.get(c['symbol'])
+                if _sig and _sig['preset_name'] == c.get('preset_name'):
+                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
             fresh_bal = await _get_fresh_balance()
@@ -787,6 +827,10 @@ async def run() -> None:
             # Skip recording when pnl=0 and close==entry — indicates avgPrice fallback, not a real result.
             if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
                 virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
+            if c.get('result') == 'loss':
+                _sig = _pending_signals.get(c['symbol'])
+                if _sig and _sig['preset_name'] == c.get('preset_name'):
+                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
             fresh_bal = await _get_fresh_balance()

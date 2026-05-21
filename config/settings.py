@@ -70,6 +70,11 @@ class Settings:
     # fire a BUY when price approaches the projected higher low from above.
     # SL = last confirmed LOW, TP = supposed_next_high. Default False.
     higher_low_buy: bool
+    # Duplicate-signal skip: if > 0 and an SL-hit order's direction/entry/sl/tp all match
+    # the new signal within duplicate_skip_pct%, skip the new signal for this many candles.
+    # 0 = disabled.
+    duplicate_skip_candles: int
+    duplicate_skip_pct: float
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -137,6 +142,8 @@ def load_settings(symbol: str | None = None) -> Settings:
         global_pause_candles=int(os.getenv('GLOBAL_PAUSE_CANDLES', '10')),
         lower_high_sell=os.getenv('LOWER_HIGH_SELL', 'false').lower() in ('1', 'true', 'yes'),
         higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
+        duplicate_skip_candles=int(os.getenv('DUPLICATE_SKIP_CANDLES', '0')),
+        duplicate_skip_pct=float(os.getenv('DUPLICATE_SKIP_PCT', '2.0')),
     )
 
     if symbol is not None:

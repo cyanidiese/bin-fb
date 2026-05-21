@@ -156,6 +156,8 @@ PRESETS: dict[str, PresetOverrides] = {
     'trail_15_from_15': {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.15,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 3.0,
     },
     'trail_25_from_15': {
         'partial_take_pct': 0.15,
@@ -289,6 +291,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_loss_ratio': 2.5,
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.20,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 3.0,
     },
     'sl_adjust_rr_tp95': {
         'sl_adjust_to_rr': True,
@@ -369,16 +373,19 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.25, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
     },
     'r5_arm20': {
         'partial_take_pct': 0.20, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
     },
     'r5_arm15_cooldown': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
     },
 
     # ── Round 6: patch BTC weakness in the best cross-symbol preset ───────────
@@ -388,12 +395,14 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
         'min_profit_loss_ratio': 4.0,
+        'duplicate_skip_candles': 10, 'duplicate_skip_pct': 1.0,
     },
     'r6_arm15_maxp3_trail20': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
         'max_profit_pct': 3.0,
+        'duplicate_skip_candles': 10, 'duplicate_skip_pct': 1.0,
     },
     'r6_arm15_full': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20, 'tp_multiplier': 0.95,
@@ -408,6 +417,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
         'max_profit_pct': 3.0,
+        'duplicate_skip_candles': 10, 'duplicate_skip_pct': 1.0,
     },
     'r7_trail15_maxp3': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
@@ -429,6 +439,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
     },
     'r5_trail10_rr3': {
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.10, 'tp_multiplier': 0.95,

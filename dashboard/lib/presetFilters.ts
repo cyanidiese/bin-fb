@@ -18,6 +18,8 @@ export const SETTING_DEFAULTS: Record<string, number | boolean> = {
   loss_streak_cooldown_candles: 5,
   global_pause_trigger_candles: 0,
   global_pause_candles: 10,
+  duplicate_skip_candles: 0,
+  duplicate_skip_pct: 2.0,
 }
 
 export type FilterSpec =
@@ -47,6 +49,8 @@ export const FILTER_SPECS: FilterEntry[] = [
   { key: 'loss_streak_cooldown_candles',label: 'Streak cooldown (candles)',      spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 20   } },
   { key: 'global_pause_trigger_candles',label: 'Global pause trigger (candles)', spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 20   } },
   { key: 'global_pause_candles',        label: 'Global pause duration (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 30   } },
+  { key: 'duplicate_skip_candles',      label: 'Duplicate skip window (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 50   } },
+  { key: 'duplicate_skip_pct',          label: 'Duplicate threshold (%)',        spec: { kind: 'number', step: 0.1, absMin: 0,   absMax: 10   } },
 ]
 
 // ── Table filters (filter by result column values) ──────────────────────────

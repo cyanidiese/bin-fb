@@ -204,7 +204,7 @@ class Backtester:
 
             # ── Check open order first ───────────────────────────────────
             if open_order is not None:
-                outcome = open_order.check(high, low, i, candle_open=open_price, candle_close=close_price)
+                outcome = open_order.check(high, low, i)
                 if outcome is not None:
                     result.add(open_order)
                     if self._initial_balance > 0:

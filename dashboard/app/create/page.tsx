@@ -41,6 +41,8 @@ const NAME_ABBREV: Record<string, string> = {
   loss_streak_cooldown_candles: 'lsc',
   global_pause_trigger_candles: 'gpt',
   global_pause_candles: 'gp',
+  duplicate_skip_candles: 'dsc',
+  duplicate_skip_pct: 'dsp',
 }
 
 function generatePresetName(overrides: Record<string, number | boolean>): string {
@@ -104,6 +106,9 @@ export default function CreatePresetPage() {
   const [toDate, setToDate] = useState('')
 
   const [hoveredTradeIdx, setHoveredTradeIdx] = useState<number | null>(null)
+
+  // Test scope — all symbols or only the currently selected one
+  const [testAllSymbols, setTestAllSymbols] = useState(true)
 
   // Save state
   const [saveName, setSaveName] = useState('')
@@ -214,7 +219,9 @@ export default function CreatePresetPage() {
     setResults({})
     setSaveStatus('idle')
 
-    const symbols = availableSymbols.length > 0 ? availableSymbols : ['BTCUSDT']
+    const symbols = testAllSymbols
+      ? (availableSymbols.length > 0 ? availableSymbols : ['BTCUSDT'])
+      : [symbol]
 
     try {
       const entries = await Promise.all(
@@ -254,7 +261,7 @@ export default function CreatePresetPage() {
     } finally {
       setLoading(false)
     }
-  }, [overrides, availableSymbols, bestAvgProfit])
+  }, [overrides, availableSymbols, symbol, testAllSymbols, bestAvgProfit])
 
   const handleRestoreBest = useCallback(() => {
     if (!bestOverrides || Object.keys(bestResults).length === 0) return
@@ -338,6 +345,17 @@ export default function CreatePresetPage() {
           />
 
           <div className="pt-2 border-t border-gray-800 space-y-2">
+            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={testAllSymbols}
+                onChange={e => setTestAllSymbols(e.target.checked)}
+                className="w-3 h-3 accent-indigo-500"
+              />
+              {testAllSymbols
+                ? `Test all ${availableSymbols.length} symbols`
+                : `Test selected symbol only (${symbol})`}
+            </label>
             <div className="flex gap-2">
               <button
                 onClick={handleCheck}
@@ -399,7 +417,9 @@ export default function CreatePresetPage() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
               </svg>
-              Running across {availableSymbols.length} symbol{availableSymbols.length !== 1 ? 's' : ''}…
+              {testAllSymbols
+                ? `Running across ${availableSymbols.length} symbol${availableSymbols.length !== 1 ? 's' : ''}…`
+                : `Running for ${symbol}…`}
             </div>
           )}
 

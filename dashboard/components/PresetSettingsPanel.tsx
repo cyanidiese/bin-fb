@@ -121,6 +121,20 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     description: 'Candles to pause all new entries (both sides) after a global pause is triggered by simultaneous BUY + SELL losses.',
     category: 'Cooldown',
   },
+  duplicate_skip_candles: {
+    label: 'Duplicate skip window',
+    default: 0,
+    unit: 'candles',
+    description: 'After an SL hit, skip the next signal if it closely matches the losing trade (same direction, entry/SL/TP within threshold). 0 = disabled.',
+    category: 'Cooldown',
+  },
+  duplicate_skip_pct: {
+    label: 'Duplicate threshold',
+    default: 2.0,
+    unit: '%',
+    description: 'Max % difference between the new signal\'s entry, SL, and TP and the last SL-hit signal for it to be considered a duplicate.',
+    category: 'Cooldown',
+  },
 }
 
 export const CATEGORIES: SettingMeta['category'][] = [

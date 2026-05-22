@@ -291,6 +291,35 @@ async def run() -> None:
             analyzers[symbol].get_all_points(), best,
         )
 
+    def _write_open_positions() -> None:
+        """Snapshot current open orders (real + virtual) to disk for the dashboard."""
+        real_open = []
+        for sym, oo in order_executor.get_open_orders().items():
+            real_open.append({
+                'symbol': sym,
+                'preset_name': oo.preset_name,
+                'side': oo.side,
+                'entry_price': oo.entry_price,
+                'tp': oo.tp_price,
+                'sl': oo.sl_price,
+                'quantity': oo.quantity,
+                'leverage': oo.leverage,
+                'scenario': oo.scenario,
+                'open_time': oo.open_time,
+                'status': 'open',
+            })
+        virtual_open = virtual_order_simulator.get_open_positions()
+        payload = {
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'real': real_open,
+            'virtual': virtual_open,
+        }
+        _path = _PROJECT_ROOT / 'data' / f'open_positions_{mode_manager.current_mode}.json'
+        _path.parent.mkdir(parents=True, exist_ok=True)
+        _tmp = _path.with_suffix('.json.tmp')
+        _tmp.write_text(json.dumps(payload))
+        _tmp.replace(_path)
+
     await order_executor.reconcile_with_exchange()
     _write_open_positions()  # overwrite any stale file from a crashed previous session
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
@@ -981,35 +1010,6 @@ async def run() -> None:
             risk_manager.update_balance(switch_balance)
         virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
-
-    def _write_open_positions() -> None:
-        """Snapshot current open orders (real + virtual) to disk for the dashboard."""
-        real_open = []
-        for sym, oo in order_executor.get_open_orders().items():
-            real_open.append({
-                'symbol': sym,
-                'preset_name': oo.preset_name,
-                'side': oo.side,
-                'entry_price': oo.entry_price,
-                'tp': oo.tp_price,
-                'sl': oo.sl_price,
-                'quantity': oo.quantity,
-                'leverage': oo.leverage,
-                'scenario': oo.scenario,
-                'open_time': oo.open_time,
-                'status': 'open',
-            })
-        virtual_open = virtual_order_simulator.get_open_positions()
-        payload = {
-            'updated_at': datetime.now(timezone.utc).isoformat(),
-            'real': real_open,
-            'virtual': virtual_open,
-        }
-        _path = _PROJECT_ROOT / 'data' / f'open_positions_{mode_manager.current_mode}.json'
-        _path.parent.mkdir(parents=True, exist_ok=True)
-        _tmp = _path.with_suffix('.json.tmp')
-        _tmp.write_text(json.dumps(payload))
-        _tmp.replace(_path)
 
     async def on_stop_bot() -> None:
         current_symbols = symbol_registry.get_symbols()

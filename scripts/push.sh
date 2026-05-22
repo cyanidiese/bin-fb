@@ -24,10 +24,10 @@ echo "==> Deploying to $HOST:$DIR"
 
 # Step 1 — Gracefully stop ALL bot instances (SIGTERM triggers close_all_open + close_all_orders)
 # Use /proc to find PIDs since the slim container has no pkill/pgrep.
-# Kill ALL matching PIDs (not just head -1) to prevent stale instances accumulating across deploys.
+# Loop over PIDs individually — the container has no standalone kill binary, only the shell builtin.
 echo "==> Stopping bot gracefully..."
 $SSH "$HOST" \
-  "PIDS=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); if [ -n \"\$PIDS\" ]; then docker exec bot-app-1 /bin/sh -c \"kill -TERM \$PIDS\" 2>/dev/null && echo \"Sent SIGTERM to PIDs: \$PIDS\"; else echo 'Bot was not running'; fi"
+  "docker exec bot-app-1 /bin/sh -c 'for PID in \$(grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"); do kill -TERM \$PID 2>/dev/null && echo \"Sent SIGTERM to \$PID\"; done' 2>/dev/null || echo 'Bot was not running'"
 
 # Wait up to 25 s for cleanup (close_all_open + market close of real orders)
 echo "==> Waiting for order cleanup..."

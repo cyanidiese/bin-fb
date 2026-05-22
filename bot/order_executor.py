@@ -649,8 +649,30 @@ class OrderExecutor:
                 reduceOnly=True,
             )
         except Exception as exc:
-            # -2022: position already closed by the exchange SL order — not an error, use fallback price
+            # -2022: position already closed by the exchange SL order — not an error.
+            # Try to recover the actual SL fill price from trade records before falling back.
             if getattr(exc, 'code', None) == -2022:
+                sl_fill_price = 0.0
+                try:
+                    start_ms: int | None = None
+                    if order.open_time:
+                        start_ms = int(datetime.fromisoformat(order.open_time).timestamp() * 1000)
+                    kw: dict = dict(symbol=symbol, limit=10)
+                    if start_ms:
+                        kw['startTime'] = start_ms
+                    sl_trades = await asyncio.to_thread(client.futures_account_trades, **kw)
+                    close_side = 'SELL' if order.side == 'BUY' else 'BUY'
+                    matching = [t for t in sl_trades if t.get('side') == close_side]
+                    if matching:
+                        sl_fill_price = float(matching[-1]['price'])
+                except Exception as te:
+                    logger.debug(f"[{symbol}] SL trade record lookup failed: {te}")
+                if sl_fill_price > 0:
+                    logger.info(
+                        f"[{symbol}] Position closed by exchange SL — "
+                        f"recovered actual fill price {sl_fill_price:.6f}"
+                    )
+                    return sl_fill_price
                 fb = fallback if fallback and fallback > 0 else order.entry_price
                 logger.info(
                     f"[{symbol}] Position already closed on exchange (SL filled) — "
@@ -677,6 +699,23 @@ class OrderExecutor:
                             break
                     except Exception:
                         break
+        if avg_price <= 0 and order_id:
+            # futures_get_order avgPrice can lag the matching engine. The trade records
+            # endpoint is populated immediately from the fill — use it as a second fallback.
+            try:
+                trades = await asyncio.to_thread(
+                    client.futures_account_trades,
+                    symbol=symbol,
+                    orderId=order_id,
+                )
+                if trades:
+                    avg_price = self._fill_price_from_trades(trades)
+                    if avg_price > 0:
+                        logger.info(
+                            f"[{symbol}] avgPrice recovered from trade records: {avg_price:.6f}"
+                        )
+            except Exception as te:
+                logger.debug(f"[{symbol}] Trade records fallback failed: {te}")
         if avg_price <= 0:
             fb = fallback if fallback and fallback > 0 else order.entry_price
             logger.warning(
@@ -971,6 +1010,14 @@ class OrderExecutor:
     # Binance Futures taker fee rate (both sides). 0.04% = 0.0004.
     # Applied to entry notional (open) and close notional (close).
     _TAKER_FEE_RATE: float = 0.0004
+
+    @staticmethod
+    def _fill_price_from_trades(trades: list) -> float:
+        """Weighted average fill price from a list of Binance trade records."""
+        total_qty = sum(float(t.get('qty', 0)) for t in trades)
+        if total_qty <= 0:
+            return 0.0
+        return sum(float(t.get('price', 0)) * float(t.get('qty', 0)) for t in trades) / total_qty
 
     @staticmethod
     def _calc_pnl(order: OpenOrder, close_price: float) -> float:

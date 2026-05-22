@@ -27,6 +27,15 @@ Loads up to 1000 recent klines on startup, stores locally, and merges new candle
 - Gap detection: if time jump > 1 candle duration, discard stale cache and re-fetch
 - Gracefully handles network errors and cache corruption
 
+### Startup Kline Fallback (Rate-Limit Resilience)
+When update fetch fails after startup (e.g., Binance IP ban during initial sync), bot proceeds with cached klines if available instead of crashing. Only raises if no cache exists.
+
+**Files**: `bot/data_feed.py` (load_klines)
+**Key details**:
+- Update fetch failure with valid cache: log warning and continue with `fresh = []`
+- No valid cache at all: raise exception (startup abort, data required)
+- Enables bot to survive temporary IP bans at startup and recover once rate limit lifts
+
 ### Multi-Symbol Support
 Bot processes multiple symbols concurrently via asyncio. Symbol list stored in `symbol_registry.json`. Can add/remove symbols at runtime via dashboard Settings page.
 
@@ -101,12 +110,13 @@ Analyzes trend state at candle open and generates a single best trading signal (
 - `trailing_stop_pct`, `partial_take_pct`: order exit mechanics (see Order Execution)
 
 ### Cooldown Mechanisms
-Prevents repeated entries after losses and reduces overtrading in choppy markets.
+Prevents repeated entries after losses and reduces overtrading in choppy markets. Implemented in both backtester and live bot.
 
-**Files**: `bot/recommendation_engine.py`, `config/settings.py`
+**Files**: `bot/recommendation_engine.py`, `config/settings.py`, `main.py` (live implementation), `bot/backtester.py` (backtest implementation)
 **Key details**:
-- **Loss streak cooldown**: After `loss_streak_max` consecutive losses on one side (BUY or SELL), block that side for `loss_streak_cooldown_candles` candles
-- **Global pause**: If both BUY and SELL lose within `global_pause_trigger_candles` of each other, pause ALL entries for `global_pause_candles` candles
+- **Loss streak cooldown**: After `loss_streak_max` consecutive losses on one side (BUY or SELL), block that side for `loss_streak_cooldown_candles` candles. Per-direction isolation — BUY losses don't affect SELL and vice versa.
+- **Global pause**: If both BUY and SELL lose within `global_pause_trigger_candles` of each other, pause ALL entries for `global_pause_candles` candles.
+- **Live bot implementation** (session 28): Added state dicts `_loss_streak`, `_streak_blocked`, `_global_pause_until`, `_last_loss_ts`. New helper `_update_loss_streak()` called from both candle-close and price-update loops. Gate check in `_try_place_order()` skips signals during active cooldowns.
 
 ---
 
@@ -188,6 +198,16 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
 - Includes: entry price, TP, SL, quantity, filled PnL, result, signal metadata, balance at open
 - Old sessions archived to `real_orders_{SYMBOL}_{MODE}_archive_{YYYYMMDDTHHMMSSZ}.json` on bot restart
 
+### Weight=0 Symbol Trading Gate
+Symbols with allocation weight set to 0 are excluded from both real order placement and virtual order simulation. Enforced at two points: candidate filtering before real orders, and guard before virtual simulator processing.
+
+**Files**: `main.py`, `symbol_registry.py`
+**Key details**:
+- Real order loop: `if symbol_registry.get_weight(sym) == 0.0: continue` (line ~676)
+- Virtual simulator call: `if symbol_registry.get_weight(symbol) > 0.0:` guard before `on_candle_close()`
+- Zero-cap symbols also blocked from BestGetsFirst loop: `if sym_cap <= 0: continue`
+- Prevents accidental trading of disabled symbols when weight is set to 0 without calling `disable()`
+
 ### Virtual Order Simulation (Rank-Based Pools)
 Tracks N independent virtual positions for the top non-best presets (ranks 2–6). Each rank has a shared balance pool across all symbols. When a preset's rank changes (efficiency rankings shift), the old position is evicted at current price and the new rank-N preset opens fresh.
 
@@ -201,9 +221,11 @@ Tracks N independent virtual positions for the top non-best presets (ranks 2–6
 - When preset efficiency rankings change, rank-N position switches to new preset
 - Position switchover recorded as `rank_change` result (evict at current price)
 
-**Virtual tracker**:
-- Tracks efficiency score per preset per symbol (wins USDT + trade count)
-- `best_preset(symbol)` returns highest-score preset (fallback to seeded backtest score until ≥8 live trades)
+**Preset efficiency scoring (session 26 refinement)**:
+- Binary mode: pure seeded score (from backtest) until `_MIN_TRADES=8` live trades, then pure live score
+- No blend formula at crossover (eliminates abrupt rank inversions)
+- `best_preset(symbol)` returns highest-score preset; tracks rank history in `_last_best` dict
+- Logs preset changes with trade counts and score values for analysis
 - `get_efficiency_score(symbol)` used to rank symbols for real-order loop
 - `get_preset_efficiency(symbol, preset)` used to rank presets within symbol for virtual allocation
 
@@ -217,6 +239,10 @@ Tracks N independent virtual positions for the top non-best presets (ranks 2–6
 **Per-rank symbol disable**:
 - Can disable rank 2–6 positions for a symbol via dashboard toggle
 - Real order (rank 1) unaffected
+
+**Trade order sorting (session 26)**:
+- Real and virtual orders intermixed and sorted chronologically by `open_time` descending
+- Unified timeline view across all ranks and trade types
 
 ---
 
@@ -272,6 +298,19 @@ Global leverage level starts at 1. Advances to next level only when ALL active s
 - Global level file: `leverage_state_{mode}.json`
 - Advances logged to system log
 - Ceiling: `max_leverage_level` config (default 5)
+
+### Per-Symbol Leverage Overrides (Session 26)
+Allows manual override of leverage per symbol in Risk dashboard, independent of global progression. Useful for fine-tuning capital deployment by cross-symbol profit score and risk tolerance.
+
+**Files**: `dashboard/components/risk/PerSymbolAllocation.tsx`, `dashboard/lib/risk-types.ts`, `bot/risk_manager.py`
+**Key details**:
+- **Dashboard UI**: Section B (Per-Symbol Allocation) shows editable leverage input per symbol in BGF mode
+- **Auto-computation**: Default value computed from cross-symbol profit score (mirrors `_calc_leverage` in risk_manager.py)
+- **Reactivity**: Values update when base_leverage, max_leverage, or tier leverage_ceiling changes
+- **Override persistence**: Manual overrides saved to `config.symbol_leverage` dict in risk_config.json
+- **UI feedback**: Shows "auto" label when using computed value; amber "⟳" reset button when manually overridden
+- **Runtime application**: `risk_manager.py::_calc_leverage` checks `cfg["symbol_leverage"][symbol]` override before auto-computation
+- **TypeScript schema**: `risk-types.ts` extended with `symbol_leverage?: Record<string, number>` in `RiskConfig`
 
 ### Balance History
 Append-only log of balance snapshots (cap 10k entries). Records at: startup, order open (before), order close (after), or >0.5% change.
@@ -332,14 +371,17 @@ Results viewer (`/backtest`). Sortable preset summary table with drill-down to p
 - Locked presets: lock/unlock toggles + delete buttons + visual indicator
 
 ### Trades Page
-Virtual order tracking (`/trades`). Real and virtual preset efficiency, performance chart with trade markers, recent order table.
+Virtual order tracking (`/trades`). Real and virtual preset efficiency, performance chart with trade markers, recent order table, live open positions.
 
-**Files**: `dashboard/app/trades/page.tsx`, `dashboard/components/PresetEfficiencyTable.tsx`
+**Files**: `dashboard/app/trades/page.tsx`, `dashboard/components/PresetEfficiencyTable.tsx`, `dashboard/app/api/trades/route.ts`, `dashboard/app/api/trades/symbols/route.ts`
 **Key features**:
+- Live open positions: real orders shown with green LIVE badge, virtual orders with blue LIVE badge, listed before closed orders
+- Position count in section header: "Open Positions (N)"
 - Preset efficiency table: preset name, rank badge (★ Real / #2–#6 / —), trade count, total PnL%, balance
 - Hide virtual-only checkbox: filters out presets with 0 real+virtual trades (seeded from backtest, not yet executed)
 - Candlestick chart with trade entry/exit markers (▲ BUY, ▼ SELL)
-- Recent real orders table (most recent first): symbol, preset, side, entry/exit price, PnL, status
+- Recent real orders table (most recent first): symbol, preset, side, entry/exit price, PnL, status, qty
+- Qty column: smart decimal formatting (2 decimals for normal ranges, scientific notation for micro-qty)
 
 ### Risk Page
 Risk management controls (`/risk`). Config editor, real-time state polling, drawdown guard, leverage info.
@@ -430,6 +472,17 @@ Switches between test (testnet) and live (real) at runtime via command channel. 
 - Backtest gate: every mode switch runs `backtest.py --mode {new_mode}` before accepting
 - 2s polling interval for commands
 
+### Graceful SIGTERM Shutdown
+Bot handles SIGTERM signal (from `docker stop` or deployment scripts) by closing all open positions gracefully before exit. Wired via `signal.signal(signal.SIGTERM, on_stop_bot)` handler.
+
+**Files**: `main.py` (on_stop_bot), `bot/virtual_order_simulator.py` (get_open_positions)
+**Key details**:
+- On SIGTERM: `on_stop_bot()` triggers, which calls `OrderExecutor.market_close_all()` + `VirtualOrderSimulator.on_stop_bot()`
+- All open positions closed at market price and recorded to `data/real_orders_{symbol}_{mode}.json`
+- Virtual positions written to final JSON file via `_write_open_positions()`
+- Bot then exits cleanly after pending order closes complete
+- Prevents orphan positions when bot restarts during deploy
+
 ### Notifier & Telegram Alerts
 Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencies to alert state file. Implements cooldown to avoid spam.
 
@@ -461,7 +514,8 @@ Append-only log of every order-placement decision (placed or skipped). Used for 
 - File: `data/decision_log_{MODE}.json`
 - Max 5000 entries (oldest trimmed)
 - Per-entry: timestamp, symbol, candle_ts, decision type, reason, balance, leverage, efficiency_score, preset_name, signal_type, precision_score, level
-- Decision types: placed / skip_balance / skip_profit_factor / skip_hard_stop / skip_already_open / skip_no_signal
+- Decision types: placed / skip_balance / skip_profit_factor / skip_hard_stop / skip_already_open / skip_no_signal / skip_duplicate_sl
+- **Temp file safety** (session 28): Uses PID-qualified filename (`{stem}.{os.getpid()}.tmp`) to prevent concurrent process race conditions during atomic write
 
 ### Bot State & Heartbeat
 Bot writes its PID and state to `bot_state.json` on startup and updates it every 10s via heartbeat task.
@@ -606,4 +660,60 @@ If `data/STOP` file exists, main loop checks and halts gracefully.
 
 ---
 
-**Last updated**: Session 22 (2026-05-17) — Min notional order sizing fix (leverage bump + 2% buffer) + preset refactoring (centralized config/presets.py) + deployment to VPS.
+### Symbol Precision Fix (Order Executor)
+Corrects `-1111` "Precision is over maximum" errors on coarser-precision symbols (TIAUSDT, DOGEUSDT, 1000PEPEUSDT, etc.). Previously, lot cache fallback used float `tick_size=0.00001` which produced wrong decimal counts when converted to string.
+
+**Files**: `bot/order_executor.py`
+**Key details**:
+- `tick_size` stored as original string from Binance (e.g., `"0.001"`)
+- New static method `_price_str(price: float, tick_size: str) -> str` formats SL price to exact decimal count
+- Normal operation: per-symbol string from Binance exchange info (always correct)
+- Fallback: `"0.00001"` string default (only mismatches coarser symbols, same behavior as before but now string-typed)
+
+### Login Authentication Fix (Dashboard)
+Fixes auth cookie not being sent on first request after login. Previously used `router.push(next)` (client-side nav only).
+
+**Files**: `dashboard/app/login/page.tsx`
+**Key details**:
+- Changed to `window.location.replace(next)` for full page reload
+- Guarantees new cookie included in server request
+
+### Symbol Status Indicator Dots (Dashboard)
+Visual indicators on SymbolSwitcher showing symbol health status. Red = disabled (precision/other error), Green = has live orders. Both indicators can co-exist on same symbol.
+
+**Files**: `dashboard/components/SymbolSwitcher.tsx`, `dashboard/components/ClientLayout.tsx`, `dashboard/components/SymbolContext.tsx`
+**Key details**:
+- Red dot: symbol auto-disabled (e.g., precision error → `-1111` consecutive failures)
+- Green dot: symbol has open real orders
+- Disabled list fetched from `/api/symbols` every 30s
+- Live orders source: `/api/public-file?f=preset_efficiency_test.json`
+
+### Chart DateTime Range Pickers (Dashboard Trades Page)
+Filter chart klines by date range. Two `datetime-local` inputs with in-memory filtering (no re-fetch) and reset button.
+
+**Files**: `dashboard/app/trades/page.tsx`
+**Key details**:
+- From / To pickers on chart widget
+- Filters already-loaded klines array in memory
+- Shows "N of M candles" when filtered
+- Reset button clears both pickers
+- Charts update immediately without server round-trip
+
+### Duplicate-Signal Skip (Avoid Churning After SL-Hit)
+Prevents re-entry on similar signals shortly after stop loss. When enabled, skips new signal if it closely matches a recent SL-hit signal (same direction, entry/sl/tp within threshold %, within N candles). **Fully visible in logs** with dedicated logger.info() call.
+
+**Files**: `config/settings.py`, `config/presets.py`, `bot/backtester.py`, `main.py`, `bot/virtual_order_simulator.py`
+**Key config**:
+- `duplicate_skip_candles: int` (default 0 = disabled) — how many candles to check backward
+- `duplicate_skip_pct: float` (default 2.0%) — allowed variation in entry/sl/tp prices
+
+**Implementation details**:
+- `bot/backtester.py`: tracks `last_sl_signal` per side (BUY/SELL) during backtest; checks before opening FakeOrder
+- `main.py`: tracks `_pending_signals` on placement, `_recent_sl_hit` on real loss close; `_tf_to_ms` module function converts timeframe to ms; checks in `_try_place_order` before placement. **Logs skip decision** with symbol, preset, side, and candles-ago reference.
+- `bot/virtual_order_simulator.py`: tracks `_recent_sl_hit` on virtual loss close; checks in `_try_open` before entry
+- Matching logic: same side AND entry within ±pct AND sl within ±pct AND tp within ±pct AND within N candles = skip
+- **Decision visibility** (session 28): `skip_duplicate_sl` decision now logged to `bot.log` before being written to decision_log.json
+
+---
+
+**Last updated**: Session 28 (2026-05-22) — Loss streak cooldown live implementation, decision log race fix, duplicate skip visibility in logs.

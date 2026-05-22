@@ -197,6 +197,7 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] `seed_from_backtest` skips symbol if already in efficiency file
 - [x] RiskManager peak_balance persistence bug fix — initialize from `data/virtual_balance_{mode}.json`
 - [x] `/api/public-file` route for runtime-generated JSON files (bypass Next.js build manifest)
+- [x] Startup kline fallback — bot survives rate-limit bans by using cached klines when update fetch fails
 - [ ] Allocation weight step 0.01 + initial rebalance on symbol add
 - [ ] End-to-end test: start bot from dashboard, switch modes, verify backtest gate fires
 - [ ] Fix `.env` — change `TRADING_MODE=testnet` → `TRADING_MODE=test` (currently warns on startup)
@@ -245,6 +246,9 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 - [x] Real order recording in `OrderExecutor` — `real_orders_{symbol}_{mode}.json` on ALL close types
 - [x] Real order opening guard — `_last_opened_preset[symbol]` + exchange verify on preset change
 - [x] Wire `VirtualOrderSimulator` into `main.py` — candle close, price update, stop, mode switch
+- [x] Live positions on Trades page (LIVE badge, open positions displayed before closed orders)
+- [x] SIGTERM graceful shutdown on deploy (closes virtual + real orders before exit)
+- [x] Weight=0 trading gate (weight-zero symbols excluded from both real and virtual order placement)
 - [ ] Add `Analyzer.get_recommendation_for_preset(overrides: dict) -> Optional[Recommendation]` (deferred)
 
 **Dashboard:**
@@ -255,6 +259,7 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 - [x] Run Backtest button blocking API (done — now non-blocking with polling)
 - [x] Stop Bot error when bot already stopped (done)
 - [x] Add scenario to decision log entries (done)
+- [x] Live positions shown with LIVE badge (real=green, virtual=blue)
 
 **Tests:**
 - [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
@@ -338,9 +343,38 @@ Design approved + implemented in session 14.
 ## Open investigations (pending session)
 
 - [x] ETHFIUSDT -4164 notional error (order quantity precision) — FIXED in session 22 (leverage bump + 2% buffer)
+- [x] Loss streak cooldown missing from live bot — FIXED in session 28 (full implementation in main.py)
+- [x] Decision log tmp file race condition — FIXED in session 28 (PID-qualified temp names)
+- [x] Duplicate skip decisions invisible in logs — FIXED in session 28 (added logger.info())
 - [ ] Hard stop still active after restart (balance recovery edge case) — pending user investigation
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
+
+## Session 27 — Precision & Login Fixes (completed 2026-05-21)
+
+- [x] **Precision fix** — TIAUSDT `-1111` errors caused by float tick_size fallback. Fixed by storing tick_size as string + added `_price_str()` formatter. Deployed commit `be0d3a2`.
+
+- [x] **Login auth cookie fix** — `router.push()` client-side nav didn't send cookie. Fixed with `window.location.replace()` for full page reload.
+
+- [x] **Symbol selector indicator dots** — red=disabled, green=has live orders. `/api/symbols` every 30s + preset_efficiency JSON source.
+
+- [x] **Chart datetime pickers** — Trades page filter by date range, shows candle count, reset button.
+
+- [x] **Duplicate-signal skip feature** — `duplicate_skip_candles` + `duplicate_skip_pct` settings to prevent re-entry on similar SL-hit signals. Wired into backtester, main.py, and virtual simulator.
+
+## Session 26 — Critical Fixes (identified but not yet fixed)
+
+Priority order (blocker issues identified in deep performance audit):
+
+1. [ ] **Per-symbol loss circuit breaker** — prevent REZUSDT-style cascading losses (8 consecutive -3-4% drops). Consider: disable symbol after N consecutive losses, or reset SL anchor on close, or add loss limit per symbol per session.
+
+2. [ ] **Fix profit_factor backtest field** — `profit_factor` always 0.00 in backtest results → gate blocks BTCUSDT, EGLDUSDT. Either: wire PF calculation into backtester result export, OR switch gate to use win% + total profit% as proxy instead of backtest PF.
+
+3. [ ] **Fix ETHFIUSDT preset incompatibility** — best preset `r6_arm15_full` has `max_profit_pct=3%` cap but signals target 17-20% TP. Either: loosen preset cap, OR create signal-type-compatible preset variant.
+
+4. [ ] **Fix position sizing: use total balance not free balance** — concurrent trades currently use only available margin → oversized positions (SHIB trade 102% of account). Switch `_get_fresh_balance()` to return total account balance for sizing checks.
+
+5. [ ] **Investigate TIAUSDT hard-stop** — symbol is strongest backtest performer (+44.9%) but never traded. Verify: did initialization virtual trade legitimately trigger hard-stop, or is it a phantom? User to review risk_state.json before restart.
 
 ## Phase 5 — Deployment
 

@@ -1,6 +1,247 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-19 (session 24)
+## Last updated: 2026-05-22 (session 28)
+
+---
+
+## ⟳ RESUME POINT — session 28 ended here (2026-05-22)
+
+**What was completed this session:**
+
+Three critical bugs identified during log analysis and fixed + deployed (commit `e50cf0c`):
+
+**1. Loss streak cooldown was backtest-only (CRITICAL):**
+- **Root cause**: `loss_streak_max`, `loss_streak_cooldown_candles`, `global_pause_trigger_candles`, and `global_pause_candles` settings existed only in backtester (`bot/backtester.py`). Live bot (`main.py`) never implemented these per-direction cooldowns or global pause logic.
+- **Impact**: Presets like `db_clone_cooldown` with `loss_streak_max=2` had zero protective effect during live trading. Consecutive losses would keep placing orders instead of pausing the direction.
+- **Fix**: Added 4 new state dicts to main.py: `_loss_streak`, `_streak_blocked`, `_global_pause_until`, `_last_loss_ts`. New helper function `_update_loss_streak(c, ts)` mirrors backtester logic (per-direction tracking, directional blocks, global pause trigger). Added gate check in `_try_place_order()` that skips signals during active cooldowns. Helper called from both candle-close and price-update loops.
+
+**2. Decision log / virtual tracker tmp file race condition (MEDIUM):**
+- **Root cause**: Both `bot/decision_log.py` and `bot/virtual_tracker.py` used bare `.json.tmp` temp filename (e.g., `decision_log_test.json.tmp`). If multiple bot processes ran concurrently, one process's atomic rename could fail with FileNotFoundError when another process already renamed its own `.tmp` file.
+- **Impact**: Under race conditions (e.g., multiple container restarts during deploy), files could fail to write atomically.
+- **Fix**: Changed both files to use PID-qualified temp names: `f"{stem}.{os.getpid()}.tmp"`. Each process now has a unique temp file; renames never conflict.
+
+**3. Duplicate skip decisions invisible in bot.log (MEDIUM):**
+- **Root cause**: The `skip_duplicate_sl` decision was written to decision log JSON but had no `logger.info()` call, making it completely invisible during live monitoring.
+- **Impact**: When duplicate skip triggered, users had no log indication — only post-run JSON analysis could reveal it.
+- **Fix**: Added `logger.info()` call in main.py before `dl_record()` in the duplicate-skip block. Now logs symbol, preset, side, and how many candles ago the duplicate occurred.
+
+**Tests added**:
+- `tests/test_decision_log.py`: Added `test_tmp_file_uses_pid_suffix` and `test_sequential_writes_accumulate`
+- `tests/test_loss_streak.py`: New file with 8 tests covering full loss-streak state machine
+
+**Deployment**:
+- Committed as `e50cf0c` and deployed to server 185.237.14.105
+- Bot gracefully shut down (closed 3 open positions before stopping), pulled new code, rebuilt container, restarted
+- Confirmed running at 09:12:52 UTC
+
+**Immediate next action**: Continue monitoring loss_streak triggering in live environment. Pre-existing failing test `test_place_order_happy_path` still in backlog (decimal.InvalidOperation mock issue, unrelated to these fixes).
+
+---
+
+## ⟳ RESUME POINT — session 27 ended here (2026-05-21)
+
+**What was completed this session:**
+
+Three critical bug fixes deployed + new dashboard features:
+
+**1. Precision fix (`bot/order_executor.py`)**:
+- Root cause: TIAUSDT and other coarser-precision symbols were generating `-1111` errors because lot cache fallback used float `tick_size=0.00001`, which when converted with `str(float)` produced wrong decimal counts (e.g., `0.1` instead of `"0.1"`).
+- Fix: Store `tick_size` as the original string from Binance (e.g., `"0.001"`). Added `_price_str(price: float, tick_size: str) -> str` static method that formats SL price to the exact decimal count required.
+- Normal operation: always correct (per-symbol string from Binance exchange info). Fallback: `"0.00001"` string default (only wrong for coarser symbols, same behavior as before but now string-typed).
+- TIAUSDT can now trade without -1111 errors.
+
+**2. Login fix (`dashboard/app/login/page.tsx`)**:
+- Root cause: After successful login, auth cookie wasn't sent on next request because `router.push(next)` is client-side navigation only.
+- Fix: Changed to `window.location.replace(next)` which forces full page reload, guaranteeing new cookie included in server request.
+
+**3. Symbol selector indicator dots (`dashboard/components/SymbolSwitcher.tsx`, `ClientLayout.tsx`, `SymbolContext.tsx`)**:
+- New feature: Red dot = symbol disabled (precision error auto-disabled), Green dot = symbol has live orders. Both can co-exist.
+- Data source: `/api/symbols` fetched every 30s for disabled list; `/api/public-file?f=preset_efficiency_test.json` for orders.
+
+**4. Chart datetime pickers (`dashboard/app/trades/page.tsx`)**:
+- New feature: Two `datetime-local` pickers on Trades page chart widget. Filter already-loaded klines array in memory (no re-fetch). Shows "N of M candles" count when filtered. Reset button clears both pickers.
+
+**5. Duplicate-signal skip feature** (new settings + implementation across bot):
+- New config: `duplicate_skip_candles: int` and `duplicate_skip_pct: float` (default 0=disabled and 2.0%)
+- When enabled: skip new signal if it closely resembles recent SL-hit signal (same direction, entry/sl/tp within pct threshold, within N candles)
+- Implemented in:
+  - `config/settings.py` and `config/presets.py` (TypedDict fields)
+  - `bot/backtester.py` (tracks `last_sl_signal` per side; checks before opening FakeOrder)
+  - `main.py` (tracks `_pending_signals` on placement, `_recent_sl_hit` on loss close; `_tf_to_ms` module function; checks in `_try_place_order`)
+  - `bot/virtual_order_simulator.py` (tracks `_recent_sl_hit` on loss close; checks in `_try_open`)
+
+**Deployment**:
+- All changes committed (commit `be0d3a2`) and pushed to GitHub
+- Docker compose rebuild on server 185.237.14.105
+- Disabled symbols cleared from symbol_registry.json
+- Bot started with all 15 symbols including TIAUSDT
+- WebSocket connected at 19:38:53
+
+**TIAUSDT context**:
+- Was auto-disabled because `-1111` precision errors triggered `order_executor._auto_disable()` → `symbol_registry.disable()`
+- With the precision fix, TIAUSDT will no longer get -1111 errors (lot filters correctly loaded per symbol from exchange info)
+- Registry cleared so it starts fresh
+
+**Pending bugs (already tracked, not fixed this session)**:
+- 2 critical / 5 important / 6 minor audit bugs from 2026-05-20 code audit still outstanding
+
+**Immediate next action**: Continue monitoring bot stability; track if any new precision errors appear on edge-case symbols.
+
+---
+
+## ⟳ RESUME POINT — session 26 ended here (2026-05-21)
+
+**What was completed this session:**
+
+Major feature implementations and deep performance analysis:
+
+**VirtualTracker blend removal (bot/virtual_tracker.py)**:
+- Removed linear seeded/live blend formula from `best_preset()`, `get_efficiency_score()`, `get_preset_efficiency()`
+- Pure seeded score until `_MIN_TRADES=8` live trades, pure live after
+- Added `_SENTINEL = object()` at module level and `self._last_best: dict[str, str | None] = {}` to `__init__`
+- Added detailed change logging when best preset shifts, logging old/new preset name, trade counts, seeded/live scores
+
+**Trade orders sorted chronologically (dashboard/app/trades/page.tsx)**:
+- Real and virtual orders now intermixed and sorted by `open_time` descending instead of Real-first then virtual
+
+**Per-symbol leverage controls in Risk dashboard BGF mode (dashboard/components/risk/PerSymbolAllocation.tsx + dashboard/lib/risk-types.ts + bot/risk_manager.py)**:
+- Section B shows editable leverage input per symbol in BGF mode
+- Auto-computed from cross-symbol profit score (mirrors `_calc_leverage` in risk_manager.py)
+- Values reactive to base_leverage, max_leverage, and tier leverage_ceiling changes
+- Overrides saved to `config.symbol_leverage` dict in risk_config.json
+- Shows "auto" label when auto-computed; amber "⟳" reset button when manually overridden
+- `risk_manager.py::_calc_leverage` checks `cfg["symbol_leverage"][symbol]` override before auto-computation
+- `risk-types.ts` added `symbol_leverage?: Record<string, number>` to `RiskConfig`
+
+**MEMEUSDT allocation root cause identified and closed**:
+- Root cause: `symbol_weights={}` (empty dict) → `total_w=1.0` → full deployable allocated to every symbol
+- Previous fix `fda7a2c` already resolved the weight fallback logic
+- 28M qty (virtual) vs 100K qty (real) discrepancy explained
+
+**Deep performance analysis delivered (Analyst)**:
+- **REZUSDT**: stale SL anchor, 100% loss rate on 8 consecutive trades, burned ~$133 with no circuit breaker
+- **ETHFIUSDT**: permanently blocked — best preset `r6_arm15_full` has `max_profit_pct=3%` but signals target 17-20% TP → preset incompatibility
+- **Position sizing**: uses `free_balance` not `total_balance` → oversized concurrent trades (one SHIB trade used 102% of balance)
+- **profit_factor gate**: backtest engine never populates `profit_factor` field (always 0.00) → `min_profit_factor=1.2` gate blocks BTCUSDT and EGLDUSDT entirely
+- **TIAUSDT hard-stop**: initialization event triggered hard-stop; symbol has strongest backtest (+44.9%) but never traded
+- **Decision log**: 97.7% of signals skipped (3,082/3,156); main reasons: `skip_hard_stop`, `skip_max_profit_pct`, `skip_profit_factor`
+- **Balance**: $5,000 → $4,303 (-13.9%), hard stop at $4,000 with only $303 runway remaining
+
+**All changes deployed (commit b81403a)**:
+- Bot is deployed but NOT started (per user request)
+- Server: 185.237.14.105
+
+**Immediate next action**: Apply performance fix improvements (leverage override feature working, but bot requires fixes to root-cause failures before restart).
+
+---
+
+## ⟳ RESUME POINT — session 25 ended here (2026-05-20)
+
+**What was completed this session:**
+
+Bug fixes and infrastructure improvements deployed to main (commits 619120a, 434bb51, 5c8ebe6):
+
+**Critical bug fixed — JUPUSDT traded despite weight=0:**
+- Root cause: `symbol_registry.is_disabled()` only checked `_disabled` dict; setting a symbol's weight to 0 without calling `disable()` left it as an active trading candidate.
+- Fix 1 (`main.py` line ~676): Added `if symbol_registry.get_weight(sym) == 0.0: continue` in candidates-building loop — blocks real order placement for weight-zero symbols.
+- Fix 2 (`main.py`): Added `if symbol_registry.get_weight(symbol) > 0.0:` guard before `virtual_order_simulator.on_candle_close()` — blocks virtual simulation for weight-zero symbols.
+- Fix 3 (`main.py`): Added `if sym_cap <= 0: continue` in BestGetsFirst loop — prevents zero-cap symbols from falling through to `trade_cap=0` → min-margin fallback.
+- Fix 4 (`symbol_registry.json` + `risk_config.json`): JUPUSDT weight set to 0 in both files so restart cannot silently re-enable.
+- Financial impact: Undetected JUPUSDT trade cost -22.58 USDT on testnet.
+
+**Startup crash on Binance rate-limit ban fixed:**
+- Root cause: `data_feed.load_klines()` propagated update-fetch exceptions even when valid cache existed. Binance IP bans during startup caused bot crash.
+- Fix (`bot/data_feed.py`): When cache exists and update fetch fails, log warning and proceed with cached data (`fresh = []`). Only raises if no cache at all.
+- Impact: Bot now survives IP rate-limit bans at startup instead of crashing.
+
+**push.sh deployment script fixed:**
+- `pkill`/`pgrep` not available in python:3.12-slim. Fixed to use `/proc/*/cmdline` to find PID and send `kill -TERM`.
+- Added `git reset --hard HEAD && git clean -f dashboard/public/` to pull step so runtime-modified JSON files never block `git pull`.
+
+**Feature deployed from yesterday (previously uncommitted):**
+- Dashboard Trades page: open positions shown with LIVE badge (green for real, blue for virtual) before closed orders.
+- `VirtualOrderSimulator.get_open_positions()`: serialises all rank open orders to dicts.
+- `main.py`: `_write_open_positions()` writes `data/open_positions_{mode}.json` after each candle and on graceful shutdown.
+- SIGTERM handler wired so `docker stop` / deploy triggers `on_stop_bot()` (closes virtual + real orders gracefully).
+- Dashboard API: `/api/trades` and `/api/trades/symbols` read `open_positions_{mode}.json` files.
+- Qty column added to trades table with smart decimal formatting.
+
+**Orphan positions discovered (context note):**
+During deploy, bot closed 3 orphan positions at startup: APTUSDT SELL (-64.86 USDT), MEMEUSDT SELL (-1.14 USDT), 1000SHIBUSDT SELL (-18.23 USDT). Root cause: bot was crashing repeatedly (from rate-limit startup bug), leaving exchange positions open. Now that crash is fixed, this should stop.
+
+**Current server state:**
+- Commit: 5c8ebe6 (main)
+- Bot running, connected to 15 symbols
+- JUPUSDT in symbol list but weight=0 (excluded from trading and virtual sim)
+
+**Immediate next action**: Monitor bot stability. Virtual order simulator and real order execution are now protected against weight-zero symbol bypasses. Dashboard trades page now shows live positions (real and virtual) in real time.
+
+---
+
+## Open Bug Backlog (session 26 analysis — deep performance audit)
+
+### Critical (fix before next restart)
+1. **REZUSDT cascading loss failure** — SL anchor stale, 8 consecutive -3–4% losses, no circuit breaker → $133 burned
+   - Root cause: SL point not updated after exit, next entry reuses old SL
+   - Fix needed: Reset SL anchor on position close OR per-symbol loss circuit breaker
+
+2. **ETHFIUSDT incompatibility** — best preset `r6_arm15_full` gate `max_profit_pct=3%` blocks signals targeting 17-20% TP
+   - Root cause: Preset cap too tight for signal TP projection
+   - Fix needed: Either relax preset cap or create signal-compatible preset variant
+
+### Important (fix after critical)
+3. **profit_factor gate broken** — backtest JSON never populates `profit_factor` field (always 0.00) → `min_profit_factor=1.2` blocks BTCUSDT, EGLDUSDT entirely
+   - Root cause: Backtest engine does not compute PF in preset results
+   - Fix needed: Wire backtest PF calculation into result export OR gate on different metric (use win% + total profit% instead)
+
+4. **Position sizing oversized** — uses `free_balance` not `total_balance` → concurrent trades exceed account equity (SHIB trade 102% of balance)
+   - Root cause: `_get_fresh_balance()` returns only available margin, not total balance
+   - Fix needed: Use total balance for concurrent trade sizing check
+
+5. **TIAUSDT hard-stop on initialization** — symbol strongest performer (+44.9%) but never traded due to initialization hard-stop trigger
+   - Root cause: First trade triggered hard-stop in virtual tracker, blocked subsequent real entries
+   - Fix needed: Investigate whether hard-stop triggered correctly or is a phantom (user to review risk_state.json)
+
+### Deferred (lower priority)
+- **BUG-07**: Virtual order sizing uses real account allocation, not rank-pool balance
+- **BUG-09**: Swing point timestamps use close-time not open-time (shows 15m ahead)
+- **BUG-16**: `get_symbol_allocation` reads risk_config.json on every call (hot path caching)
+
+---
+
+**Bugs fixed — session 28 (2026-05-22)**:
+
+1. **Loss streak cooldown never implemented live** (`main.py`)
+   - **Cause**: `loss_streak_max`, `loss_streak_cooldown_candles`, `global_pause_trigger_candles`, `global_pause_candles` settings existed in backtester only. Main.py had no corresponding logic.
+   - **Effect**: Per-direction cooldowns and global pause had zero effect during live trading. Consecutive losses kept placing orders.
+   - **Fix**: Added state dicts `_loss_streak`, `_streak_blocked`, `_global_pause_until`, `_last_loss_ts`. New helper `_update_loss_streak(c, ts)` implements full state machine (per-direction tracking, blocks, global pause). Gate check in `_try_place_order()` skips during active cooldowns.
+
+2. **Decision log tmp file race condition** (`bot/decision_log.py`, `bot/virtual_tracker.py`)
+   - **Cause**: Both files used bare `.json.tmp` filename. Multiple concurrent processes' atomic renames could conflict.
+   - **Effect**: Under race conditions (e.g., container restarts), file writes could fail with FileNotFoundError.
+   - **Fix**: Changed to PID-qualified temp names (`{stem}.{os.getpid()}.tmp`). Each process has unique temp file; renames never conflict.
+
+3. **Duplicate skip decisions invisible in logs** (`main.py`)
+   - **Cause**: `skip_duplicate_sl` was written to decision log JSON but had no `logger.info()` call.
+   - **Effect**: Duplicate skips had no log visibility — only JSON analysis could reveal them.
+   - **Fix**: Added `logger.info()` before `dl_record()` in duplicate-skip block, logging symbol, preset, side, and candles-ago reference.
+
+**Bugs fixed — session 25 (2026-05-20)**:
+
+1. **Weight=0 symbol trading bypass** (`main.py`, `symbol_registry.json`, `risk_config.json`)
+   - **Cause**: `symbol_registry.is_disabled()` checked only `_disabled` dict. Setting weight=0 without calling `disable()` left symbol in trading candidates.
+   - **Effect**: JUPUSDT with weight=0 was traded, resulting in -22.58 USDT loss.
+   - **Fix**: Added `if symbol_registry.get_weight(sym) == 0.0: continue` before real order placement loop (line ~676), and `if symbol_registry.get_weight(symbol) > 0.0:` before virtual simulator call. Also added `if sym_cap <= 0: continue` in BestGetsFirst to block zero-cap fallback. JUPUSDT weight set to 0 in both symbol_registry.json and risk_config.json.
+
+2. **Startup crash on Binance rate-limit ban** (`bot/data_feed.py`)
+   - **Cause**: `load_klines()` propagated exceptions from update fetch even when valid cache existed. Binance IP ban during startup caused bot crash.
+   - **Effect**: Bot could not recover after Binance rate limiting.
+   - **Fix**: When cache exists and update fetch fails, log warning and proceed with cached data (`fresh = []`). Only raises if no cache at all.
+
+3. **push.sh deployment failed in Docker image** (`scripts/push.sh`)
+   - **Cause**: `pkill`/`pgrep` not available in python:3.12-slim base image.
+   - **Effect**: Deployment script could not find/kill bot process.
+   - **Fix**: Use `/proc/*/cmdline` to locate PID and send `kill -TERM`. Also added `git reset --hard HEAD && git clean -f dashboard/public/` to pull step to prevent runtime-modified JSON files from blocking `git pull`.
 
 ---
 

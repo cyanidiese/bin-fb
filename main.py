@@ -292,6 +292,7 @@ async def run() -> None:
         )
 
     await order_executor.reconcile_with_exchange()
+    _write_open_positions()  # overwrite any stale file from a crashed previous session
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
 
     # ── Callbacks ──────────────────────────────────────────────────────── #

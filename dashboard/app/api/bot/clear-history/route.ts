@@ -80,6 +80,16 @@ export async function POST() {
       }
     }
 
+    // Wipe open_positions so stale symbols don't linger in the Trades selector.
+    // The running bot will overwrite this on the next candle close with live state.
+    const openPath = path.join(dataDir, `open_positions_${mode}.json`)
+    try {
+      const empty = JSON.stringify({ updated_at: new Date().toISOString(), real: [], virtual: [] })
+      fs.writeFileSync(openPath, empty)
+    } catch (e) {
+      errors.push(`open_positions: ${e}`)
+    }
+
     if (errors.length > 0) {
       return NextResponse.json({ ok: false, error: errors.join('; '), archived }, { status: 500 })
     }

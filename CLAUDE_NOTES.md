@@ -1,6 +1,23 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-22 (session 28)
+## Last updated: 2026-05-22 (session 29)
+
+---
+
+## ⟳ RESUME POINT — session 29 (2026-05-22) — analysis only, no code changes
+
+**What was completed this session:**
+
+**1. Klines stale locally (not a bug — expected divergence)**
+- **Corrected diagnosis**: Local `data/` kline files are a separate static copy from the server. The server bot runs continuously and updates its own kline cache as part of normal `data_feed.py` operation. Locally, klines only update when `backtest.py` is run manually. They diverged simply because nothing runs locally.
+- The testnet API failure hypothesis was wrong — the server having fresh klines confirms the API is not the issue.
+- **Side effect of investigation**: `data/TIAUSDT_15m_test.json` was updated from 2190 → 2935 candles (now ends May 22) by a manual `refresh_klines` call during diagnosis. Other symbols still at May 14.
+- **Fix**: Run `python backtest.py` locally to refresh all local symbol caches when needed before a local backtest session.
+
+**2. Trend cross-level validation — deferred**
+- Analysis delivered and logged. Full write-up: `docs/superpowers/specs/2026-05-22-trend-cross-level-validation-analysis.md`
+- Added to TODO as a deferred idea. No implementation planned yet.
+- When revisited: three trigger options (close-only recommended), pseudocode ready, edge cases documented.
 
 ---
 

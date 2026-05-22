@@ -22,7 +22,7 @@ _WS_LIVE = 'wss://fstream.binance.com/ws'
 
 
 class DataFeed:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, live_klines: bool = False):
         self._settings = settings
         self._is_testnet = settings.trading_mode == 'test'
         self._mode_suffix = 'test' if self._is_testnet else 'live'
@@ -30,6 +30,14 @@ class DataFeed:
         self._client = Client(settings.api_key, settings.api_secret, testnet=self._is_testnet)
         if self._is_testnet:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
+
+        # When live_klines=True and running in test mode, kline fetches use the
+        # production API (klines are public data; production is far more stable).
+        # The cache file path is unchanged — only the fetch endpoint differs.
+        if live_klines and self._is_testnet:
+            self._klines_client = Client(settings.api_key, settings.api_secret, testnet=False)
+        else:
+            self._klines_client = self._client
 
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
 
@@ -46,6 +54,7 @@ class DataFeed:
         self._client = Client(api_key, api_secret, testnet=self._is_testnet)
         if self._is_testnet:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
+        self._klines_client = self._client  # reinit always uses the trading client
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
         self._reconnect_requested = True
         self._last_candle_open.clear()
@@ -131,7 +140,7 @@ class DataFeed:
         if start_ms is not None:
             params['startTime'] = start_ms
         try:
-            return self._client.futures_klines(**params)
+            return self._klines_client.futures_klines(**params)
         except Exception as e:
             logger.error(f"Failed to fetch klines: {e}")
             raise

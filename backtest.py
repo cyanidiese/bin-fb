@@ -47,9 +47,12 @@ def run_for_symbol(symbol: str, args) -> None:
 
     if not args.no_fetch and not args.klines:
         try:
-            feed = DataFeed(settings)
+            # live_klines=True: always fetch from production API regardless of TRADING_MODE.
+            # Klines are public data and production is far more stable than testnet.
+            # The cache file path is unchanged (mode-appropriate suffix).
+            feed = DataFeed(settings, live_klines=True)
             feed.refresh_klines(symbol, settings.timeframe, fetch_count=args.klines_count)
-            logger.info(f"[{symbol}] Kline cache refreshed from API")
+            logger.info(f"[{symbol}] Kline cache refreshed from production API")
         except Exception as e:
             logger.warning(f"[{symbol}] Could not refresh klines: {e} — using existing cache")
 

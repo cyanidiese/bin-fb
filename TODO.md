@@ -340,6 +340,10 @@ Design approved + implemented in session 14.
 - [ ] BUG-09: Swing point timestamps use close-time not open-time (shows 15m ahead)
 - [ ] BUG-16: `get_symbol_allocation` reads risk_config.json on every call (hot path caching)
 
+## Deferred ideas (analysed, not yet planned)
+
+- [ ] **Trend cross-level validation gap** — L2/L3 trend states go stale when L1 crosses a parent BoS without completing its own internal reversal. Proposed fix: "early parent notification" — on every new L1 point, also check if it crosses a parent BoS and push the extremal point up immediately. Three trigger options: close-only (recommended), wick, hybrid. Full analysis: `docs/superpowers/specs/2026-05-22-trend-cross-level-validation-analysis.md`
+
 ## Open investigations (pending session)
 
 - [x] ETHFIUSDT -4164 notional error (order quantity precision) — FIXED in session 22 (leverage bump + 2% buffer)

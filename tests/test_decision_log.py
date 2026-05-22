@@ -1,7 +1,8 @@
 import json
+import os
 import pytest
 from pathlib import Path
-from bot.decision_log import record, MAX_ENTRIES
+from bot.decision_log import record, MAX_ENTRIES, _append
 
 
 def test_creates_file_on_first_write(tmp_path):
@@ -47,3 +48,23 @@ def test_caps_at_max_entries(tmp_path):
     data = json.loads(path.read_text())
     assert len(data) == MAX_ENTRIES
     assert data[-1]['candle_ts'] == MAX_ENTRIES + 4  # newest retained
+
+
+def test_tmp_file_uses_pid_suffix(tmp_path):
+    path = tmp_path / 'dl.json'
+    record(path, candle_ts=1000, symbol='BTCUSDT', decision='placed',
+           reason='', balance=100.0, leverage=1, efficiency_score=0.0)
+    pid = os.getpid()
+    # No stale .json.tmp left behind — only the pid-qualified tmp is created and renamed
+    assert not (tmp_path / 'dl.json.tmp').exists(), "bare .json.tmp should not persist"
+    assert path.exists()
+
+
+def test_sequential_writes_accumulate(tmp_path):
+    path = tmp_path / 'dl.json'
+    for i in range(3):
+        record(path, candle_ts=i, symbol='BTCUSDT', decision='placed',
+               reason='', balance=float(i), leverage=1, efficiency_score=0.0)
+    data = json.loads(path.read_text())
+    assert len(data) == 3
+    assert [e['candle_ts'] for e in data] == [0, 1, 2]

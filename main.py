@@ -309,6 +309,11 @@ async def run() -> None:
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
     _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
+    # Loss-streak directional cooldown state (mirrors backtester implementation)
+    _loss_streak: dict[str, int] = {}        # "symbol:preset:side" → consecutive loss count
+    _streak_blocked: dict[str, int] = {}     # "symbol:preset:side" → candle_ts after which block expires
+    _global_pause_until: dict[str, int] = {} # "symbol:preset" → candle_ts after which global pause expires
+    _last_loss_ts: dict[str, int] = {}       # "symbol:preset:side" → candle_ts of last loss
 
     async def _get_fresh_balance() -> float:
         now = time.monotonic()
@@ -485,6 +490,10 @@ async def run() -> None:
                     if (_prev['entry'] > 0 and abs(entry - _prev['entry']) / _prev['entry'] <= _p and
                             _prev['sl'] > 0 and abs(sl - _prev['sl']) / _prev['sl'] <= _p and
                             _prev['tp'] > 0 and abs(tp - _prev['tp']) / _prev['tp'] <= _p):
+                        logger.info(
+                            f"[{symbol}] Signal skipped — duplicate of SL-hit signal "
+                            f"{_candles_since} candle(s) ago (preset={preset_name}, side={side})"
+                        )
                         dl_record(
                             dl_path, candle_ts=candle_ts, symbol=symbol,
                             decision='skip_duplicate_sl',
@@ -493,6 +502,21 @@ async def run() -> None:
                             preset_name=preset_name, scenario=_active_scenario_name,
                         )
                         return 0.0
+
+        # Loss-streak gate — mirrors backtester directional cooldown (loss_streak_max=0 disables)
+        if preset_settings.loss_streak_max > 0 and candle_ts > 0:
+            _pk = f"{symbol}:{preset_name or 'default'}"
+            if _global_pause_until.get(_pk, 0) >= candle_ts:
+                logger.info(
+                    f"[{symbol}] Signal skipped — global pause active (preset={preset_name})"
+                )
+                return 0.0
+            _sk = f"{symbol}:{preset_name or 'default'}:{side}"
+            if _streak_blocked.get(_sk, 0) >= candle_ts:
+                logger.info(
+                    f"[{symbol}] Signal skipped — {side} loss streak cooldown (preset={preset_name})"
+                )
+                return 0.0
 
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
@@ -625,6 +649,44 @@ async def run() -> None:
             )
             return trade_margin
         return 0.0
+
+    def _update_loss_streak(c: dict, ts: int) -> None:
+        """Update per-preset directional loss streak state after an order closes."""
+        sym = c['symbol']
+        pname = c.get('preset_name', 'default')
+        side = c.get('side', '')
+        overrides = all_presets.get(pname, {})
+        sym_s = sym_settings.get(sym, first_settings)
+        ps = dataclasses.replace(sym_s, **overrides)
+        if ps.loss_streak_max <= 0:
+            return
+        tf_ms = _tf_to_ms(timeframe)
+        sk = f"{sym}:{pname}:{side}"
+        other_sk = f"{sym}:{pname}:{'SELL' if side == 'BUY' else 'BUY'}"
+        if c.get('result') == 'loss':
+            cnt = _loss_streak.get(sk, 0) + 1
+            _last_loss_ts[sk] = ts
+            if cnt >= ps.loss_streak_max:
+                _streak_blocked[sk] = ts + ps.loss_streak_cooldown_candles * tf_ms
+                _loss_streak[sk] = 0
+                logger.info(
+                    f"[{sym}] {side} loss streak {ps.loss_streak_max}/{ps.loss_streak_max} "
+                    f"(preset={pname}) — {side} blocked for {ps.loss_streak_cooldown_candles} candles"
+                )
+            else:
+                _loss_streak[sk] = cnt
+            if ps.global_pause_trigger_candles > 0:
+                other_ts = _last_loss_ts.get(other_sk, 0)
+                if other_ts > 0 and (ts - other_ts) <= ps.global_pause_trigger_candles * tf_ms:
+                    pk = f"{sym}:{pname}"
+                    _global_pause_until[pk] = ts + ps.global_pause_candles * tf_ms
+                    logger.info(
+                        f"[{sym}] Global pause triggered (preset={pname}) — "
+                        f"both sides lost within {ps.global_pause_trigger_candles} candles — "
+                        f"paused for {ps.global_pause_candles} candles"
+                    )
+        else:
+            _loss_streak[sk] = 0
 
     async def on_candle_close(symbol: str, kline: list) -> None:
         nonlocal risk_cfg, _active_scenario_name, scenario
@@ -776,6 +838,7 @@ async def run() -> None:
                 _sig = _pending_signals.get(c['symbol'])
                 if _sig and _sig['preset_name'] == c.get('preset_name'):
                     _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
+            _update_loss_streak(c, candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
             fresh_bal = await _get_fresh_balance()
@@ -823,6 +886,11 @@ async def run() -> None:
             analyzers[symbol].update_price(price)
 
         closed = await order_executor.check_symbol_price(symbol, price)
+        # Approximate the current candle's open timestamp for loss-streak tracking
+        _now_ms = int(time.time() * 1000)
+        _tick_tf_ms = _tf_to_ms(timeframe)
+        _approx_candle_ts = _now_ms - (_now_ms % _tick_tf_ms)
+
         for c in closed:
             # Skip recording when pnl=0 and close==entry — indicates avgPrice fallback, not a real result.
             if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
@@ -831,6 +899,7 @@ async def run() -> None:
                 _sig = _pending_signals.get(c['symbol'])
                 if _sig and _sig['preset_name'] == c.get('preset_name'):
                     _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
+            _update_loss_streak(c, _approx_candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
             fresh_bal = await _get_fresh_balance()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -144,6 +145,6 @@ class VirtualTracker:
 
     def _save_efficiency(self) -> None:
         self._efficiency_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._efficiency_path.with_suffix(".json.tmp")
+        tmp = self._efficiency_path.with_name(f"{self._efficiency_path.stem}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(self._efficiency, indent=2))
         tmp.replace(self._efficiency_path)

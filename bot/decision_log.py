@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -67,6 +68,7 @@ def _append(path: Path, entry: dict) -> None:
     existing.append(entry)
     if len(existing) > MAX_ENTRIES:
         existing = existing[-MAX_ENTRIES:]
-    tmp = path.with_suffix('.json.tmp')
+    # PID-qualified tmp name prevents collision when multiple processes write concurrently
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(existing))
     tmp.replace(path)

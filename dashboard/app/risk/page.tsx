@@ -5,6 +5,7 @@ import { useSymbolContext } from '@/lib/SymbolContext'
 import { RiskConfig, RiskState } from '@/lib/risk-types'
 import { SAVE_BTN_CLS } from '@/lib/risk-styles'
 import ScenarioSection from '@/components/risk/ScenarioSection'
+import WeightRebalancerSection from '@/components/risk/WeightRebalancerSection'
 import GlobalCapitalRules from '@/components/risk/GlobalCapitalRules'
 import PerSymbolAllocation from '@/components/risk/PerSymbolAllocation'
 import LeverageControls from '@/components/risk/LeverageControls'
@@ -118,6 +119,14 @@ export default function RiskPage() {
       <DrawdownGuard config={config} state={state} patchConfig={patchConfig} />
 
       <LiveRiskState config={config} state={state} />
+
+      {config.weight_rebalancer && (
+        <WeightRebalancerSection
+          config={config.weight_rebalancer}
+          mode={state?.mode ?? 'test'}
+          patchConfig={(patch) => setConfig(prev => prev ? { ...prev, ...patch } : prev)}
+        />
+      )}
     </main>
   )
 }

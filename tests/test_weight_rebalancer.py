@@ -2,7 +2,7 @@ import json
 import pytest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from bot.weight_rebalancer import WeightRebalancer
 
@@ -159,3 +159,30 @@ class TestBlendWeights:
         result = r._blend_weights(current, scores, blend_rate=0.2, floor_ratio=0.0)
         # A should end up with more than B
         assert result["A"] > result["B"]
+
+
+class TestTrigger:
+    def test_fires_after_n_candles(self):
+        r = _make_rebalancer(rebalance_candles=3)
+        r.enabled = True
+        with patch("bot.weight_rebalancer.threading.Thread") as MockThread:
+            for i in range(2):
+                r.on_candle_close(1000 + i * 900_000)
+            MockThread.assert_not_called()
+            r.on_candle_close(1000 + 2 * 900_000)
+            MockThread.assert_called_once()
+
+    def test_skips_when_already_running(self):
+        r = _make_rebalancer(rebalance_candles=1)
+        r.enabled = True
+        r._running.set()
+        with patch("bot.weight_rebalancer.threading.Thread") as MockThread:
+            r.on_candle_close(1000)
+            MockThread.assert_not_called()
+
+    def test_no_op_when_disabled(self):
+        r = _make_rebalancer(rebalance_candles=1)
+        r.enabled = False
+        with patch("bot.weight_rebalancer.threading.Thread") as MockThread:
+            r.on_candle_close(1000)
+            MockThread.assert_not_called()

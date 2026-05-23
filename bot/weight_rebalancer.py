@@ -160,10 +160,117 @@ class WeightRebalancer:
             self._running.clear()
 
     def _do_rebalance(self, trigger_ts: int) -> None:
-        pass  # implemented in Task 4
+        cfg = self._cfg
+        window_candles = int(cfg.get("backtest_window_candles", 96))
+        alpha = float(cfg.get("real_pnl_alpha", 0.5))
+        blend_rate = float(cfg.get("blend_rate", 0.15))
+        floor_ratio = float(cfg.get("weight_floor_ratio", 0.3))
+        window_start_ms = trigger_ts - window_candles * self._candle_ms
 
-    def _score_symbol(self, symbol: str, window_candles: int, window_start_ms: int, presets: dict) -> tuple[float, float]:
-        return 0.0, 0.0  # implemented in Task 4
+        symbols = [
+            s for s in self._registry.get_symbols()
+            if not self._registry.is_disabled(s)
+            and self._registry.get_weight(s) > 0
+        ]
+        if len(symbols) < 2:
+            logger.info("WeightRebalancer: fewer than 2 active symbols — skipping")
+            return
 
-    def _append_log(self, trigger_ts, symbols, backtest_pcts, real_pnls, scores, old_weights, new_weights) -> None:
-        pass  # implemented in Task 4
+        from config.presets import ALL_PRESETS
+        from bot.backtester import Backtester
+
+        bt_logger = logging.getLogger("bot.backtester")
+        orig_level = bt_logger.level
+        bt_logger.setLevel(logging.WARNING)
+
+        backtest_pcts: dict[str, float] = {}
+        real_pnls: dict[str, float] = {}
+
+        try:
+            for sym in symbols:
+                bt_pct, pnl = self._score_symbol(sym, window_candles, window_start_ms, ALL_PRESETS)
+                backtest_pcts[sym] = bt_pct
+                real_pnls[sym] = pnl
+        finally:
+            bt_logger.setLevel(orig_level)
+
+        scores = self._calc_scores(backtest_pcts, real_pnls, alpha)
+
+        rc = load_risk_config(self._config_path)
+        current_weights: dict[str, float] = rc.get("symbol_weights", {})
+        new_weights = self._blend_weights(current_weights, scores, blend_rate, floor_ratio)
+
+        n = len(symbols)
+        for sym in symbols:
+            old = round(current_weights.get(sym, 1.0 / n), 4)
+            new = round(new_weights[sym], 4)
+            logger.info(
+                f"WeightRebalancer [{sym}]: bt={backtest_pcts[sym]:.2f}% "
+                f"pnl={real_pnls[sym]:.2f} score={scores[sym]:.3f} "
+                f"weight {old:.4f} → {new:.4f}"
+            )
+
+        rc["symbol_weights"] = new_weights
+        save_risk_config(rc, self._config_path)
+        self._append_log(trigger_ts, symbols, backtest_pcts, real_pnls, scores, current_weights, new_weights)
+
+    def _score_symbol(
+        self,
+        symbol: str,
+        window_candles: int,
+        window_start_ms: int,
+        presets: dict,
+    ) -> tuple[float, float]:
+        from bot.backtester import Backtester
+
+        klines = self._get_klines(symbol)
+        klines_slice = klines[-window_candles:] if len(klines) >= window_candles else klines
+        best_pct = 0.0
+        if klines_slice:
+            try:
+                backtester = Backtester(base_settings=self._settings)
+                results = backtester.run(klines_slice, presets)
+                if results:
+                    best_pct = max(r.total_profit_pct() for r in results.values())
+            except Exception:
+                logger.warning(f"WeightRebalancer: backtester failed for {symbol}", exc_info=True)
+
+        orders = self._filter_real_orders(symbol, window_start_ms)
+        pnl = sum(float(o.get("pnl_usdt", 0.0)) for o in orders)
+        return best_pct, pnl
+
+    def _append_log(
+        self,
+        trigger_ts: int,
+        symbols: list[str],
+        backtest_pcts: dict[str, float],
+        real_pnls: dict[str, float],
+        scores: dict[str, float],
+        old_weights: dict[str, float],
+        new_weights: dict[str, float],
+    ) -> None:
+        path = self._data_dir / f"weight_rebalance_log_{self._mode}.json"
+        try:
+            entries: list = json.loads(path.read_text()) if path.exists() else []
+        except Exception:
+            entries = []
+        n = len(symbols)
+        entry = {
+            "ts": trigger_ts,
+            "symbols": {
+                s: {
+                    "backtest_pct": round(backtest_pcts.get(s, 0.0), 4),
+                    "real_pnl_usdt": round(real_pnls.get(s, 0.0), 4),
+                    "score": round(scores.get(s, 0.0), 4),
+                    "old_weight": round(old_weights.get(s, 1.0 / n), 4),
+                    "new_weight": round(new_weights.get(s, 1.0 / n), 4),
+                }
+                for s in symbols
+            },
+        }
+        entries.append(entry)
+        if len(entries) > _LOG_MAX:
+            entries = entries[-_LOG_MAX:]
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(entries, indent=2))
+        tmp.replace(path)

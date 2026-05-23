@@ -34,6 +34,8 @@ const DEFAULT_CONFIG = {
     blend_rate: 0.15,
     weight_floor_ratio: 0.3,
   },
+  min_trades_for_ranking: 3,
+  min_trades_for_ranking_per_symbol: {} as Record<string, number>,
 }
 
 function readJson(filePath: string, fallback: unknown) {

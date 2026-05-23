@@ -21,6 +21,8 @@ export interface RiskConfig {
   scenario?: string
   symbol_leverage?: Record<string, number>
   weight_rebalancer?: WeightRebalancerConfig
+  min_trades_for_ranking?: number
+  min_trades_for_ranking_per_symbol?: Record<string, number>
 }
 
 export interface WeightRebalancerConfig {

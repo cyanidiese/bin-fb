@@ -27,7 +27,7 @@ from bot.virtual_tracker import VirtualTracker
 from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
 from bot.leverage_scenario import create_scenario
-from config.risk_config import load_risk_config
+from config.risk_config import load_risk_config, save_risk_config, get_min_trades_for_ranking
 from bot.balance_history import record as bh_record
 from bot.decision_log import record as dl_record
 from bot.lot_constraint_detector import adjust_constrained_symbols
@@ -110,6 +110,7 @@ async def run() -> None:
     logger = logging.getLogger('main')
     trades_logger = logging.getLogger('trades')
     risk_cfg = load_risk_config()
+    _get_min_trades = lambda sym: get_min_trades_for_ranking(risk_cfg, sym)
 
     # Load symbol registry — source of truth for active symbols
     seed_symbols = [s.strip().upper() for s in os.getenv('SYMBOL', '').split(',') if s.strip()]
@@ -161,6 +162,7 @@ async def run() -> None:
         mode=current_mode,
         orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{current_mode}.json",
         efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{current_mode}.json",
+        get_min_trades=_get_min_trades,
     )
 
     def _scenario_data_path(scenario_name: str, mode: str) -> Path:
@@ -1060,6 +1062,7 @@ async def run() -> None:
             mode=target_mode,
             orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",
             efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{target_mode}.json",
+            get_min_trades=_get_min_trades,
         )
         for sym in current_symbols:
             bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"

@@ -40,22 +40,22 @@ def adjust_constrained_symbols(
     if total_weight <= 0:
         return []
 
-    from config.risk_config import load_risk_config
-    cfg = load_risk_config()
-    tiers = cfg.get("balance_tiers", [])
-    deploy_pct = 80.0
-    min_bal_pct = 15.0
-    for tier in tiers:
-        if tier.get("min_balance_usdt", 0) <= 1000:
-            deploy_pct = float(tier.get("max_deploy_pct", 80))
-            break
-
-    # standard_fraction: the fraction of total balance a single weight unit receives
-    standard_fraction = (1 - min_bal_pct / 100) * (deploy_pct / 100) / total_weight
+    tiers = risk_cfg.get("balance_tiers", [])
+    min_bal_pct = float(risk_cfg.get("min_balance_pct", 15.0))
+    deploy_pct = float(tiers[0].get("max_deploy_pct", 40)) if tiers else 40.0
 
     balance = float(risk_cfg.get('_detected_balance', 0.0))
     if balance <= 0:
         return []
+
+    # Pick the highest-tier whose floor the balance meets
+    for tier in reversed(tiers):
+        if balance >= tier.get("min_balance_usdt", 0):
+            deploy_pct = float(tier.get("max_deploy_pct", deploy_pct))
+            break
+
+    # standard_fraction: the fraction of total balance a single weight unit receives
+    standard_fraction = (1 - min_bal_pct / 100) * (deploy_pct / 100) / total_weight
 
     # Margin assigned to a single weight-1 symbol
     standard_alloc_per_unit_margin = balance * standard_fraction

@@ -312,7 +312,7 @@ async def run() -> None:
         }
         from config.risk_config import load_risk_config as _lrc
         _rcfg = _lrc()
-        _rcfg['_detected_balance'] = startup_balance if startup_balance > 0 else 1000.0
+        _rcfg['_detected_balance'] = risk_manager.get_balance() or startup_balance or 1000.0
         _adjusted = adjust_constrained_symbols(
             lot_cache=order_executor._lot_cache,
             bracket_maxes=order_executor._bracket_max,

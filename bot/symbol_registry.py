@@ -134,25 +134,29 @@ class SymbolRegistry:
             self._persist()
 
     def get_weight(self, symbol: str) -> float:
-        return self._weights.get(symbol, 0.0)
+        with self._lock:
+            return self._weights.get(symbol, 0.0)
 
     def get_disabled(self) -> dict:
         return dict(self._disabled)
 
     def get_weights(self) -> dict:
         """Return a snapshot of the full weights dict."""
-        return dict(self._weights)
+        with self._lock:
+            return dict(self._weights)
 
     def set_weight(self, symbol: str, weight: float) -> None:
         """Update a symbol's weight (float supported) and persist."""
         sym = symbol.upper()
-        if sym in self._weights:
-            self._weights[sym] = weight
-            self._persist()
+        with self._lock:
+            if sym in self._weights:
+                self._weights[sym] = weight
+                self._persist()
 
     def get_leverage_override(self, symbol: str) -> int:
         """Return the exchange-constraint-derived leverage override, or 0 if none."""
-        return self._leverage_overrides.get(symbol.upper(), 0)
+        with self._lock:
+            return self._leverage_overrides.get(symbol.upper(), 0)
 
     def set_leverage_override(self, symbol: str, leverage: int) -> None:
         with self._lock:

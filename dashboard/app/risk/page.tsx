@@ -11,6 +11,7 @@ import PerSymbolAllocation from '@/components/risk/PerSymbolAllocation'
 import LeverageControls from '@/components/risk/LeverageControls'
 import DrawdownGuard from '@/components/risk/DrawdownGuard'
 import LiveRiskState from '@/components/risk/LiveRiskState'
+import PresetRankingSection from '@/components/risk/PresetRankingSection'
 
 const POLL_MS = 5000
 
@@ -127,6 +128,12 @@ export default function RiskPage() {
           patchConfig={(patch) => setConfig(prev => prev ? { ...prev, ...patch } : prev)}
         />
       )}
+
+      <PresetRankingSection
+        config={config}
+        availableSymbols={availableSymbols}
+        patchConfig={patchConfig}
+      />
     </main>
   )
 }

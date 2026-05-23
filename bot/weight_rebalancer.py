@@ -57,7 +57,11 @@ class WeightRebalancer:
             return
         self._running.set()
         t = threading.Thread(target=self._run, args=(candle_ts,), daemon=True)
-        t.start()
+        try:
+            t.start()
+        except Exception:
+            logger.exception("WeightRebalancer: failed to start rebalance thread")
+            self._running.clear()
 
     # ------------------------------------------------------------------ #
     # Pure helpers (no I/O, easily unit-tested)                           #

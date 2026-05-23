@@ -117,3 +117,45 @@ class TestCalcScores:
         pnl = {"A": 10.0, "B": -3.0}
         scores = r._calc_scores(bt, pnl, alpha=1.0)  # real P&L only
         assert scores["A"] > scores["B"]
+
+
+class TestBlendWeights:
+    def test_blend_moves_toward_score(self):
+        r = _make_rebalancer()
+        current = {"A": 0.5, "B": 0.5}
+        scores = {"A": 1.0, "B": 0.0}
+        result = r._blend_weights(current, scores, blend_rate=0.2, floor_ratio=0.0)
+        assert result["A"] > 0.5
+        assert result["B"] < 0.5
+
+    def test_floor_prevents_low_weight(self):
+        r = _make_rebalancer()
+        current = {"A": 0.9, "B": 0.1}
+        scores = {"A": 1.0, "B": 0.0}
+        # Without floor B would blend to ~0.05; floor=0.3/2=0.15 lifts it before renorm.
+        # After the final renorm B lands at ~0.136, which must exceed the no-floor value.
+        result_with_floor = r._blend_weights(current, scores, blend_rate=0.5, floor_ratio=0.3)
+        result_no_floor = r._blend_weights(current, scores, blend_rate=0.5, floor_ratio=0.0)
+        assert result_with_floor["B"] > result_no_floor["B"]
+
+    def test_weights_sum_to_one(self):
+        r = _make_rebalancer()
+        current = {"A": 0.4, "B": 0.3, "C": 0.3}
+        scores = {"A": 0.9, "B": 0.05, "C": 0.05}
+        result = r._blend_weights(current, scores, blend_rate=0.15, floor_ratio=0.3)
+        assert sum(result.values()) == pytest.approx(1.0)
+
+    def test_empty_scores_returns_current(self):
+        r = _make_rebalancer()
+        current = {"A": 0.6, "B": 0.4}
+        result = r._blend_weights(current, {}, blend_rate=0.15, floor_ratio=0.3)
+        assert result == current
+
+    def test_absent_symbol_gets_equal_share_default(self):
+        r = _make_rebalancer()
+        # "A" not in current_weights — should get 1/n = 0.5 as starting point
+        current = {}
+        scores = {"A": 1.0, "B": 0.0}
+        result = r._blend_weights(current, scores, blend_rate=0.2, floor_ratio=0.0)
+        # A should end up with more than B
+        assert result["A"] > result["B"]

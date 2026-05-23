@@ -173,6 +173,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 3.0,
+        'max_losing_pct': 70.0,
+        'max_losing_candles': 5,
     },
     'trail_25_from_15': {
         'partial_take_pct': 0.15,
@@ -410,12 +412,16 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
         'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
+        'max_losing_pct': 70.0,
+        'max_losing_candles': 5,
     },
     'r5_arm15_cooldown': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
         'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
         'duplicate_skip_candles': 3, 'duplicate_skip_pct': 2.0,
+        'max_losing_pct': 70.0,
+        'max_losing_candles': 5,
     },
 
     # ── Round 6: patch BTC weakness in the best cross-symbol preset ───────────

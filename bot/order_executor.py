@@ -100,6 +100,7 @@ class OrderExecutor:
         self._bracket_max: dict[str, int] = {}  # symbol → max leverage from first bracket
         self._candle_index: int = 0  # used by check_all_orders (legacy, single-symbol tests)
         self._symbol_candle_index: dict[str, int] = {}  # per-symbol candle counter for check_symbol_candle
+        self._closing: set[str] = set()
 
         cfg = load_risk_config()
         self._consecutive_failure_threshold: int = cfg.get("consecutive_failure_threshold", 3)
@@ -303,39 +304,45 @@ class OrderExecutor:
         if result is None:
             return []
 
-        open_order = self._open_orders.get(symbol)
-        if open_order is None:
-            del self._fake_orders[symbol]
+        if symbol in self._closing:
             return []
-
-        software_close_price = fake_order.close_price or open_order.entry_price
+        self._closing.add(symbol)
         try:
-            actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
-        except Exception as exc:
-            logger.error(f"Market close failed for {symbol}: {exc}")
-            self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
-            actual_close_price = software_close_price
+            open_order = self._open_orders.get(symbol)
+            if open_order is None:
+                del self._fake_orders[symbol]
+                return []
 
-        pnl = self._calc_pnl(open_order, actual_close_price)
-        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
-        del self._open_orders[symbol]
-        del self._fake_orders[symbol]
-        self._states[symbol] = OrderState.IDLE
-        self._record_success(symbol)
-        logger.info(
-            f"Order closed (price tick): {symbol} result={result} "
-            f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
-        )
-        return [{
-            "symbol": symbol,
-            "preset_name": open_order.preset_name,
-            "result": result,
-            "pnl_usdt": pnl,
-            "side": open_order.side,
-            "entry_price": open_order.entry_price,
-            "close_price": actual_close_price,
-            "leverage": open_order.leverage,
-        }]
+            software_close_price = fake_order.close_price or open_order.entry_price
+            try:
+                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
+            except Exception as exc:
+                logger.error(f"Market close failed for {symbol}: {exc}")
+                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
+                actual_close_price = software_close_price
+
+            pnl = self._calc_pnl(open_order, actual_close_price)
+            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
+            del self._open_orders[symbol]
+            del self._fake_orders[symbol]
+            self._states[symbol] = OrderState.IDLE
+            self._record_success(symbol)
+            logger.info(
+                f"Order closed (price tick): {symbol} result={result} "
+                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
+            )
+            return [{
+                "symbol": symbol,
+                "preset_name": open_order.preset_name,
+                "result": result,
+                "pnl_usdt": pnl,
+                "side": open_order.side,
+                "entry_price": open_order.entry_price,
+                "close_price": actual_close_price,
+                "leverage": open_order.leverage,
+            }]
+        finally:
+            self._closing.discard(symbol)
 
     async def check_symbol_candle(
         self,
@@ -364,40 +371,46 @@ class OrderExecutor:
         if result is None:
             return []
 
-        open_order = self._open_orders.get(symbol)
-        if open_order is None:
-            del self._fake_orders[symbol]
+        if symbol in self._closing:
             return []
-
-        software_close_price = fake_order.close_price or open_order.entry_price
+        self._closing.add(symbol)
         try:
-            actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
-        except Exception as exc:
-            logger.error(f"Market close failed for {symbol}: {exc}")
-            self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
-            actual_close_price = software_close_price
+            open_order = self._open_orders.get(symbol)
+            if open_order is None:
+                del self._fake_orders[symbol]
+                return []
 
-        pnl = self._calc_pnl(open_order, actual_close_price)
-        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
-        closed_info = {
-            "symbol": symbol,
-            "preset_name": open_order.preset_name,
-            "result": result,
-            "pnl_usdt": pnl,
-            "side": open_order.side,
-            "entry_price": open_order.entry_price,
-            "close_price": actual_close_price,
-            "leverage": open_order.leverage,
-        }
-        del self._open_orders[symbol]
-        del self._fake_orders[symbol]
-        self._states[symbol] = OrderState.IDLE
-        self._record_success(symbol)
-        logger.info(
-            f"Order closed (candle): {symbol} result={result} "
-            f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
-        )
-        return [closed_info]
+            software_close_price = fake_order.close_price or open_order.entry_price
+            try:
+                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
+            except Exception as exc:
+                logger.error(f"Market close failed for {symbol}: {exc}")
+                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
+                actual_close_price = software_close_price
+
+            pnl = self._calc_pnl(open_order, actual_close_price)
+            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
+            closed_info = {
+                "symbol": symbol,
+                "preset_name": open_order.preset_name,
+                "result": result,
+                "pnl_usdt": pnl,
+                "side": open_order.side,
+                "entry_price": open_order.entry_price,
+                "close_price": actual_close_price,
+                "leverage": open_order.leverage,
+            }
+            del self._open_orders[symbol]
+            del self._fake_orders[symbol]
+            self._states[symbol] = OrderState.IDLE
+            self._record_success(symbol)
+            logger.info(
+                f"Order closed (candle): {symbol} result={result} "
+                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
+            )
+            return [closed_info]
+        finally:
+            self._closing.discard(symbol)
 
     # ------------------------------------------------------------------ #
     # Bulk close                                                           #

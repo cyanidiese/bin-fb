@@ -322,3 +322,49 @@ async def test_symbol_error_calls_auto_disable():
     ex._submit_to_exchange = symbol_failing_submit
     await ex.place_order('BTCUSDT', 'p', 'BUY', 50000, 55000, 48000, 0.005, 5)
     ex._auto_disable.assert_awaited_once_with('BTCUSDT', 'invalid symbol')
+
+
+@pytest.mark.asyncio
+async def test_check_symbol_price_skips_if_already_closing():
+    """Second concurrent close attempt must be silently dropped."""
+    ex = make_executor()
+    from bot.fake_order import FakeOrder
+    fake = FakeOrder(
+        side='BUY', entry_price=100.0, tp=110.0, sl=90.0,
+        level=1, signal_type='test', candle_index=0,
+    )
+    ex._fake_orders['BTCUSDT'] = fake
+    ex._open_orders['BTCUSDT'] = OpenOrder(
+        symbol='BTCUSDT', preset_name='p', side='BUY',
+        entry_price=100.0, tp_price=110.0, sl_price=90.0,
+        quantity=1.0, leverage=5,
+    )
+    ex._states['BTCUSDT'] = OrderState.OPEN
+
+    # Simulate a concurrent close already in progress
+    ex._closing.add('BTCUSDT')
+
+    # Even though price is below SL (85 < 90), guard must short-circuit
+    result = await ex.check_symbol_price('BTCUSDT', 85.0)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_check_symbol_candle_skips_if_already_closing():
+    ex = make_executor()
+    from bot.fake_order import FakeOrder
+    fake = FakeOrder(
+        side='BUY', entry_price=100.0, tp=110.0, sl=90.0,
+        level=1, signal_type='test', candle_index=0,
+    )
+    ex._fake_orders['BTCUSDT'] = fake
+    ex._open_orders['BTCUSDT'] = OpenOrder(
+        symbol='BTCUSDT', preset_name='p', side='BUY',
+        entry_price=100.0, tp_price=110.0, sl_price=90.0,
+        quantity=1.0, leverage=5,
+    )
+    ex._states['BTCUSDT'] = OrderState.OPEN
+    ex._closing.add('BTCUSDT')
+    result = await ex.check_symbol_candle('BTCUSDT', high=105.0, low=85.0,
+                                          candle_open=102.0, candle_close=88.0)
+    assert result == []

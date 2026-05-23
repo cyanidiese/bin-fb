@@ -2,47 +2,50 @@
   "symbol": "WLDUSDT",
   "timeframe": "15m",
   "mode": "test",
-  "generated_at": "2026-05-14T16:30:04.588505+00:00",
-  "current_price": 0.2644,
+  "generated_at": "2026-05-23T20:29:38.226014+00:00",
+  "current_price": 0.2643,
   "trend_levels": [
     {
       "level": 1,
       "direction": "DESC",
       "bos": 0.2609,
-      "bos_since": "2026-05-14T02:14:59+00:00",
+      "bos_since": "2026-05-14T02:00:00+00:00",
       "last_high": {
         "price": 0.2586,
-        "time": "2026-05-14T08:44:59+00:00"
+        "time": "2026-05-14T08:30:00+00:00"
       },
       "last_low": {
         "price": 0.255,
-        "time": "2026-05-14T09:44:59+00:00"
+        "time": "2026-05-14T09:30:00+00:00"
       }
     },
     {
       "level": 2,
       "direction": "DESC",
       "bos": 0.2835,
-      "bos_since": "2026-05-13T08:44:59+00:00",
+      "bos_since": "2026-05-13T08:30:00+00:00",
       "last_high": {
         "price": 0.2609,
-        "time": "2026-05-14T02:14:59+00:00"
+        "time": "2026-05-14T02:00:00+00:00"
       },
       "last_low": {
         "price": 0.2556,
-        "time": "2026-05-13T22:14:59+00:00"
+        "time": "2026-05-13T22:00:00+00:00"
       }
     },
     {
       "level": 3,
       "direction": "ASC",
       "bos": 0.2315,
-      "bos_since": "2026-05-02T03:14:59+00:00",
+      "bos_since": "2026-05-02T03:00:00+00:00",
       "last_high": {
         "price": 0.2946,
-        "time": "2026-05-10T16:29:59+00:00"
+        "time": "2026-05-10T16:15:00+00:00"
       },
-      "last_low": null
+      "last_low": {
+        "price": 0.2315,
+        "time": "2026-05-02T03:00:00+00:00"
+      }
     },
     {
       "level": 4,
@@ -52,2456 +55,2442 @@
       "last_high": null,
       "last_low": {
         "price": 0.2315,
-        "time": "2026-05-02T03:14:59+00:00"
+        "time": "2026-05-02T03:00:00+00:00"
       }
     }
   ],
   "all_points": [
     {
-      "time": "2026-05-14T09:44:59+00:00",
+      "time": "2026-05-14T09:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.255,
       "active": true
     },
     {
-      "time": "2026-05-14T08:44:59+00:00",
+      "time": "2026-05-14T08:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2586,
       "active": true
     },
     {
-      "time": "2026-05-14T08:14:59+00:00",
+      "time": "2026-05-14T08:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2554,
       "active": false
     },
     {
-      "time": "2026-05-14T07:29:59+00:00",
+      "time": "2026-05-14T07:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2565,
       "active": false
     },
     {
-      "time": "2026-05-14T03:59:59+00:00",
+      "time": "2026-05-14T03:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2537,
       "active": true
     },
     {
-      "time": "2026-05-14T02:14:59+00:00",
+      "time": "2026-05-14T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2609,
       "active": false
     },
     {
-      "time": "2026-05-14T02:14:59+00:00",
+      "time": "2026-05-14T02:00:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2609,
       "active": true
     },
     {
-      "time": "2026-05-14T01:59:59+00:00",
+      "time": "2026-05-14T01:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2594,
       "active": false
     },
     {
-      "time": "2026-05-13T23:14:59+00:00",
+      "time": "2026-05-13T23:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2599,
       "active": false
     },
     {
-      "time": "2026-05-13T22:14:59+00:00",
+      "time": "2026-05-13T22:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2556,
       "active": false
     },
     {
-      "time": "2026-05-13T22:14:59+00:00",
+      "time": "2026-05-13T22:00:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2556,
       "active": true
     },
     {
-      "time": "2026-05-13T20:44:59+00:00",
+      "time": "2026-05-13T20:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2595,
       "active": false
     },
     {
-      "time": "2026-05-13T14:14:59+00:00",
+      "time": "2026-05-13T14:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2631,
       "active": false
     },
     {
-      "time": "2026-05-13T13:29:59+00:00",
+      "time": "2026-05-13T13:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2706,
       "active": false
     },
     {
-      "time": "2026-05-13T12:44:59+00:00",
+      "time": "2026-05-13T12:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.266,
       "active": false
     },
     {
-      "time": "2026-05-13T08:44:59+00:00",
+      "time": "2026-05-13T08:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2835,
       "active": false
     },
     {
-      "time": "2026-05-13T08:44:59+00:00",
+      "time": "2026-05-13T08:30:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2835,
       "active": true
     },
     {
-      "time": "2026-05-13T07:14:59+00:00",
+      "time": "2026-05-13T07:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2777,
       "active": false
     },
     {
-      "time": "2026-05-13T04:59:59+00:00",
+      "time": "2026-05-13T04:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2782,
       "active": false
     },
     {
-      "time": "2026-05-13T04:29:59+00:00",
+      "time": "2026-05-13T04:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2762,
       "active": false
     },
     {
-      "time": "2026-05-13T00:14:59+00:00",
+      "time": "2026-05-13T00:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2669,
       "active": false
     },
     {
-      "time": "2026-05-12T22:14:59+00:00",
+      "time": "2026-05-12T22:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2704,
       "active": false
     },
     {
-      "time": "2026-05-12T21:29:59+00:00",
+      "time": "2026-05-12T21:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2699,
       "active": false
     },
     {
-      "time": "2026-05-12T19:14:59+00:00",
+      "time": "2026-05-12T19:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2681,
       "active": false
     },
     {
-      "time": "2026-05-12T16:14:59+00:00",
+      "time": "2026-05-12T16:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2621,
       "active": false
     },
     {
-      "time": "2026-05-12T16:14:59+00:00",
+      "time": "2026-05-12T16:00:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2621,
       "active": true
     },
     {
-      "time": "2026-05-12T14:44:59+00:00",
+      "time": "2026-05-12T14:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2629,
       "active": false
     },
     {
-      "time": "2026-05-12T13:14:59+00:00",
+      "time": "2026-05-12T13:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2721,
       "active": false
     },
     {
-      "time": "2026-05-12T12:44:59+00:00",
+      "time": "2026-05-12T12:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2671,
       "active": false
     },
     {
-      "time": "2026-05-12T09:59:59+00:00",
+      "time": "2026-05-12T09:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2743,
       "active": false
     },
     {
-      "time": "2026-05-12T09:29:59+00:00",
+      "time": "2026-05-12T09:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2719,
       "active": false
     },
     {
-      "time": "2026-05-12T07:59:59+00:00",
+      "time": "2026-05-12T07:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2773,
       "active": false
     },
     {
-      "time": "2026-05-12T07:14:59+00:00",
+      "time": "2026-05-12T07:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2737,
       "active": false
     },
     {
-      "time": "2026-05-12T06:29:59+00:00",
+      "time": "2026-05-12T06:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2805,
       "active": false
     },
     {
-      "time": "2026-05-12T03:59:59+00:00",
+      "time": "2026-05-12T03:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2761,
       "active": false
     },
     {
-      "time": "2026-05-12T01:44:59+00:00",
+      "time": "2026-05-12T01:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2728,
       "active": false
     },
     {
-      "time": "2026-05-12T00:29:59+00:00",
+      "time": "2026-05-12T00:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2775,
       "active": false
     },
     {
-      "time": "2026-05-11T23:29:59+00:00",
+      "time": "2026-05-11T23:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2772,
       "active": false
     },
     {
-      "time": "2026-05-11T21:29:59+00:00",
+      "time": "2026-05-11T21:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2833,
       "active": false
     },
     {
-      "time": "2026-05-11T20:44:59+00:00",
+      "time": "2026-05-11T20:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.281,
       "active": false
     },
     {
-      "time": "2026-05-11T19:14:59+00:00",
+      "time": "2026-05-11T19:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2806,
       "active": false
     },
     {
-      "time": "2026-05-11T18:14:59+00:00",
+      "time": "2026-05-11T18:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2848,
       "active": false
     },
     {
-      "time": "2026-05-11T16:14:59+00:00",
+      "time": "2026-05-11T16:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2843,
       "active": false
     },
     {
-      "time": "2026-05-11T14:44:59+00:00",
+      "time": "2026-05-11T14:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2744,
       "active": false
     },
     {
-      "time": "2026-05-11T13:44:59+00:00",
+      "time": "2026-05-11T13:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2764,
       "active": false
     },
     {
-      "time": "2026-05-11T11:44:59+00:00",
+      "time": "2026-05-11T11:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2826,
       "active": false
     },
     {
-      "time": "2026-05-11T11:14:59+00:00",
+      "time": "2026-05-11T11:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2786,
       "active": false
     },
     {
-      "time": "2026-05-11T08:44:59+00:00",
+      "time": "2026-05-11T08:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2757,
       "active": false
     },
     {
-      "time": "2026-05-11T06:44:59+00:00",
+      "time": "2026-05-11T06:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2837,
       "active": false
     },
     {
-      "time": "2026-05-11T03:44:59+00:00",
+      "time": "2026-05-11T03:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2722,
       "active": false
     },
     {
-      "time": "2026-05-11T02:59:59+00:00",
+      "time": "2026-05-11T02:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2792,
       "active": false
     },
     {
-      "time": "2026-05-11T01:14:59+00:00",
+      "time": "2026-05-11T01:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2784,
       "active": false
     },
     {
-      "time": "2026-05-10T23:29:59+00:00",
+      "time": "2026-05-10T23:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2887,
       "active": false
     },
     {
-      "time": "2026-05-10T23:29:59+00:00",
+      "time": "2026-05-10T23:15:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2887,
       "active": true
     },
     {
-      "time": "2026-05-10T22:14:59+00:00",
+      "time": "2026-05-10T22:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2726,
       "active": false
     },
     {
-      "time": "2026-05-10T20:59:59+00:00",
+      "time": "2026-05-10T20:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2694,
       "active": false
     },
     {
-      "time": "2026-05-10T20:59:59+00:00",
+      "time": "2026-05-10T20:45:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2694,
       "active": true
     },
     {
-      "time": "2026-05-10T20:14:59+00:00",
+      "time": "2026-05-10T20:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.29,
       "active": false
     },
     {
-      "time": "2026-05-10T19:14:59+00:00",
+      "time": "2026-05-10T19:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2834,
       "active": false
     },
     {
-      "time": "2026-05-10T18:44:59+00:00",
+      "time": "2026-05-10T18:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2866,
       "active": false
     },
     {
-      "time": "2026-05-10T17:14:59+00:00",
+      "time": "2026-05-10T17:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2804,
       "active": false
     },
     {
-      "time": "2026-05-10T16:29:59+00:00",
+      "time": "2026-05-10T16:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2946,
       "active": false
     },
     {
-      "time": "2026-05-10T16:29:59+00:00",
+      "time": "2026-05-10T16:15:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2946,
       "active": false
     },
     {
-      "time": "2026-05-10T16:29:59+00:00",
+      "time": "2026-05-10T16:15:00+00:00",
       "level": 3,
       "type": "high",
       "price": 0.2946,
       "active": true
     },
     {
-      "time": "2026-05-10T14:14:59+00:00",
+      "time": "2026-05-10T14:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2732,
       "active": false
     },
     {
-      "time": "2026-05-10T12:29:59+00:00",
+      "time": "2026-05-10T12:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.269,
       "active": false
     },
     {
-      "time": "2026-05-10T08:14:59+00:00",
+      "time": "2026-05-10T08:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2689,
       "active": false
     },
     {
-      "time": "2026-05-10T06:29:59+00:00",
+      "time": "2026-05-10T06:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2665,
       "active": false
     },
     {
-      "time": "2026-05-10T05:29:59+00:00",
+      "time": "2026-05-10T05:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2681,
       "active": false
     },
     {
-      "time": "2026-05-10T05:14:59+00:00",
+      "time": "2026-05-10T05:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2658,
       "active": false
     },
     {
-      "time": "2026-05-10T03:44:59+00:00",
+      "time": "2026-05-10T03:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2682,
       "active": false
     },
     {
-      "time": "2026-05-10T02:14:59+00:00",
+      "time": "2026-05-10T02:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.265,
       "active": false
     },
     {
-      "time": "2026-05-10T02:14:59+00:00",
+      "time": "2026-05-10T02:00:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.265,
       "active": false
     },
     {
-      "time": "2026-05-10T00:14:59+00:00",
+      "time": "2026-05-10T00:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2687,
       "active": false
     },
     {
-      "time": "2026-05-09T20:44:59+00:00",
+      "time": "2026-05-09T20:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2713,
       "active": false
     },
     {
-      "time": "2026-05-09T19:29:59+00:00",
+      "time": "2026-05-09T19:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2714,
       "active": false
     },
     {
-      "time": "2026-05-09T18:44:59+00:00",
+      "time": "2026-05-09T18:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.273,
       "active": false
     },
     {
-      "time": "2026-05-09T17:44:59+00:00",
+      "time": "2026-05-09T17:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2729,
       "active": false
     },
     {
-      "time": "2026-05-09T16:44:59+00:00",
+      "time": "2026-05-09T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2685,
       "active": false
     },
     {
-      "time": "2026-05-09T16:29:59+00:00",
+      "time": "2026-05-09T16:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2708,
       "active": false
     },
     {
-      "time": "2026-05-09T11:44:59+00:00",
+      "time": "2026-05-09T11:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2732,
       "active": false
     },
     {
-      "time": "2026-05-09T09:59:59+00:00",
+      "time": "2026-05-09T09:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2679,
       "active": false
     },
     {
-      "time": "2026-05-09T08:59:59+00:00",
+      "time": "2026-05-09T08:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2728,
       "active": false
     },
     {
-      "time": "2026-05-09T07:29:59+00:00",
+      "time": "2026-05-09T07:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2738,
       "active": false
     },
     {
-      "time": "2026-05-09T06:14:59+00:00",
+      "time": "2026-05-09T06:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2756,
       "active": false
     },
     {
-      "time": "2026-05-09T04:14:59+00:00",
+      "time": "2026-05-09T04:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2765,
       "active": false
     },
     {
-      "time": "2026-05-09T03:14:59+00:00",
+      "time": "2026-05-09T03:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2736,
       "active": false
     },
     {
-      "time": "2026-05-09T02:14:59+00:00",
+      "time": "2026-05-09T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2761,
       "active": false
     },
     {
-      "time": "2026-05-09T01:29:59+00:00",
+      "time": "2026-05-09T01:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2739,
       "active": false
     },
     {
-      "time": "2026-05-09T00:59:59+00:00",
+      "time": "2026-05-09T00:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2761,
       "active": false
     },
     {
-      "time": "2026-05-08T21:59:59+00:00",
+      "time": "2026-05-08T21:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2752,
       "active": false
     },
     {
-      "time": "2026-05-08T20:14:59+00:00",
+      "time": "2026-05-08T20:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2705,
       "active": false
     },
     {
-      "time": "2026-05-08T19:44:59+00:00",
+      "time": "2026-05-08T19:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2781,
       "active": false
     },
     {
-      "time": "2026-05-08T19:44:59+00:00",
+      "time": "2026-05-08T19:30:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2781,
       "active": false
     },
     {
-      "time": "2026-05-08T19:14:59+00:00",
+      "time": "2026-05-08T19:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2719,
       "active": false
     },
     {
-      "time": "2026-05-08T16:44:59+00:00",
+      "time": "2026-05-08T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2635,
       "active": false
     },
     {
-      "time": "2026-05-08T16:14:59+00:00",
+      "time": "2026-05-08T16:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2697,
       "active": false
     },
     {
-      "time": "2026-05-08T13:44:59+00:00",
+      "time": "2026-05-08T13:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2537,
       "active": false
     },
     {
-      "time": "2026-05-08T11:14:59+00:00",
+      "time": "2026-05-08T11:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2565,
       "active": false
     },
     {
-      "time": "2026-05-08T10:44:59+00:00",
+      "time": "2026-05-08T10:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2587,
       "active": false
     },
     {
-      "time": "2026-05-08T09:59:59+00:00",
+      "time": "2026-05-08T09:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2567,
       "active": false
     },
     {
-      "time": "2026-05-08T07:14:59+00:00",
+      "time": "2026-05-08T07:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2552,
       "active": false
     },
     {
-      "time": "2026-05-08T06:14:59+00:00",
+      "time": "2026-05-08T06:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.254,
       "active": false
     },
     {
-      "time": "2026-05-08T03:44:59+00:00",
+      "time": "2026-05-08T03:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2545,
       "active": false
     },
     {
-      "time": "2026-05-08T03:14:59+00:00",
+      "time": "2026-05-08T03:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.251,
       "active": false
     },
     {
-      "time": "2026-05-08T02:59:59+00:00",
+      "time": "2026-05-08T02:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2542,
       "active": false
     },
     {
-      "time": "2026-05-08T02:29:59+00:00",
+      "time": "2026-05-08T02:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.251,
       "active": false
     },
     {
-      "time": "2026-05-08T01:59:59+00:00",
+      "time": "2026-05-08T01:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2536,
       "active": false
     },
     {
-      "time": "2026-05-07T22:29:59+00:00",
+      "time": "2026-05-07T22:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2512,
       "active": false
     },
     {
-      "time": "2026-05-07T21:14:59+00:00",
+      "time": "2026-05-07T21:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2488,
       "active": false
     },
     {
-      "time": "2026-05-07T20:14:59+00:00",
+      "time": "2026-05-07T20:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2544,
       "active": false
     },
     {
-      "time": "2026-05-07T19:29:59+00:00",
+      "time": "2026-05-07T19:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2509,
       "active": false
     },
     {
-      "time": "2026-05-07T18:44:59+00:00",
+      "time": "2026-05-07T18:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2545,
       "active": false
     },
     {
-      "time": "2026-05-07T14:44:59+00:00",
+      "time": "2026-05-07T14:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2504,
       "active": false
     },
     {
-      "time": "2026-05-07T12:59:59+00:00",
+      "time": "2026-05-07T12:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2595,
       "active": false
     },
     {
-      "time": "2026-05-07T11:29:59+00:00",
+      "time": "2026-05-07T11:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.259,
       "active": false
     },
     {
-      "time": "2026-05-07T10:29:59+00:00",
+      "time": "2026-05-07T10:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2558,
       "active": false
     },
     {
-      "time": "2026-05-07T08:44:59+00:00",
+      "time": "2026-05-07T08:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.261,
       "active": false
     },
     {
-      "time": "2026-05-07T07:14:59+00:00",
+      "time": "2026-05-07T07:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2603,
       "active": false
     },
     {
-      "time": "2026-05-07T04:14:59+00:00",
+      "time": "2026-05-07T04:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.249,
       "active": false
     },
     {
-      "time": "2026-05-07T04:14:59+00:00",
+      "time": "2026-05-07T04:00:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.249,
       "active": false
     },
     {
-      "time": "2026-05-07T03:14:59+00:00",
+      "time": "2026-05-07T03:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2511,
       "active": false
     },
     {
-      "time": "2026-05-07T01:29:59+00:00",
+      "time": "2026-05-07T01:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2505,
       "active": false
     },
     {
-      "time": "2026-05-06T21:59:59+00:00",
+      "time": "2026-05-06T21:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2591,
       "active": false
     },
     {
-      "time": "2026-05-06T21:59:59+00:00",
+      "time": "2026-05-06T21:45:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2591,
       "active": false
     },
     {
-      "time": "2026-05-06T20:59:59+00:00",
+      "time": "2026-05-06T20:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2541,
       "active": false
     },
     {
-      "time": "2026-05-06T19:14:59+00:00",
+      "time": "2026-05-06T19:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2555,
       "active": false
     },
     {
-      "time": "2026-05-06T18:44:59+00:00",
+      "time": "2026-05-06T18:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2542,
       "active": false
     },
     {
-      "time": "2026-05-06T16:59:59+00:00",
+      "time": "2026-05-06T16:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2586,
       "active": false
     },
     {
-      "time": "2026-05-06T16:44:59+00:00",
+      "time": "2026-05-06T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2553,
       "active": false
     },
     {
-      "time": "2026-05-06T16:14:59+00:00",
+      "time": "2026-05-06T16:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2589,
       "active": false
     },
     {
-      "time": "2026-05-06T15:14:59+00:00",
+      "time": "2026-05-06T15:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2524,
       "active": false
     },
     {
-      "time": "2026-05-06T14:14:59+00:00",
+      "time": "2026-05-06T14:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2506,
       "active": false
     },
     {
-      "time": "2026-05-06T07:29:59+00:00",
+      "time": "2026-05-06T07:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2552,
       "active": false
     },
     {
-      "time": "2026-05-06T06:14:59+00:00",
+      "time": "2026-05-06T06:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2523,
       "active": false
     },
     {
-      "time": "2026-05-06T04:14:59+00:00",
+      "time": "2026-05-06T04:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2534,
       "active": false
     },
     {
-      "time": "2026-05-06T02:44:59+00:00",
+      "time": "2026-05-06T02:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2469,
       "active": false
     },
     {
-      "time": "2026-05-06T01:59:59+00:00",
+      "time": "2026-05-06T01:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2504,
       "active": false
     },
     {
-      "time": "2026-05-06T00:59:59+00:00",
+      "time": "2026-05-06T00:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2438,
       "active": false
     },
     {
-      "time": "2026-05-05T23:44:59+00:00",
+      "time": "2026-05-05T23:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.244,
       "active": false
     },
     {
-      "time": "2026-05-05T18:44:59+00:00",
+      "time": "2026-05-05T18:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2407,
       "active": false
     },
     {
-      "time": "2026-05-05T17:14:59+00:00",
+      "time": "2026-05-05T17:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2403,
       "active": false
     },
     {
-      "time": "2026-05-05T15:14:59+00:00",
+      "time": "2026-05-05T15:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2415,
       "active": false
     },
     {
-      "time": "2026-05-05T13:44:59+00:00",
+      "time": "2026-05-05T13:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2426,
       "active": false
     },
     {
-      "time": "2026-05-05T13:14:59+00:00",
+      "time": "2026-05-05T13:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2452,
       "active": false
     },
     {
-      "time": "2026-05-05T10:44:59+00:00",
+      "time": "2026-05-05T10:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2442,
       "active": false
     },
     {
-      "time": "2026-05-05T06:14:59+00:00",
+      "time": "2026-05-05T06:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2439,
       "active": false
     },
     {
-      "time": "2026-05-05T05:59:59+00:00",
+      "time": "2026-05-05T05:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2396,
       "active": false
     },
     {
-      "time": "2026-05-05T04:59:59+00:00",
+      "time": "2026-05-05T04:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2412,
       "active": false
     },
     {
-      "time": "2026-05-05T03:44:59+00:00",
+      "time": "2026-05-05T03:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2402,
       "active": false
     },
     {
-      "time": "2026-05-05T02:44:59+00:00",
+      "time": "2026-05-05T02:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2399,
       "active": false
     },
     {
-      "time": "2026-05-05T01:14:59+00:00",
+      "time": "2026-05-05T01:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2385,
       "active": false
     },
     {
-      "time": "2026-05-04T21:59:59+00:00",
+      "time": "2026-05-04T21:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2405,
       "active": false
     },
     {
-      "time": "2026-05-04T20:59:59+00:00",
+      "time": "2026-05-04T20:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2368,
       "active": false
     },
     {
-      "time": "2026-05-04T18:44:59+00:00",
+      "time": "2026-05-04T18:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2406,
       "active": false
     },
     {
-      "time": "2026-05-04T16:14:59+00:00",
+      "time": "2026-05-04T16:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2349,
       "active": false
     },
     {
-      "time": "2026-05-04T15:29:59+00:00",
+      "time": "2026-05-04T15:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2397,
       "active": false
     },
     {
-      "time": "2026-05-04T14:14:59+00:00",
+      "time": "2026-05-04T14:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2343,
       "active": false
     },
     {
-      "time": "2026-05-04T13:14:59+00:00",
+      "time": "2026-05-04T13:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2347,
       "active": false
     },
     {
-      "time": "2026-05-04T12:29:59+00:00",
+      "time": "2026-05-04T12:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2376,
       "active": false
     },
     {
-      "time": "2026-05-04T11:44:59+00:00",
+      "time": "2026-05-04T11:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2376,
       "active": false
     },
     {
-      "time": "2026-05-04T08:14:59+00:00",
+      "time": "2026-05-04T08:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2397,
       "active": false
     },
     {
-      "time": "2026-05-04T07:14:59+00:00",
+      "time": "2026-05-04T07:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2422,
       "active": false
     },
     {
-      "time": "2026-05-04T05:29:59+00:00",
+      "time": "2026-05-04T05:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.241,
       "active": false
     },
     {
-      "time": "2026-05-04T00:29:59+00:00",
+      "time": "2026-05-04T00:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.234,
       "active": false
     },
     {
-      "time": "2026-05-04T00:29:59+00:00",
+      "time": "2026-05-04T00:15:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.234,
       "active": false
     },
     {
-      "time": "2026-05-03T20:44:59+00:00",
+      "time": "2026-05-03T20:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2411,
       "active": false
     },
     {
-      "time": "2026-05-03T17:59:59+00:00",
+      "time": "2026-05-03T17:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2393,
       "active": false
     },
     {
-      "time": "2026-05-03T15:44:59+00:00",
+      "time": "2026-05-03T15:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2379,
       "active": false
     },
     {
-      "time": "2026-05-03T11:14:59+00:00",
+      "time": "2026-05-03T11:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2367,
       "active": false
     },
     {
-      "time": "2026-05-03T09:44:59+00:00",
+      "time": "2026-05-03T09:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2365,
       "active": false
     },
     {
-      "time": "2026-05-03T08:44:59+00:00",
+      "time": "2026-05-03T08:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2391,
       "active": false
     },
     {
-      "time": "2026-05-03T07:14:59+00:00",
+      "time": "2026-05-03T07:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2391,
       "active": false
     },
     {
-      "time": "2026-05-03T05:14:59+00:00",
+      "time": "2026-05-03T05:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.239,
       "active": false
     },
     {
-      "time": "2026-05-03T02:59:59+00:00",
+      "time": "2026-05-03T02:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2394,
       "active": false
     },
     {
-      "time": "2026-05-03T00:14:59+00:00",
+      "time": "2026-05-03T00:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2432,
       "active": false
     },
     {
-      "time": "2026-05-02T18:14:59+00:00",
+      "time": "2026-05-02T18:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2413,
       "active": false
     },
     {
-      "time": "2026-05-02T17:44:59+00:00",
+      "time": "2026-05-02T17:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2444,
       "active": false
     },
     {
-      "time": "2026-05-02T17:44:59+00:00",
+      "time": "2026-05-02T17:30:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2444,
       "active": false
     },
     {
-      "time": "2026-05-02T16:44:59+00:00",
+      "time": "2026-05-02T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2409,
       "active": false
     },
     {
-      "time": "2026-05-02T16:14:59+00:00",
+      "time": "2026-05-02T16:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2425,
       "active": false
     },
     {
-      "time": "2026-05-02T13:29:59+00:00",
+      "time": "2026-05-02T13:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2358,
       "active": false
     },
     {
-      "time": "2026-05-02T05:29:59+00:00",
+      "time": "2026-05-02T05:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2316,
       "active": false
     },
     {
-      "time": "2026-05-02T04:59:59+00:00",
+      "time": "2026-05-02T04:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2336,
       "active": false
     },
     {
-      "time": "2026-05-02T03:14:59+00:00",
+      "time": "2026-05-02T03:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2315,
       "active": false
     },
     {
-      "time": "2026-05-02T03:14:59+00:00",
+      "time": "2026-05-02T03:00:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2315,
       "active": false
     },
     {
-      "time": "2026-05-02T03:14:59+00:00",
+      "time": "2026-05-02T03:00:00+00:00",
       "level": 3,
       "type": "low",
       "price": 0.2315,
-      "active": false
+      "active": true
     },
     {
-      "time": "2026-05-02T03:14:59+00:00",
+      "time": "2026-05-02T03:00:00+00:00",
       "level": 4,
       "type": "low",
       "price": 0.2315,
       "active": true
     },
     {
-      "time": "2026-05-02T01:29:59+00:00",
+      "time": "2026-05-02T01:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2345,
       "active": false
     },
     {
-      "time": "2026-05-01T22:14:59+00:00",
+      "time": "2026-05-01T22:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2351,
       "active": false
     },
     {
-      "time": "2026-05-01T21:14:59+00:00",
+      "time": "2026-05-01T21:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2346,
       "active": false
     },
     {
-      "time": "2026-05-01T19:44:59+00:00",
+      "time": "2026-05-01T19:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2393,
       "active": false
     },
     {
-      "time": "2026-05-01T18:44:59+00:00",
+      "time": "2026-05-01T18:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2376,
       "active": false
     },
     {
-      "time": "2026-05-01T18:14:59+00:00",
+      "time": "2026-05-01T18:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2388,
       "active": false
     },
     {
-      "time": "2026-05-01T16:44:59+00:00",
+      "time": "2026-05-01T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2362,
       "active": false
     },
     {
-      "time": "2026-05-01T15:14:59+00:00",
+      "time": "2026-05-01T15:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2378,
       "active": false
     },
     {
-      "time": "2026-05-01T14:59:59+00:00",
+      "time": "2026-05-01T14:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.24,
       "active": false
     },
     {
-      "time": "2026-05-01T13:59:59+00:00",
+      "time": "2026-05-01T13:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2412,
       "active": false
     },
     {
-      "time": "2026-05-01T11:59:59+00:00",
+      "time": "2026-05-01T11:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2364,
       "active": false
     },
     {
-      "time": "2026-05-01T11:14:59+00:00",
+      "time": "2026-05-01T11:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2384,
       "active": false
     },
     {
-      "time": "2026-05-01T09:14:59+00:00",
+      "time": "2026-05-01T09:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2412,
       "active": false
     },
     {
-      "time": "2026-05-01T07:44:59+00:00",
+      "time": "2026-05-01T07:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2399,
       "active": false
     },
     {
-      "time": "2026-05-01T06:59:59+00:00",
+      "time": "2026-05-01T06:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2387,
       "active": false
     },
     {
-      "time": "2026-05-01T03:14:59+00:00",
+      "time": "2026-05-01T03:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2421,
       "active": false
     },
     {
-      "time": "2026-05-01T02:14:59+00:00",
+      "time": "2026-05-01T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2443,
       "active": false
     },
     {
-      "time": "2026-05-01T01:14:59+00:00",
+      "time": "2026-05-01T01:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2445,
       "active": false
     },
     {
-      "time": "2026-04-30T23:29:59+00:00",
+      "time": "2026-04-30T23:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2422,
       "active": false
     },
     {
-      "time": "2026-04-30T22:14:59+00:00",
+      "time": "2026-04-30T22:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2425,
       "active": false
     },
     {
-      "time": "2026-04-30T21:14:59+00:00",
+      "time": "2026-04-30T21:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2447,
       "active": false
     },
     {
-      "time": "2026-04-30T19:14:59+00:00",
+      "time": "2026-04-30T19:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2445,
       "active": false
     },
     {
-      "time": "2026-04-30T18:14:59+00:00",
+      "time": "2026-04-30T18:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2463,
       "active": false
     },
     {
-      "time": "2026-04-30T18:14:59+00:00",
-      "level": 2,
-      "type": "high",
-      "price": 0.2463,
-      "active": false
-    },
-    {
-      "time": "2026-04-30T14:44:59+00:00",
+      "time": "2026-04-30T14:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2423,
       "active": false
     },
     {
-      "time": "2026-04-30T13:44:59+00:00",
+      "time": "2026-04-30T13:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2406,
       "active": false
     },
     {
-      "time": "2026-04-30T13:44:59+00:00",
-      "level": 2,
-      "type": "low",
-      "price": 0.2406,
-      "active": false
-    },
-    {
-      "time": "2026-04-30T12:29:59+00:00",
+      "time": "2026-04-30T12:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.244,
       "active": false
     },
     {
-      "time": "2026-04-30T11:59:59+00:00",
+      "time": "2026-04-30T11:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2415,
       "active": false
     },
     {
-      "time": "2026-04-30T11:29:59+00:00",
+      "time": "2026-04-30T11:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2437,
       "active": false
     },
     {
-      "time": "2026-04-30T06:59:59+00:00",
+      "time": "2026-04-30T06:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2446,
       "active": false
     },
     {
-      "time": "2026-04-30T03:59:59+00:00",
+      "time": "2026-04-30T03:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2499,
       "active": false
     },
     {
-      "time": "2026-04-30T02:59:59+00:00",
+      "time": "2026-04-30T02:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2465,
       "active": false
     },
     {
-      "time": "2026-04-30T01:59:59+00:00",
+      "time": "2026-04-30T01:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2511,
       "active": false
     },
     {
-      "time": "2026-04-30T01:59:59+00:00",
+      "time": "2026-04-30T01:45:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2511,
       "active": false
     },
     {
-      "time": "2026-04-30T00:29:59+00:00",
+      "time": "2026-04-30T00:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2464,
       "active": false
     },
     {
-      "time": "2026-04-29T22:59:59+00:00",
+      "time": "2026-04-29T22:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2471,
       "active": false
     },
     {
-      "time": "2026-04-29T19:44:59+00:00",
+      "time": "2026-04-29T19:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2405,
       "active": false
     },
     {
-      "time": "2026-04-29T19:44:59+00:00",
+      "time": "2026-04-29T18:00:00+00:00",
+      "level": 1,
+      "type": "high",
+      "price": 0.2471,
+      "active": false
+    },
+    {
+      "time": "2026-04-29T18:00:00+00:00",
       "level": 2,
       "type": "low",
-      "price": 0.2405,
+      "price": 0.2374,
       "active": false
     },
     {
-      "time": "2026-04-29T18:14:59+00:00",
-      "level": 1,
-      "type": "high",
-      "price": 0.2471,
-      "active": false
-    },
-    {
-      "time": "2026-04-29T17:29:59+00:00",
+      "time": "2026-04-29T17:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2449,
       "active": false
     },
     {
-      "time": "2026-04-29T15:59:59+00:00",
+      "time": "2026-04-29T15:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2452,
       "active": false
     },
     {
-      "time": "2026-04-29T14:44:59+00:00",
+      "time": "2026-04-29T14:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.251,
       "active": false
     },
     {
-      "time": "2026-04-29T13:29:59+00:00",
+      "time": "2026-04-29T13:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2524,
       "active": false
     },
     {
-      "time": "2026-04-29T10:29:59+00:00",
+      "time": "2026-04-29T10:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2563,
       "active": false
     },
     {
-      "time": "2026-04-29T10:29:59+00:00",
+      "time": "2026-04-29T10:15:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2563,
       "active": false
     },
     {
-      "time": "2026-04-29T10:29:59+00:00",
+      "time": "2026-04-29T10:15:00+00:00",
       "level": 3,
       "type": "high",
       "price": 0.2563,
-      "active": false
+      "active": true
     },
     {
-      "time": "2026-04-29T07:44:59+00:00",
+      "time": "2026-04-29T07:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2527,
       "active": false
     },
     {
-      "time": "2026-04-29T06:59:59+00:00",
+      "time": "2026-04-29T06:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2508,
       "active": false
     },
     {
-      "time": "2026-04-29T05:14:59+00:00",
+      "time": "2026-04-29T05:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2539,
       "active": false
     },
     {
-      "time": "2026-04-29T02:59:59+00:00",
+      "time": "2026-04-29T02:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2499,
       "active": false
     },
     {
-      "time": "2026-04-29T02:14:59+00:00",
+      "time": "2026-04-29T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2517,
       "active": false
     },
     {
-      "time": "2026-04-28T23:59:59+00:00",
+      "time": "2026-04-28T23:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2518,
       "active": false
     },
     {
-      "time": "2026-04-28T23:14:59+00:00",
+      "time": "2026-04-28T23:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2503,
       "active": false
     },
     {
-      "time": "2026-04-28T22:14:59+00:00",
+      "time": "2026-04-28T22:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2516,
       "active": false
     },
     {
-      "time": "2026-04-28T21:59:59+00:00",
+      "time": "2026-04-28T21:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2504,
       "active": false
     },
     {
-      "time": "2026-04-28T21:14:59+00:00",
+      "time": "2026-04-28T21:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2524,
       "active": false
     },
     {
-      "time": "2026-04-28T20:29:59+00:00",
+      "time": "2026-04-28T20:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2512,
       "active": false
     },
     {
-      "time": "2026-04-28T19:59:59+00:00",
+      "time": "2026-04-28T19:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.253,
       "active": false
     },
     {
-      "time": "2026-04-28T19:14:59+00:00",
+      "time": "2026-04-28T19:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2528,
       "active": false
     },
     {
-      "time": "2026-04-28T17:29:59+00:00",
+      "time": "2026-04-28T17:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2499,
       "active": false
     },
     {
-      "time": "2026-04-28T12:29:59+00:00",
+      "time": "2026-04-28T12:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.248,
       "active": false
     },
     {
-      "time": "2026-04-28T12:29:59+00:00",
+      "time": "2026-04-28T12:15:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.248,
       "active": false
     },
     {
-      "time": "2026-04-28T10:59:59+00:00",
+      "time": "2026-04-28T10:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2503,
       "active": false
     },
     {
-      "time": "2026-04-28T09:59:59+00:00",
+      "time": "2026-04-28T09:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2486,
       "active": false
     },
     {
-      "time": "2026-04-28T08:59:59+00:00",
+      "time": "2026-04-28T08:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2493,
       "active": false
     },
     {
-      "time": "2026-04-28T07:29:59+00:00",
+      "time": "2026-04-28T07:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2486,
       "active": false
     },
     {
-      "time": "2026-04-28T05:59:59+00:00",
+      "time": "2026-04-28T05:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2512,
       "active": false
     },
     {
-      "time": "2026-04-28T04:29:59+00:00",
+      "time": "2026-04-28T04:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2516,
       "active": false
     },
     {
-      "time": "2026-04-28T02:44:59+00:00",
+      "time": "2026-04-28T02:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2518,
       "active": false
     },
     {
-      "time": "2026-04-28T01:29:59+00:00",
+      "time": "2026-04-28T01:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2546,
       "active": false
     },
     {
-      "time": "2026-04-28T01:29:59+00:00",
+      "time": "2026-04-28T01:15:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2546,
       "active": false
     },
     {
-      "time": "2026-04-27T21:14:59+00:00",
+      "time": "2026-04-27T21:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2501,
       "active": false
     },
     {
-      "time": "2026-04-27T20:44:59+00:00",
+      "time": "2026-04-27T20:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2509,
       "active": false
     },
     {
-      "time": "2026-04-27T19:44:59+00:00",
+      "time": "2026-04-27T19:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2481,
       "active": false
     },
     {
-      "time": "2026-04-27T18:44:59+00:00",
+      "time": "2026-04-27T18:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2489,
       "active": false
     },
     {
-      "time": "2026-04-27T18:29:59+00:00",
+      "time": "2026-04-27T18:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2506,
       "active": false
     },
     {
-      "time": "2026-04-27T17:29:59+00:00",
+      "time": "2026-04-27T17:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2504,
       "active": false
     },
     {
-      "time": "2026-04-27T16:29:59+00:00",
+      "time": "2026-04-27T16:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2493,
       "active": false
     },
     {
-      "time": "2026-04-27T15:29:59+00:00",
+      "time": "2026-04-27T15:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2459,
       "active": false
     },
     {
-      "time": "2026-04-27T15:29:59+00:00",
+      "time": "2026-04-27T15:15:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2459,
       "active": false
     },
     {
-      "time": "2026-04-27T15:29:59+00:00",
+      "time": "2026-04-27T15:15:00+00:00",
       "level": 3,
       "type": "low",
       "price": 0.2459,
-      "active": false
+      "active": true
     },
     {
-      "time": "2026-04-27T14:44:59+00:00",
+      "time": "2026-04-27T14:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2553,
       "active": false
     },
     {
-      "time": "2026-04-27T14:44:59+00:00",
+      "time": "2026-04-27T14:30:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2553,
       "active": false
     },
     {
-      "time": "2026-04-27T13:59:59+00:00",
+      "time": "2026-04-27T13:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2512,
       "active": false
     },
     {
-      "time": "2026-04-27T13:59:59+00:00",
+      "time": "2026-04-27T13:45:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2512,
       "active": false
     },
     {
-      "time": "2026-04-27T13:29:59+00:00",
+      "time": "2026-04-27T13:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2539,
       "active": false
     },
     {
-      "time": "2026-04-27T10:44:59+00:00",
+      "time": "2026-04-27T10:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2535,
       "active": false
     },
     {
-      "time": "2026-04-27T09:14:59+00:00",
+      "time": "2026-04-27T09:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2534,
       "active": false
     },
     {
-      "time": "2026-04-27T08:44:59+00:00",
+      "time": "2026-04-27T08:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2514,
       "active": false
     },
     {
-      "time": "2026-04-27T06:44:59+00:00",
+      "time": "2026-04-27T06:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2534,
       "active": false
     },
     {
-      "time": "2026-04-27T05:44:59+00:00",
+      "time": "2026-04-27T05:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2558,
       "active": false
     },
     {
-      "time": "2026-04-27T04:44:59+00:00",
+      "time": "2026-04-27T04:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2646,
       "active": false
     },
     {
-      "time": "2026-04-27T04:44:59+00:00",
+      "time": "2026-04-27T04:30:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2646,
       "active": false
     },
     {
-      "time": "2026-04-27T02:59:59+00:00",
+      "time": "2026-04-27T02:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2617,
       "active": false
     },
     {
-      "time": "2026-04-27T02:14:59+00:00",
+      "time": "2026-04-27T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2632,
       "active": false
     },
     {
-      "time": "2026-04-26T22:29:59+00:00",
+      "time": "2026-04-26T22:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2603,
       "active": false
     },
     {
-      "time": "2026-04-26T21:59:59+00:00",
+      "time": "2026-04-26T21:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2572,
       "active": false
     },
     {
-      "time": "2026-04-26T19:29:59+00:00",
+      "time": "2026-04-26T19:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.26,
       "active": false
     },
     {
-      "time": "2026-04-26T18:29:59+00:00",
+      "time": "2026-04-26T18:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2597,
       "active": false
     },
     {
-      "time": "2026-04-26T14:59:59+00:00",
+      "time": "2026-04-26T14:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2602,
       "active": false
     },
     {
-      "time": "2026-04-26T13:44:59+00:00",
+      "time": "2026-04-26T13:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.259,
       "active": false
     },
     {
-      "time": "2026-04-26T09:59:59+00:00",
+      "time": "2026-04-26T09:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2609,
       "active": false
     },
     {
-      "time": "2026-04-26T06:14:59+00:00",
+      "time": "2026-04-26T06:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2606,
       "active": false
     },
     {
-      "time": "2026-04-26T05:29:59+00:00",
+      "time": "2026-04-26T05:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2607,
       "active": false
     },
     {
-      "time": "2026-04-26T04:44:59+00:00",
+      "time": "2026-04-26T04:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2568,
       "active": false
     },
     {
-      "time": "2026-04-26T03:44:59+00:00",
+      "time": "2026-04-26T03:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2562,
       "active": false
     },
     {
-      "time": "2026-04-26T03:29:59+00:00",
+      "time": "2026-04-26T03:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2577,
       "active": false
     },
     {
-      "time": "2026-04-26T02:14:59+00:00",
+      "time": "2026-04-26T02:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2559,
       "active": false
     },
     {
-      "time": "2026-04-26T00:59:59+00:00",
+      "time": "2026-04-26T00:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2577,
       "active": false
     },
     {
-      "time": "2026-04-25T20:29:59+00:00",
+      "time": "2026-04-25T20:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2558,
       "active": false
     },
     {
-      "time": "2026-04-25T17:44:59+00:00",
+      "time": "2026-04-25T17:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2556,
       "active": false
     },
     {
-      "time": "2026-04-25T17:44:59+00:00",
+      "time": "2026-04-25T17:30:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2556,
       "active": false
     },
     {
-      "time": "2026-04-25T17:29:59+00:00",
+      "time": "2026-04-25T17:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2575,
       "active": false
     },
     {
-      "time": "2026-04-25T15:59:59+00:00",
+      "time": "2026-04-25T15:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2568,
       "active": false
     },
     {
-      "time": "2026-04-25T15:14:59+00:00",
+      "time": "2026-04-25T15:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2585,
       "active": false
     },
     {
-      "time": "2026-04-25T11:59:59+00:00",
+      "time": "2026-04-25T11:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2597,
       "active": false
     },
     {
-      "time": "2026-04-25T10:44:59+00:00",
+      "time": "2026-04-25T10:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2627,
       "active": false
     },
     {
-      "time": "2026-04-25T10:29:59+00:00",
+      "time": "2026-04-25T10:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2619,
       "active": false
     },
     {
-      "time": "2026-04-25T09:59:59+00:00",
+      "time": "2026-04-25T09:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2629,
       "active": false
     },
     {
-      "time": "2026-04-25T06:14:59+00:00",
+      "time": "2026-04-25T06:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2634,
       "active": false
     },
     {
-      "time": "2026-04-25T06:14:59+00:00",
+      "time": "2026-04-25T06:00:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2634,
       "active": false
     },
     {
-      "time": "2026-04-25T05:14:59+00:00",
+      "time": "2026-04-25T05:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2608,
       "active": false
     },
     {
-      "time": "2026-04-25T01:59:59+00:00",
+      "time": "2026-04-25T01:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2616,
       "active": false
     },
     {
-      "time": "2026-04-24T20:14:59+00:00",
+      "time": "2026-04-24T20:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2623,
       "active": false
     },
     {
-      "time": "2026-04-24T19:44:59+00:00",
+      "time": "2026-04-24T19:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2607,
       "active": false
     },
     {
-      "time": "2026-04-24T19:44:59+00:00",
+      "time": "2026-04-24T19:30:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.2607,
       "active": false
     },
     {
-      "time": "2026-04-24T19:14:59+00:00",
+      "time": "2026-04-24T19:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2626,
       "active": false
     },
     {
-      "time": "2026-04-24T14:29:59+00:00",
+      "time": "2026-04-24T14:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2617,
       "active": false
     },
     {
-      "time": "2026-04-24T12:44:59+00:00",
+      "time": "2026-04-24T12:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2641,
       "active": false
     },
     {
-      "time": "2026-04-24T11:29:59+00:00",
+      "time": "2026-04-24T11:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2634,
       "active": false
     },
     {
-      "time": "2026-04-24T05:29:59+00:00",
+      "time": "2026-04-24T05:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2612,
       "active": false
     },
     {
-      "time": "2026-04-24T04:29:59+00:00",
+      "time": "2026-04-24T04:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.263,
       "active": false
     },
     {
-      "time": "2026-04-24T02:14:59+00:00",
+      "time": "2026-04-24T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2672,
       "active": false
     },
     {
-      "time": "2026-04-24T02:14:59+00:00",
+      "time": "2026-04-24T02:00:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2672,
       "active": false
     },
     {
-      "time": "2026-04-24T01:44:59+00:00",
+      "time": "2026-04-24T01:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2644,
       "active": false
     },
     {
-      "time": "2026-04-23T22:29:59+00:00",
+      "time": "2026-04-23T22:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.263,
       "active": false
     },
     {
-      "time": "2026-04-23T20:44:59+00:00",
+      "time": "2026-04-23T20:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2614,
       "active": false
     },
     {
-      "time": "2026-04-23T17:59:59+00:00",
+      "time": "2026-04-23T17:45:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.256,
       "active": false
     },
     {
-      "time": "2026-04-23T17:59:59+00:00",
+      "time": "2026-04-23T17:45:00+00:00",
       "level": 2,
       "type": "low",
       "price": 0.256,
       "active": false
     },
     {
-      "time": "2026-04-23T16:14:59+00:00",
+      "time": "2026-04-23T16:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2623,
       "active": false
     },
     {
-      "time": "2026-04-23T15:29:59+00:00",
+      "time": "2026-04-23T15:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2631,
       "active": false
     },
     {
-      "time": "2026-04-23T11:59:59+00:00",
+      "time": "2026-04-23T11:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2616,
       "active": false
     },
     {
-      "time": "2026-04-23T08:29:59+00:00",
+      "time": "2026-04-23T08:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.263,
       "active": false
     },
     {
-      "time": "2026-04-23T06:29:59+00:00",
+      "time": "2026-04-23T06:15:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2648,
       "active": false
     },
     {
-      "time": "2026-04-23T03:44:59+00:00",
+      "time": "2026-04-23T03:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2596,
       "active": false
     },
     {
-      "time": "2026-04-23T02:14:59+00:00",
+      "time": "2026-04-23T02:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2649,
       "active": false
     },
     {
-      "time": "2026-04-23T00:29:59+00:00",
+      "time": "2026-04-23T00:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2594,
       "active": false
     },
     {
-      "time": "2026-04-22T21:59:59+00:00",
+      "time": "2026-04-22T21:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2704,
       "active": false
     },
     {
-      "time": "2026-04-22T19:44:59+00:00",
+      "time": "2026-04-22T19:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2683,
       "active": false
     },
     {
-      "time": "2026-04-22T17:14:59+00:00",
+      "time": "2026-04-22T17:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2705,
       "active": false
     },
     {
-      "time": "2026-04-22T17:14:59+00:00",
+      "time": "2026-04-22T17:00:00+00:00",
       "level": 2,
       "type": "high",
       "price": 0.2705,
       "active": false
     },
     {
-      "time": "2026-04-22T16:44:59+00:00",
+      "time": "2026-04-22T16:30:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2672,
       "active": false
     },
     {
-      "time": "2026-04-22T15:14:59+00:00",
+      "time": "2026-04-22T15:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2698,
       "active": false
     },
     {
-      "time": "2026-04-22T13:44:59+00:00",
+      "time": "2026-04-22T13:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2688,
       "active": false
     },
     {
-      "time": "2026-04-22T13:14:59+00:00",
+      "time": "2026-04-22T13:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2663,
       "active": false
     },
     {
-      "time": "2026-04-22T11:59:59+00:00",
+      "time": "2026-04-22T11:45:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2695,
       "active": false
     },
     {
-      "time": "2026-04-22T09:14:59+00:00",
+      "time": "2026-04-22T09:00:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2683,
       "active": false
     },
     {
-      "time": "2026-04-22T07:29:59+00:00",
+      "time": "2026-04-22T07:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2646,
       "active": false
     },
     {
-      "time": "2026-04-22T06:29:59+00:00",
+      "time": "2026-04-22T06:15:00+00:00",
       "level": 1,
       "type": "low",
       "price": 0.2652,
       "active": false
     },
     {
-      "time": "2026-04-22T05:44:59+00:00",
+      "time": "2026-04-22T05:30:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2681,
       "active": false
     },
     {
-      "time": "2026-04-22T00:14:59+00:00",
+      "time": "2026-04-22T00:00:00+00:00",
       "level": 1,
       "type": "high",
       "price": 0.2623,
@@ -2509,6 +2498,13 @@
     }
   ],
   "klines": [
+    {
+      "time": 1777876200,
+      "open": 0.2404,
+      "high": 0.2413,
+      "low": 0.24,
+      "close": 0.2409
+    },
     {
       "time": 1777877100,
       "open": 0.2409,
@@ -9499,15 +9495,8 @@
       "time": 1778775300,
       "open": 0.2655,
       "high": 0.266,
-      "low": 0.2637,
-      "close": 0.2637
-    },
-    {
-      "time": 1778775300,
-      "open": 0.2655,
-      "high": 0.266,
       "low": 0.2634,
-      "close": 0.2644
+      "close": 0.2643
     }
   ],
   "signals": [
@@ -9516,7 +9505,7 @@
       "side": "SELL",
       "signal_type": "lowering_above_last_low",
       "is_reversal": false,
-      "entry": 0.2644,
+      "entry": 0.0,
       "target": 0.2487,
       "stop": 0.2609,
       "rr": null,

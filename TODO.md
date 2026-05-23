@@ -167,6 +167,16 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] `dashboard/lib/types.ts` — CandidateResult, DiscoveryState, DiscoveryCandidatesFile interfaces
 - [ ] End-to-end test: run discovery from UI, verify candidates appear, add one, verify it disappears
 
+## Session 30 — Docker service split + backtest_api fix (completed 2026-05-23)
+
+- [x] Fix backtest_api.py missing max_losing_pct/amount/candles Settings fields
+- [x] Split docker-compose into bot + dashboard services
+- [x] Update push.sh for split-container deploy
+- [x] Create push_dashboard.sh dashboard-only deploy script
+- [x] Disable bot/start API route (returns 503)
+- [x] Simplify mode API route (remove cross-container isBotAlive)
+- [ ] Deploy session 29+30 changes to server: `bash scripts/push.sh` (stop bot first)
+
 ## Phase 3.8 — Order Execution & Infrastructure
 
 - [x] `bot/system_log.py` — rolling 100-entry log
@@ -353,6 +363,16 @@ Design approved + implemented in session 14.
 - [ ] Hard stop still active after restart (balance recovery edge case) — pending user investigation
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
+
+## Session 29 — Code Review Fixes + Early Loss Exit + Green Dot Fix (completed 2026-05-23)
+
+- [x] **Lot constraint detector fixes** — tier selection reversed, `min_bal_pct` from config, fallback to 0.0
+- [x] **Symbol registry thread safety** — added lock to `get_weight`, `get_weights`, `set_weight`, `get_leverage_override`
+- [x] **Main.py balance detection** — fallback chain: `risk_manager.get_balance()` → `startup_balance` → 1000.0
+- [x] **Early loss exit settings** — `max_losing_pct`, `max_losing_amount_usdt`, `max_losing_candles` added to 29 presets
+- [x] **Dashboard early exit UI** — PresetSettingsPanel + presetFilters + Create page abbrevs (mlp, mla, mlc)
+- [x] **Green dot data source fix** — new `/api/open-positions` route replaces `preset_efficiency_test.json` fetch
+- [ ] **Deploy to server** — `bash scripts/push.sh` (stop bot first)
 
 ## Session 27 — Precision & Login Fixes (completed 2026-05-21)
 

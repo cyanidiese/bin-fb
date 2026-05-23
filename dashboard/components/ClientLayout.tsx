@@ -44,18 +44,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         })
         .catch(() => {})
 
-      // Symbols with live orders from efficiency data
-      fetch('/api/public-file?f=preset_efficiency_test.json')
+      // Symbols with live open orders from bot's open_positions file
+      fetch('/api/open-positions')
         .then(r => (r.ok ? r.json() : null))
-        .then((data: Record<string, Record<string, { trade_count?: number }>> | null) => {
-          if (!data) return
-          const withOrders = new Set<string>()
-          for (const [sym, presets] of Object.entries(data)) {
-            if (Object.values(presets).some(p => (p.trade_count ?? 0) > 0)) {
-              withOrders.add(sym)
-            }
-          }
-          setSymbolsWithOrders(withOrders)
+        .then((data: { symbols?: string[] } | null) => {
+          if (!data?.symbols) return
+          setSymbolsWithOrders(new Set(data.symbols))
         })
         .catch(() => {})
     }

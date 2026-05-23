@@ -127,7 +127,16 @@
       "Bash(curl -s -X POST http://localhost:3000/api/mode -H 'Content-Type: application/json' -d '{\"target_mode\":\"test\"}')",
       "Read(//Users/bohdanpaliichuk/.claude/plugins/**)",
       "Read(//Users/bohdanpaliichuk/.claude/**)",
-      "Bash(awk '{print $5}')"
+      "Bash(awk '{print $5}')",
+      "Bash(ssh *)",
+      "Read(//private/tmp/**)",
+      "Bash(docker compose config *)",
+      "Bash(bash -n /Users/bohdanpaliichuk/Documents/Projects/My/bin-furures-bot/scripts/push.sh)",
+      "Bash(chmod +x *)",
+      "Bash(bash -n /Users/bohdanpaliichuk/Documents/Projects/My/bin-furures-bot/scripts/push_dashboard.sh)",
+      "Bash(awk '{print $1}')",
+      "Bash(pytest *)",
+      "Bash(echo \"EXIT_CODE: $?\")"
     ]
   }
 }

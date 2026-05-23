@@ -1,23 +1,68 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-22 (session 29)
+## Last updated: 2026-05-23 (session 30)
 
 ---
 
-## ⟳ RESUME POINT — session 29 (2026-05-22) — analysis only, no code changes
+## ⟳ RESUME POINT — session 30 (2026-05-23) — split Docker services, backtest_api fix
 
 **What was completed this session:**
 
-**1. Klines stale locally (not a bug — expected divergence)**
-- **Corrected diagnosis**: Local `data/` kline files are a separate static copy from the server. The server bot runs continuously and updates its own kline cache as part of normal `data_feed.py` operation. Locally, klines only update when `backtest.py` is run manually. They diverged simply because nothing runs locally.
-- The testnet API failure hypothesis was wrong — the server having fresh klines confirms the API is not the issue.
-- **Side effect of investigation**: `data/TIAUSDT_15m_test.json` was updated from 2190 → 2935 candles (now ends May 22) by a manual `refresh_klines` call during diagnosis. Other symbols still at May 14.
-- **Fix**: Run `python backtest.py` locally to refresh all local symbol caches when needed before a local backtest session.
+**1. Bug fix: backtest_api.py missing Settings fields**
+- **Root cause**: `backtest_api.py` DEFAULTS dict and Settings constructor call missing three new fields: `max_losing_pct`, `max_losing_amount_usdt`, `max_losing_candles` (added in session 29).
+- **Effect**: Dashboard "Visualize preset" feature crashed with `TypeError: Settings.__init__() missing 3 required positional arguments`.
+- **Fix**: Added all three fields to DEFAULTS dict with safe defaults (0.0, 0.0, 0), passed them to Settings() constructor call.
 
-**2. Trend cross-level validation — deferred**
-- Analysis delivered and logged. Full write-up: `docs/superpowers/specs/2026-05-22-trend-cross-level-validation-analysis.md`
-- Added to TODO as a deferred idea. No implementation planned yet.
-- When revisited: three trigger options (close-only recommended), pseudocode ready, edge cases documented.
+**2. Split bot and dashboard into separate Docker services**
+Single `app` service split into two independent services (`bot` and `dashboard`) so dashboard deploys don't restart the bot.
+
+**Files changed**:
+- **`docker-compose.yml`** — replaced single `app` with `bot` and `dashboard` services. Both mount shared host volumes (`./data`, `./logs`, `./dashboard/public`, config files). Bot command: `cd /app && .venv/bin/python3 main.py`, restart: unless-stopped. Dashboard command: `cd /app/dashboard && next start -p 3000`.
+- **`scripts/push.sh`** — updated for split containers: renamed `bot-app-1` → `bot`, added `docker stop bot` step after SIGTERM wait loop (prevents restart race during git pull + rebuild), removed final `docker exec -d` bot spawn step (now auto-starts via container command).
+- **`scripts/push_dashboard.sh`** — NEW: dashboard-only deploy script (git pull, `docker compose up -d --build --no-deps dashboard`). Bot container never touched.
+- **`dashboard/app/api/bot/start/route.ts`** — returns HTTP 503 (cannot spawn main.py from dashboard container; bot auto-starts via Docker restart policy).
+- **`dashboard/app/api/mode/route.ts`** — removed cross-container `isBotAlive()` PID check and 60s polling loop. Now directly writes `bot_mode.json`; bot reads on next poll cycle.
+
+**Design notes**:
+- Single Dockerfile for both services (simplicity over separate images)
+- `container_name` explicit and required (push.sh references by name)
+- File-based communication unchanged (shared host volumes)
+- `backtest_api.py` and Python environment baked into dashboard image (Option A) so Visualize preset continues to work
+
+**How to deploy going forward**:
+- Dashboard-only change: `bash scripts/push_dashboard.sh` (bot never stops)
+- Bot or full change: `bash scripts/push.sh` (graceful bot stop + full rebuild)
+
+**Immediate next action**: Deploy session 29+30 changes to server: `bash scripts/push.sh` (stop bot first).
+
+---
+
+## ⟳ RESUME POINT — session 29 (2026-05-23) — bug fixes + early loss exit + green dot fix
+
+**What was completed this session:**
+
+**1. Three critical bug fixes from code review (commit bdc3265):**
+- **`bot/lot_constraint_detector.py`** — fixed tier selection to iterate `reversed(tiers)` and pick highest matching balance tier; fixed `min_bal_pct` to read from `risk_cfg` not hardcoded 15; fixed `_detected_balance` fallback to use 0.0 not None
+- **`bot/symbol_registry.py`** — added `with self._lock:` to `get_weight`, `get_weights`, `set_weight`, `get_leverage_override` for thread safety
+- **`main.py`** — `_detected_balance` now uses `risk_manager.get_balance()` as primary source, falling back to `startup_balance` then 1000.0
+
+**2. Early loss exit settings (new feature):**
+Three new preset settings added for early exit on adverse moves:
+- `max_losing_pct` — close trade early when adverse move reaches X% of full SL distance (0=disabled)
+- `max_losing_amount_usdt` — close trade early when unrealized loss exceeds X USDT (live/virtual only, 0=disabled)
+- `max_losing_candles` — close trade after N consecutive candles with close on wrong side of entry (0=disabled)
+
+Files modified:
+- `config/presets.py` — 29 presets updated with safe-floor early-exit settings; 3 additional presets (`trail_15_from_15`, `r5_arm20`, `r5_arm15_cooldown`) updated with max-profit settings (pct=70, candles=5)
+- `dashboard/components/PresetSettingsPanel.tsx` — added 'Early exit' category and 3 new SETTINGS_META entries with labels, defaults, units, descriptions
+- `dashboard/lib/presetFilters.ts` — added defaults and FILTER_SPECS entries for all 3 new settings
+- `dashboard/app/create/page.tsx` — added NAME_ABBREV entries: mlp, mla, mlc
+
+**3. Green dot data source fix:**
+- Created `dashboard/app/api/open-positions/route.ts` — reads `data/bot_mode.json` for current mode, then reads `data/open_positions_{mode}.json`, returns `{ symbols: string[] }` with symbols that have any open order (real or virtual). Returns empty list if bot not running.
+- Updated `dashboard/components/ClientLayout.tsx` — replaced `preset_efficiency_test.json` fetch (historical trade counts, wrong) with `/api/open-positions` (live open orders, correct). Green dot in SymbolSwitcher now reflects actual live open positions.
+
+**Immediate next action**: Deploy session 29 changes to server: `bash scripts/push.sh` (stop bot first).
 
 ---
 
@@ -225,6 +270,30 @@ During deploy, bot closed 3 orphan positions at startup: APTUSDT SELL (-64.86 US
 - **BUG-16**: `get_symbol_allocation` reads risk_config.json on every call (hot path caching)
 
 ---
+
+**Bugs fixed — session 30 (2026-05-23):**
+
+1. **backtest_api.py missing new Settings fields** (`backtest_api.py`)
+   - **Cause**: Three new preset settings (`max_losing_pct`, `max_losing_amount_usdt`, `max_losing_candles`) added in session 29 were missing from `backtest_api.py` DEFAULTS dict and Settings() constructor call.
+   - **Effect**: Dashboard "Visualize preset" crashed with `TypeError: Settings.__init__() missing 3 required positional arguments`.
+   - **Fix**: Added all three fields to DEFAULTS dict with safe defaults (0.0, 0.0, 0) and passed them to Settings() constructor.
+
+**Bugs fixed — session 29 (2026-05-23)**:
+
+1. **Lot constraint detector tier selection** (`bot/lot_constraint_detector.py`)
+   - **Cause**: Tier selection iterated tiers in forward order, picked first match, resulted in too-high tier. `min_bal_pct` hardcoded to 15 instead of reading from config.
+   - **Effect**: Balance detection picked wrong tier, inefficient capital deployment. `_detected_balance` fallback was None, could cause TypeError.
+   - **Fix**: Iterate `reversed(tiers)` to pick highest matching tier. Read `min_bal_pct` from `risk_cfg`. Fallback to 0.0 (not None) when detection fails.
+
+2. **Symbol registry thread safety** (`bot/symbol_registry.py`)
+   - **Cause**: Four methods (`get_weight`, `get_weights`, `set_weight`, `get_leverage_override`) read/write internal dicts without lock protection.
+   - **Effect**: Concurrent WebSocket candle updates and dashboard API requests could race on registry state.
+   - **Fix**: Added `with self._lock:` guard to all four methods.
+
+3. **Main.py balance detection fallback chain** (`main.py`)
+   - **Cause**: `_detected_balance` used only `startup_balance` as fallback when `lot_constraint_detector` failed.
+   - **Effect**: Insufficient fallback chain if startup balance not captured.
+   - **Fix**: Changed to: `risk_manager.get_balance()` (primary) → `startup_balance` → 1000.0 (final safety fallback).
 
 **Bugs fixed — session 28 (2026-05-22)**:
 

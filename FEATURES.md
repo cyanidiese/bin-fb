@@ -109,6 +109,22 @@ Analyzes trend state at candle open and generates a single best trading signal (
 - `higher_low_buy` / `lower_high_sell`: enable pre-confirmation entry signals
 - `trailing_stop_pct`, `partial_take_pct`: order exit mechanics (see Order Execution)
 
+### Early Loss Exit (Session 29)
+Close trade early when adverse move becomes too large, reducing loss severity. Three independent thresholds. Implemented in backtester and live/virtual bot.
+
+**Files**: `config/settings.py`, `config/presets.py`, `bot/backtester.py`, `bot/fake_order.py`, `main.py`, `bot/virtual_order_simulator.py`
+**Key settings** (all default 0 = disabled):
+- `max_losing_pct: float` — exit when adverse move reaches X% of full SL distance (e.g., 0.50 = halfway to SL)
+- `max_losing_amount_usdt: float` — exit when unrealized loss exceeds X USDT (live/virtual only; backtest uses entry margin)
+- `max_losing_candles: int` — exit after N consecutive candles with close on wrong side of entry
+
+**Implementation**:
+- **Backtester** (`bot/fake_order.py`): on each candle, compute unrealized PnL and candle direction bias; check all three thresholds; exit at candle close if triggered
+- **Live bot** (`main.py` in `check_symbol_price()`): on each price tick, compute current position PnL; trigger market close if threshold hit
+- **Virtual simulator** (`bot/virtual_order_simulator.py`): same tick-level checks as live; close position if threshold exceeded
+- **Presets**: 29 presets updated with safe-floor settings (e.g., 0.50 pct + 5 candles); 3 standout presets tuned with max-profit settings (pct=0.70, candles=5)
+- **Dashboard**: PresetSettingsPanel shows "Early exit" section with all 3 settings; Create page filtering supports mlp/mla/mlc abbreviations
+
 ### Cooldown Mechanisms
 Prevents repeated entries after losses and reduces overtrading in choppy markets. Implemented in both backtester and live bot.
 
@@ -571,6 +587,17 @@ Converts live Analyzer state to dashboard-compatible JSON. Exports klines, trend
 - Fallback: if Analyzer has no points, traverses live trend
 - For newly-added symbols: placeholder export with live price
 
+### Backtest API for Visualization (Session 30 updated)
+Dashboard "Visualize preset" feature runs backtest_api.py to simulate a preset on current klines and show results. Settings object correctly instantiated with all required fields including early-exit controls.
+
+**Files**: `backtest_api.py`, `dashboard/app/api/preset-visualization/route.ts`
+**Key details**:
+- Accepts preset_name and symbol parameters
+- Returns summary: win%, max DD, trade count, profit%
+- DEFAULTS dict includes all Settings fields: core (tp_multiplier, trailing_stop_pct, etc.) + early exit (`max_losing_pct`, `max_losing_amount_usdt`, `max_losing_candles`)
+- Settings() constructor call passes all three early-exit fields with safe defaults (0.0, 0.0, 0)
+- Fix in session 30: added missing early-exit fields that were added in session 29
+
 ---
 
 ## Testing & Configuration
@@ -608,15 +635,26 @@ Dashboard writes commands to `data/bot_command.json` (with UUID). Bot polls ever
 - Commands: switch_mode, stop_bot, test_telegram
 - 60–120s timeout per command (with SIGTERM fallback)
 
-### Docker Deployment Ready
-Dockerfile and docker-compose.yml in repo root. Bundles bot and dashboard; runs both inside containers on a production VPS.
+### Docker Deployment — Separate Bot & Dashboard Services (Session 30)
+Dockerfile and docker-compose.yml in repo root. Bot and dashboard are now independent services (`bot` and `dashboard` containers) so dashboard can be redeployed without stopping the bot. Both services mount shared host volumes for file-based communication.
 
-**Files**: `Dockerfile`, `docker-compose.yml`, `scripts/push.sh`
+**Files**: `Dockerfile`, `docker-compose.yml`, `scripts/push.sh`, `scripts/push_dashboard.sh`
 **Key details**:
-- Bot container: Python runtime, logs mounted to host
-- Dashboard container: Node.js runtime (Next.js)
-- Compose file: service definitions, volume mounts, environment passthrough
-- Deploy script: `bash scripts/push.sh` (reads `SERVER_HOST/USER/DIR` from `.env`)
+- **Bot service** (`bot` container): Python 3.12 runtime, command `cd /app && .venv/bin/python3 main.py`, restart: unless-stopped, no exposed ports
+- **Dashboard service** (`dashboard` container): Node.js runtime (Next.js), command `cd /app/dashboard && next start -p 3000`, port 3000, restart: unless-stopped
+- Both mount same volumes: `./data`, `./logs`, `./dashboard/public`, `./risk_config.json`, `./symbol_registry.json`
+- **Full deploy** (`bash scripts/push.sh`): git pull, rebuild both images, graceful bot stop before pull, restart both services
+- **Dashboard-only deploy** (`bash scripts/push_dashboard.sh`): git pull, rebuild dashboard only (`--no-deps`), bot never stopped — trading continues uninterrupted
+- **Bot spawn disabled**: `/api/bot/start` route now returns HTTP 503; bot auto-starts via Docker restart policy
+- **Mode command simplified**: `/api/mode` route directly writes `bot_mode.json` without cross-container PID checks
+
+### Graceful Deployment Process
+Push.sh implements graceful shutdown before rebuild:
+1. Send SIGTERM to bot process (gracefully closes all open positions)
+2. Wait up to 60s for bot to close positions and exit
+3. `docker stop bot` to ensure container stops (prevents restart race condition during git pull)
+4. Git pull and rebuild
+5. `docker compose up -d` restarts both services
 
 ### Monitoring & Logging
 Rotating logs with 10 MB cap per file, 5 backups kept. Separate log files: `logs/bot.log` (general), `logs/trades.log` (order events only).
@@ -678,15 +716,15 @@ Fixes auth cookie not being sent on first request after login. Previously used `
 - Changed to `window.location.replace(next)` for full page reload
 - Guarantees new cookie included in server request
 
-### Symbol Status Indicator Dots (Dashboard)
+### Symbol Status Indicator Dots (Dashboard — Session 29 updated)
 Visual indicators on SymbolSwitcher showing symbol health status. Red = disabled (precision/other error), Green = has live orders. Both indicators can co-exist on same symbol.
 
-**Files**: `dashboard/components/SymbolSwitcher.tsx`, `dashboard/components/ClientLayout.tsx`, `dashboard/components/SymbolContext.tsx`
+**Files**: `dashboard/components/SymbolSwitcher.tsx`, `dashboard/components/ClientLayout.tsx`, `dashboard/components/SymbolContext.tsx`, `dashboard/app/api/open-positions/route.ts`
 **Key details**:
 - Red dot: symbol auto-disabled (e.g., precision error → `-1111` consecutive failures)
-- Green dot: symbol has open real orders
+- Green dot: symbol has live open positions (real or virtual)
 - Disabled list fetched from `/api/symbols` every 30s
-- Live orders source: `/api/public-file?f=preset_efficiency_test.json`
+- Live orders source (Session 29): `/api/open-positions` (reads `data/bot_mode.json` + `data/open_positions_{mode}.json`; returns `{ symbols: string[] }` of symbols with open orders; empty list if bot not running)
 
 ### Chart DateTime Range Pickers (Dashboard Trades Page)
 Filter chart klines by date range. Two `datetime-local` inputs with in-memory filtering (no re-fetch) and reset button.
@@ -716,4 +754,4 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 
 ---
 
-**Last updated**: Session 28 (2026-05-22) — Loss streak cooldown live implementation, decision log race fix, duplicate skip visibility in logs.
+**Last updated**: Session 29 (2026-05-23) — Early loss exit settings, green dot data source fix, three critical bug fixes (lot_constraint_detector, symbol_registry thread safety, main.py balance fallback).

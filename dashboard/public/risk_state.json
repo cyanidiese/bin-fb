@@ -1,110 +1,110 @@
 {
-  "generated_at": "2026-05-14T16:30:04.872235+00:00",
+  "generated_at": "2026-05-23T20:29:01.802927+00:00",
   "mode": "test",
-  "balance": 5000,
-  "peak_balance": 10000,
-  "drawdown_pct": 50,
-  "warning_active": true,
-  "hard_stop_active": true,
+  "balance": 1000.0,
+  "peak_balance": null,
+  "drawdown_pct": 0.0,
+  "warning_active": false,
+  "hard_stop_active": false,
   "active_tier": {
-    "min_balance_usdt": 5000,
-    "max_deploy_pct": 60,
+    "min_balance_usdt": 1000,
+    "max_deploy_pct": 80,
     "max_leverage_ceiling": 15
   },
-  "last_event": "hard_stop",
-  "last_event_time": "2026-05-14T16:22:40.561422+00:00",
+  "last_event": "",
+  "last_event_time": "",
   "scenario": "first_has_most",
   "leverage_level": 0,
   "per_symbol": {
-    "BTCUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 9,
-      "leverage_level": 0,
-      "performance_score": 2.485
-    },
-    "XAUUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 2,
-      "leverage_level": 0,
-      "performance_score": 0
-    },
-    "ETHUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 10,
-      "leverage_level": 0,
-      "performance_score": 9.477
-    },
     "SOLUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 9,
+      "allocation_usdt": 48.57,
+      "leverage": 4,
       "leverage_level": 0,
       "performance_score": 22.592
     },
-    "BNBUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 9,
-      "leverage_level": 0,
-      "performance_score": 4.975
-    },
     "THETAUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 9,
+      "allocation_usdt": 48.57,
+      "leverage": 3,
       "leverage_level": 0,
       "performance_score": 14.501
     },
     "REZUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 6,
+      "allocation_usdt": 48.57,
+      "leverage": 10,
       "leverage_level": 0,
-      "performance_score": 31.003
+      "performance_score": 77.303
     },
     "DOGEUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 8,
+      "allocation_usdt": 48.57,
+      "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 29.3
+      "performance_score": 25.94
     },
     "1000PEPEUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 9,
+      "allocation_usdt": 48.57,
+      "leverage": 5,
       "leverage_level": 0,
-      "performance_score": 31.746
+      "performance_score": 37.327
     },
     "WLDUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 8,
+      "allocation_usdt": 48.57,
+      "leverage": 3,
       "leverage_level": 0,
       "performance_score": 16.414
     },
     "MEMEUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 7,
+      "allocation_usdt": 48.57,
+      "leverage": 3,
       "leverage_level": 0,
       "performance_score": 18.655
     },
     "AVAXUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 10,
+      "allocation_usdt": 48.57,
+      "leverage": 2,
       "leverage_level": 0,
       "performance_score": 2.934
     },
     "ETHFIUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 8,
+      "allocation_usdt": 48.57,
+      "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 9.616
+      "performance_score": 10.096
     },
     "TIAUSDT": {
-      "allocation_usdt": 170,
+      "allocation_usdt": 48.57,
       "leverage": 9,
       "leverage_level": 0,
-      "performance_score": 40.118
+      "performance_score": 69.377
     },
     "EIGENUSDT": {
-      "allocation_usdt": 170,
-      "leverage": 8,
+      "allocation_usdt": 48.57,
+      "leverage": 4,
       "leverage_level": 0,
       "performance_score": 24.179
+    },
+    "1000SHIBUSDT": {
+      "allocation_usdt": 48.57,
+      "leverage": 2,
+      "leverage_level": 0,
+      "performance_score": 4.872
+    },
+    "INJUSDT": {
+      "allocation_usdt": 48.57,
+      "leverage": 3,
+      "leverage_level": 0,
+      "performance_score": 14.875
+    },
+    "JUPUSDT": {
+      "allocation_usdt": 0.0,
+      "leverage": 3,
+      "leverage_level": 0,
+      "performance_score": 12.623
+    },
+    "APTUSDT": {
+      "allocation_usdt": 48.57,
+      "leverage": 2,
+      "leverage_level": 0,
+      "performance_score": 8.668
     }
   }
 }

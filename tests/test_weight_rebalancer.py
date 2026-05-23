@@ -186,3 +186,15 @@ class TestTrigger:
         with patch("bot.weight_rebalancer.threading.Thread") as MockThread:
             r.on_candle_close(1000)
             MockThread.assert_not_called()
+
+    def test_same_candle_ts_counted_once(self):
+        r = _make_rebalancer(rebalance_candles=2)
+        r.enabled = True
+        with patch("bot.weight_rebalancer.threading.Thread") as MockThread:
+            # Call 3 times with same ts (simulating 3 symbols in same candle)
+            for _ in range(3):
+                r.on_candle_close(1000)
+            MockThread.assert_not_called()  # still only 1 candle counted
+            # Now a new candle ts — should trigger (counter hits 2)
+            r.on_candle_close(1000 + 900_000)
+            MockThread.assert_called_once()

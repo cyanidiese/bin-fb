@@ -38,6 +38,7 @@ class WeightRebalancer:
         self._data_dir = data_dir
         self._cfg = cfg
         self._counter = 0
+        self._last_candle_ts: int = 0
         self._running = threading.Event()  # set while a rebalance is in progress
         self.enabled: bool = bool(cfg.get("enabled", False))
 
@@ -48,6 +49,9 @@ class WeightRebalancer:
     def on_candle_close(self, candle_ts: int) -> None:
         if not self.enabled:
             return
+        if candle_ts == self._last_candle_ts:
+            return  # same candle, already counted
+        self._last_candle_ts = candle_ts
         self._counter += 1
         n = int(self._cfg.get("rebalance_candles", 96))
         if self._counter % n != 0:

@@ -310,6 +310,15 @@ class VirtualOrderSimulator:
             'result': None,
         }
         self._rank_open[rank][symbol] = record
+
+        _max_losing_amt = float(getattr(preset_settings, 'max_losing_amount_usdt', 0.0))
+        _early_loss_sl = 0.0
+        if _max_losing_amt > 0 and quantity > 0:
+            if side == 'BUY':
+                _early_loss_sl = entry - _max_losing_amt / quantity
+            else:
+                _early_loss_sl = entry + _max_losing_amt / quantity
+
         self._rank_fake[rank][symbol] = FakeOrder(
             side=side,
             entry_price=entry,
@@ -320,6 +329,9 @@ class VirtualOrderSimulator:
             candle_index=0,
             partial_take_pct=partial_pct,
             trailing_stop_pct=trail_pct,
+            max_losing_pct=float(getattr(preset_settings, 'max_losing_pct', 0.0)),
+            max_losing_candles=int(getattr(preset_settings, 'max_losing_candles', 0)),
+            early_loss_sl=_early_loss_sl,
         )
         logger.debug(
             f"[{symbol}] Rank-{rank} opened: {preset_name} {side} @ {entry} "

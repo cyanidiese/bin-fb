@@ -43,6 +43,9 @@ const NAME_ABBREV: Record<string, string> = {
   global_pause_candles: 'gp',
   duplicate_skip_candles: 'dsc',
   duplicate_skip_pct: 'dsp',
+  max_losing_pct: 'mlp',
+  max_losing_amount_usdt: 'mla',
+  max_losing_candles: 'mlc',
 }
 
 function generatePresetName(overrides: Record<string, number | boolean>): string {

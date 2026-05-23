@@ -20,6 +20,9 @@ export const SETTING_DEFAULTS: Record<string, number | boolean> = {
   global_pause_candles: 10,
   duplicate_skip_candles: 0,
   duplicate_skip_pct: 2.0,
+  max_losing_pct: 0.0,
+  max_losing_amount_usdt: 0.0,
+  max_losing_candles: 0,
 }
 
 export type FilterSpec =
@@ -51,6 +54,9 @@ export const FILTER_SPECS: FilterEntry[] = [
   { key: 'global_pause_candles',        label: 'Global pause duration (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 30   } },
   { key: 'duplicate_skip_candles',      label: 'Duplicate skip window (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 50   } },
   { key: 'duplicate_skip_pct',          label: 'Duplicate threshold (%)',        spec: { kind: 'number', step: 0.1, absMin: 0,   absMax: 10   } },
+  { key: 'max_losing_pct',              label: 'Early exit at SL% (%)',          spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 100  } },
+  { key: 'max_losing_amount_usdt',      label: 'Early exit amount (USDT)',       spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 10000} },
+  { key: 'max_losing_candles',          label: 'Max losing candles',             spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 50   } },
 ]
 
 // ── Table filters (filter by result column values) ──────────────────────────

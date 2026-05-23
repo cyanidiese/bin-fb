@@ -3,7 +3,7 @@ export type SettingMeta = {
   default: number | boolean
   description: string
   unit?: string
-  category: 'Structure' | 'Entry filter' | 'Exit strategy' | 'Cooldown'
+  category: 'Structure' | 'Entry filter' | 'Exit strategy' | 'Cooldown' | 'Early exit'
 }
 
 export const SETTINGS_META: Record<string, SettingMeta> = {
@@ -135,6 +135,29 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     description: 'Max % difference between the new signal\'s entry, SL, and TP and the last SL-hit signal for it to be considered a duplicate.',
     category: 'Cooldown',
   },
+
+  // ── Early exit ─────────────────────────────────────────────────────────
+  max_losing_pct: {
+    label: 'Early exit at SL%',
+    default: 0.0,
+    unit: '% of SL dist',
+    description: 'Close the trade early when the adverse price move from entry reaches this % of the full SL distance. E.g. 50 = exit at halfway to SL. Cuts losses before full SL is hit. 0 = disabled.',
+    category: 'Early exit',
+  },
+  max_losing_amount_usdt: {
+    label: 'Early exit amount',
+    default: 0.0,
+    unit: 'USDT',
+    description: 'Close the trade early when unrealized loss exceeds this USDT amount. Live and virtual mode only — has no effect in backtesting. 0 = disabled.',
+    category: 'Early exit',
+  },
+  max_losing_candles: {
+    label: 'Max losing candles',
+    default: 0,
+    unit: 'candles',
+    description: 'Close the trade after this many consecutive candles whose close is on the wrong side of entry (i.e. the position has been underwater for N candles in a row). 0 = disabled.',
+    category: 'Early exit',
+  },
 }
 
 export const CATEGORIES: SettingMeta['category'][] = [
@@ -142,6 +165,7 @@ export const CATEGORIES: SettingMeta['category'][] = [
   'Entry filter',
   'Exit strategy',
   'Cooldown',
+  'Early exit',
 ]
 
 interface PresetOption {

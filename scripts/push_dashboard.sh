@@ -24,7 +24,7 @@ echo "==> Dashboard-only deploy to $HOST:$DIR"
 echo "==> Bot will NOT be restarted."
 
 echo "==> Pulling latest code..."
-$SSH "$HOST" "cd $DIR && git pull origin main"
+$SSH "$HOST" "cd $DIR && git reset --hard HEAD && git pull origin main"
 
 echo "==> Rebuilding and restarting dashboard container only..."
 $SSH "$HOST" "cd $DIR && docker compose up -d --build --no-deps dashboard 2>&1 | tail -20"

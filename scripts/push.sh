@@ -27,21 +27,21 @@ echo "==> Deploying to $HOST:$DIR"
 # Loop over PIDs individually — the container has no standalone kill binary, only the shell builtin.
 echo "==> Stopping bot gracefully..."
 $SSH "$HOST" \
-  "docker exec bot-app-1 /bin/sh -c 'for PID in \$(grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"); do kill -TERM \$PID 2>/dev/null && echo \"Sent SIGTERM to \$PID\"; done' 2>/dev/null || echo 'Bot was not running'"
+  "docker exec bot /bin/sh -c 'for PID in \$(grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"); do kill -TERM \$PID 2>/dev/null && echo \"Sent SIGTERM to \$PID\"; done' 2>/dev/null || echo 'Bot was not running'"
 
 # Wait up to 25 s for cleanup (close_all_open + market close of real orders)
 echo "==> Waiting for order cleanup..."
 $SSH "$HOST" \
-  "for i in \$(seq 1 25); do PIDS=\$(docker exec bot-app-1 /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PIDS\" ] && echo \"All bot instances exited after \${i}s\" && break; sleep 1; done; echo 'Proceeding with deploy'"
+  "for i in \$(seq 1 25); do PIDS=\$(docker exec bot /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PIDS\" ] && echo \"All bot instances exited after \${i}s\" && break; sleep 1; done; echo 'Proceeding with deploy'"
+
+# Explicitly stop the bot container to prevent restart: unless-stopped from
+# relaunching main.py on the old image during the git pull + docker build cycle.
+echo "==> Stopping bot container..."
+$SSH "$HOST" "docker stop bot 2>/dev/null || true"
 
 # Step 2 — Reset any server-side runtime file modifications, pull latest code and rebuild container
 echo "==> Pulling code and rebuilding container..."
 $SSH "$HOST" \
   "cd $DIR && git reset --hard HEAD && git clean -f dashboard/public/ && git pull origin main && docker compose up -d --build 2>&1 | tail -30"
-
-# Step 3 — Start bot in the new container
-echo "==> Starting bot..."
-$SSH "$HOST" \
-  "docker exec -d bot-app-1 sh -c 'cd /app && .venv/bin/python3 main.py >> /app/logs/bot.log 2>&1'"
 
 echo "==> Done"

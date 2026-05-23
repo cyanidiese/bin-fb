@@ -142,6 +142,9 @@ class OrderExecutor:
         leverage: int,
         partial_take_pct: float = 0.0,
         trailing_stop_pct: float = 0.0,
+        max_losing_pct: float = 0.0,
+        max_losing_amount_usdt: float = 0.0,
+        max_losing_candles: int = 0,
         level: Optional[int] = None,
         signal_type: str = '',
         balance_at_open: float = 0.0,
@@ -189,6 +192,12 @@ class OrderExecutor:
                     scenario=scenario,
                 )
                 # Create software FakeOrder for trailing stop / TP / SL monitoring
+                _early_loss_sl = 0.0
+                if max_losing_amount_usdt > 0 and rounded_qty > 0:
+                    if side == 'BUY':
+                        _early_loss_sl = entry - max_losing_amount_usdt / rounded_qty
+                    else:
+                        _early_loss_sl = entry + max_losing_amount_usdt / rounded_qty
                 self._fake_orders[symbol] = FakeOrder(
                     side=side,
                     entry_price=entry,
@@ -199,6 +208,9 @@ class OrderExecutor:
                     candle_index=self._symbol_candle_index.get(symbol, 0),
                     partial_take_pct=partial_take_pct,
                     trailing_stop_pct=trailing_stop_pct,
+                    max_losing_pct=max_losing_pct,
+                    max_losing_candles=max_losing_candles,
+                    early_loss_sl=_early_loss_sl,
                 )
                 self._states[symbol] = OrderState.OPEN
                 self._open_orders[symbol].open_time = datetime.now(timezone.utc).isoformat()

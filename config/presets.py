@@ -47,6 +47,10 @@ class PresetOverrides(TypedDict, total=False):
     # Duplicate-signal skip (0 = disabled)
     duplicate_skip_candles: int
     duplicate_skip_pct: float
+    # Early loss exit (0 = disabled)
+    max_losing_pct: float
+    max_losing_amount_usdt: float
+    max_losing_candles: int
 
 
 # ── Locked presets ─────────────────────────────────────────────────────────────

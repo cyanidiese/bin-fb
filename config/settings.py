@@ -75,6 +75,13 @@ class Settings:
     # 0 = disabled.
     duplicate_skip_candles: int
     duplicate_skip_pct: float
+    # Early loss exit (0 = disabled)
+    # max_losing_pct: close when adverse move reaches this % of SL distance from entry
+    max_losing_pct: float
+    # max_losing_amount_usdt: close when unrealized loss exceeds this USDT (live/virtual only)
+    max_losing_amount_usdt: float
+    # max_losing_candles: close after N consecutive candles whose close is on wrong side of entry
+    max_losing_candles: int
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -144,6 +151,9 @@ def load_settings(symbol: str | None = None) -> Settings:
         higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
         duplicate_skip_candles=int(os.getenv('DUPLICATE_SKIP_CANDLES', '0')),
         duplicate_skip_pct=float(os.getenv('DUPLICATE_SKIP_PCT', '2.0')),
+        max_losing_pct=float(os.getenv('MAX_LOSING_PCT', '0.0')),
+        max_losing_amount_usdt=float(os.getenv('MAX_LOSING_AMOUNT_USDT', '0.0')),
+        max_losing_candles=int(os.getenv('MAX_LOSING_CANDLES', '0')),
     )
 
     if symbol is not None:

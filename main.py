@@ -203,8 +203,6 @@ async def run() -> None:
         is_rank_disabled=symbol_registry.is_rank_disabled,
     )
 
-    virtual_order_simulator.set_lot_cache(order_executor._lot_cache)
-
     _tg_cfg = risk_cfg.get("telegram", {})
     _tg_token = _tg_cfg.get("token", "")
     _tg_owner_id = int(_tg_cfg.get("chat_id", "0") or "0")
@@ -1031,7 +1029,6 @@ async def run() -> None:
             rank_max=len(all_presets),
             is_rank_disabled=symbol_registry.is_rank_disabled,
         )
-        virtual_order_simulator.set_lot_cache(order_executor._lot_cache)
         switch_balance = await order_executor.fetch_account_balance()
         if switch_balance > 0:
             risk_manager.update_balance(switch_balance)

@@ -88,7 +88,6 @@ class VirtualOrderSimulator:
 
         # Duplicate-signal skip: records last SL-hit signal per "symbol:preset" key
         self._recent_sl_hit: dict[str, dict] = {}
-        self._lot_cache: dict = {}
 
         for r in range(2, self._rank_max + 1):
             self._rank_open[r] = {}
@@ -96,10 +95,6 @@ class VirtualOrderSimulator:
             self._rank_balance[r] = initial_balance
             self._rank_locks[r] = asyncio.Lock()
             self._load_rank_balance(r)
-
-    def set_lot_cache(self, cache: dict) -> None:
-        """Share the OrderExecutor lot cache so virtual orders respect exchange maxQty."""
-        self._lot_cache = cache
 
     # ------------------------------------------------------------------ #
     # Balance persistence                                                  #
@@ -289,13 +284,6 @@ class VirtualOrderSimulator:
         else:
             alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
         quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
-
-        # Cap to exchange maxQty if known (populated when a real order was placed for this symbol)
-        _max_qty = self._lot_cache.get(symbol, {}).get('max_qty', 0.0)
-        if _max_qty > 0 and quantity > _max_qty:
-            logger.debug(f"[{symbol}] Virtual qty {quantity:.0f} capped to exchange maxQty {_max_qty:.0f}")
-            quantity = _max_qty
-
         if quantity <= 0:
             return
 

@@ -51,6 +51,8 @@ DEFAULT_CONFIG: dict = {
         "blend_rate": 0.15,
         "weight_floor_ratio": 0.3,
     },
+    "min_trades_for_ranking": 3,
+    "min_trades_for_ranking_per_symbol": {},
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"
@@ -80,3 +82,9 @@ def _atomic_write(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(path)
+
+
+def get_min_trades_for_ranking(cfg: dict, symbol: str) -> int:
+    """Return min trades threshold for symbol, falling back to global default."""
+    per_sym = cfg.get("min_trades_for_ranking_per_symbol", {})
+    return int(per_sym.get(symbol, cfg.get("min_trades_for_ranking", 3)))

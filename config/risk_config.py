@@ -43,6 +43,14 @@ DEFAULT_CONFIG: dict = {
     "emergency_repeat_interval_s": 1800,   # 30 min
     "warning_repeat_interval_s": 14400,    # 4 hours
     "scenario": "default",
+    "weight_rebalancer": {
+        "enabled": False,
+        "rebalance_candles": 96,
+        "backtest_window_candles": 96,
+        "real_pnl_alpha": 0.5,
+        "blend_rate": 0.15,
+        "weight_floor_ratio": 0.3,
+    },
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

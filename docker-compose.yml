@@ -1,15 +1,30 @@
 services:
-  app:
+  bot:
     build: .
+    container_name: bot
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./dashboard/public:/app/dashboard/public
+      - ./risk_config.json:/app/risk_config.json
+      - ./symbol_registry.json:/app/symbol_registry.json
+    command: >
+      sh -c 'cd /app && .venv/bin/python3 main.py >> /app/logs/bot.log 2>&1'
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    container_name: dashboard
     ports:
       - "3000:3000"
     env_file: .env
     volumes:
-      # Mutable runtime state — persisted on host, survive container rebuilds
       - ./data:/app/data
       - ./logs:/app/logs
       - ./dashboard/public:/app/dashboard/public
-      # Config files editable via the dashboard
       - ./risk_config.json:/app/risk_config.json
       - ./symbol_registry.json:/app/symbol_registry.json
+    command: >
+      sh -c 'cd /app/dashboard && node_modules/.bin/next start -p 3000'
     restart: unless-stopped

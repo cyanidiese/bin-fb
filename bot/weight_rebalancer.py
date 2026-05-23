@@ -177,7 +177,6 @@ class WeightRebalancer:
             return
 
         from config.presets import ALL_PRESETS
-        from bot.backtester import Backtester
 
         bt_logger = logging.getLogger("bot.backtester")
         orig_level = bt_logger.level
@@ -203,7 +202,7 @@ class WeightRebalancer:
         n = len(symbols)
         for sym in symbols:
             old = round(current_weights.get(sym, 1.0 / n), 4)
-            new = round(new_weights[sym], 4)
+            new = round(new_weights.get(sym, 0.0), 4)
             logger.info(
                 f"WeightRebalancer [{sym}]: bt={backtest_pcts[sym]:.2f}% "
                 f"pnl={real_pnls[sym]:.2f} score={scores[sym]:.3f} "

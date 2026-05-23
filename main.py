@@ -30,6 +30,7 @@ from bot.leverage_scenario import create_scenario
 from config.risk_config import load_risk_config
 from bot.balance_history import record as bh_record
 from bot.decision_log import record as dl_record
+from bot.lot_constraint_detector import adjust_constrained_symbols
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
@@ -178,6 +179,9 @@ async def run() -> None:
     all_presets = ALL_PRESETS
 
     def _virtual_lev(sym: str) -> int:
+        override = symbol_registry.get_leverage_override(sym)
+        if override > 0:
+            return min(override, 125)
         score = virtual_tracker.get_efficiency_score(sym)
         return scenario.get_leverage(
             sym, score,
@@ -267,6 +271,12 @@ async def run() -> None:
     await order_executor.check_symbols_on_exchange(symbols)
     await order_executor.fetch_leverage_brackets(symbols)
 
+    virtual_order_simulator.set_lot_cache(order_executor._lot_cache)
+
+    # Pre-warm the lot cache for all symbols via a single exchange-info call
+    await order_executor.prefetch_lot_sizes(symbols[0] if symbols else 'BTCUSDT')
+    virtual_order_simulator.set_lot_cache(order_executor._lot_cache)  # re-wire after prefetch
+
     # Fetch real min_notionals and startup balance
     for sym in symbols:
         min_notionals[sym] = await order_executor.get_min_notional(sym)
@@ -292,6 +302,29 @@ async def run() -> None:
             analyzers[symbol].get_klines(), recs,
             analyzers[symbol].get_all_points(), best,
         )
+
+    # Detect maxQty-constrained symbols now that klines and balance are available
+    try:
+        _prices: dict[str, float] = {
+            _sym: analyzers[_sym].get_current_price()
+            for _sym in symbols
+            if _sym in analyzers and analyzers[_sym].get_current_price() > 0
+        }
+        from config.risk_config import load_risk_config as _lrc
+        _rcfg = _lrc()
+        _rcfg['_detected_balance'] = startup_balance if startup_balance > 0 else 1000.0
+        _adjusted = adjust_constrained_symbols(
+            lot_cache=order_executor._lot_cache,
+            bracket_maxes=order_executor._bracket_max,
+            prices=_prices,
+            symbol_registry=symbol_registry,
+            risk_cfg=_rcfg,
+            active_symbols=symbols,
+        )
+        if _adjusted:
+            logger.info(f"Auto-adjusted weights/leverage for constrained symbols: {_adjusted}")
+    except Exception as _e:
+        logger.warning(f"Constraint detection failed (non-critical): {_e}")
 
     def _write_open_positions() -> None:
         """Snapshot current open orders (real + virtual) to disk for the dashboard."""
@@ -556,6 +589,9 @@ async def run() -> None:
         base_lev = risk_cfg.get('base_leverage', 1)
         eff_score = virtual_tracker.get_efficiency_score(symbol)
         actual_lev = scenario.get_leverage(symbol, eff_score, base_lev, max_policy_lev, bracket_max)
+        _lev_override = symbol_registry.get_leverage_override(symbol)
+        if _lev_override > 0:
+            actual_lev = min(_lev_override, bracket_max)
         if actual_lev <= 0:
             actual_lev = 1
 

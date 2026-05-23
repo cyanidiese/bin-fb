@@ -139,6 +139,26 @@ class SymbolRegistry:
     def get_disabled(self) -> dict:
         return dict(self._disabled)
 
+    def get_weights(self) -> dict:
+        """Return a snapshot of the full weights dict."""
+        return dict(self._weights)
+
+    def set_weight(self, symbol: str, weight: float) -> None:
+        """Update a symbol's weight (float supported) and persist."""
+        sym = symbol.upper()
+        if sym in self._weights:
+            self._weights[sym] = weight
+            self._persist()
+
+    def get_leverage_override(self, symbol: str) -> int:
+        """Return the exchange-constraint-derived leverage override, or 0 if none."""
+        return self._leverage_overrides.get(symbol.upper(), 0)
+
+    def set_leverage_override(self, symbol: str, leverage: int) -> None:
+        with self._lock:
+            self._leverage_overrides[symbol.upper()] = leverage
+            self._persist()
+
     def all_disabled(self) -> bool:
         return len(self._symbols) > 0 and all(self.is_disabled(s) for s in self._symbols)
 
@@ -154,6 +174,7 @@ class SymbolRegistry:
                 self._disabled = data.get('disabled', {})
                 self._disabled_ranks: dict[str, list[int]] = data.get('disabled_ranks', {})
                 self._paused: dict[str, dict] = data.get('paused', {})
+                self._leverage_overrides: dict[str, int] = {k: int(v) for k, v in data.get('leverage_overrides', {}).items()}
                 logger.info(
                     f"SymbolRegistry: loaded {len(self._symbols)} symbol(s) from {self._path}"
                 )
@@ -169,6 +190,7 @@ class SymbolRegistry:
         self._disabled: dict[str, dict] = {}
         self._disabled_ranks: dict[str, list[int]] = {}
         self._paused: dict[str, dict] = {}
+        self._leverage_overrides: dict[str, int] = {}
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
@@ -181,6 +203,7 @@ class SymbolRegistry:
             'disabled': self._disabled,
             'disabled_ranks': self._disabled_ranks,
             'paused': self._paused,
+            'leverage_overrides': self._leverage_overrides,
         }
         self._path.write_text(json.dumps(data, indent=2))
 

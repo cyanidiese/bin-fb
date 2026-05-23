@@ -948,6 +948,14 @@ class OrderExecutor:
             except Exception as exc:
                 logger.warning(f"[{symbol}] Failed to fetch leverage bracket: {exc}")
 
+    async def prefetch_lot_sizes(self, symbol: str = 'BTCUSDT') -> None:
+        """Pre-warm the lot cache for all symbols via a single exchange-info call."""
+        try:
+            await self._ensure_lot_size(symbol)
+            logger.info(f"Lot cache pre-warmed: {len(self._lot_cache)} symbols")
+        except Exception as e:
+            logger.warning(f"Lot cache prefetch failed: {e}")
+
     async def round_quantity(self, symbol: str, quantity: float) -> float:
         """Round quantity DOWN to the symbol's LOT_SIZE step, capped by maxQty."""
         lot = await self._ensure_lot_size(symbol)

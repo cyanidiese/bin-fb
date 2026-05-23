@@ -31,6 +31,7 @@ from config.risk_config import load_risk_config
 from bot.balance_history import record as bh_record
 from bot.decision_log import record as dl_record
 from bot.lot_constraint_detector import adjust_constrained_symbols
+from bot.weight_rebalancer import WeightRebalancer
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
@@ -205,6 +206,19 @@ async def run() -> None:
         get_scenario=lambda: _active_scenario_name,
         rank_max=len(all_presets),
         is_rank_disabled=symbol_registry.is_rank_disabled,
+    )
+
+    _wr_cfg = risk_cfg.get("weight_rebalancer", {})
+    weight_rebalancer = WeightRebalancer(
+        symbol_registry=symbol_registry,
+        risk_manager=risk_manager,
+        settings=first_settings,
+        get_klines_fn=lambda sym: analyzers[sym].get_klines() if sym in analyzers else [],
+        candle_duration_ms=_tf_to_ms(timeframe),
+        mode=current_mode,
+        risk_config_path=Path("risk_config.json"),
+        data_dir=Path("data"),
+        cfg=_wr_cfg,
     )
 
     _tg_cfg = risk_cfg.get("telegram", {})
@@ -954,6 +968,8 @@ async def run() -> None:
                 best_preset_name=virtual_tracker.best_preset(symbol),
                 base_settings=settings,
             )
+
+        weight_rebalancer.on_candle_close(candle_ts)
 
         export(
             symbol, timeframe, mode_manager.current_mode,

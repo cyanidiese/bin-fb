@@ -58,6 +58,9 @@ class FakeOrder:
         candle_index: int,
         partial_take_pct: float = 0.0,
         trailing_stop_pct: float = 0.0,
+        max_losing_pct: float = 0.0,
+        max_losing_candles: int = 0,
+        early_loss_sl: float = 0.0,
     ):
         self.side = side
         self.entry_price = entry_price
@@ -89,6 +92,12 @@ class FakeOrder:
             self._partial_price = None
             self._max_favorable = entry_price
 
+        self._max_losing_pct = max_losing_pct
+        self._max_losing_candles = max_losing_candles
+        self._early_loss_sl = early_loss_sl
+        self._consecutive_losing_candles: int = 0
+        self._last_losing_candle: int = -1
+
     # ------------------------------------------------------------------ #
     # Per-candle check                                                     #
     # ------------------------------------------------------------------ #
@@ -100,6 +109,7 @@ class FakeOrder:
         candle_index: int,
         candle_open: Optional[float] = None,
         candle_close: Optional[float] = None,
+        update_losing_candles: bool = True,
     ) -> Optional[str]:
         """
         Check whether this candle closes the order.
@@ -117,6 +127,35 @@ class FakeOrder:
 
         # Capture armed state BEFORE updating it for this candle.
         was_armed = self._partial_armed
+
+        # Early loss exit — only fires when not yet armed (not yet in profit).
+        if not was_armed:
+            ep = self._early_exit_price
+            if ep > 0:
+                if self.side == 'BUY' and low <= ep:
+                    self._close('loss', ep, candle_index)
+                    return 'loss'
+                elif self.side == 'SELL' and high >= ep:
+                    self._close('loss', ep, candle_index)
+                    return 'loss'
+
+            if (self._max_losing_candles > 0
+                    and candle_close is not None
+                    and update_losing_candles
+                    and candle_index != self._last_losing_candle):
+                self._last_losing_candle = candle_index
+                wrong_side = (
+                    (self.side == 'BUY' and candle_close < self.entry_price) or
+                    (self.side == 'SELL' and candle_close > self.entry_price)
+                )
+                if wrong_side:
+                    self._consecutive_losing_candles += 1
+                    if self._consecutive_losing_candles >= self._max_losing_candles:
+                        self._close('loss', candle_close, candle_index)
+                        return 'loss'
+                else:
+                    self._consecutive_losing_candles = 0
+
         if self._partial_price is not None and not self._partial_armed:
             if (self.side == 'BUY' and high >= self._partial_price) or \
                (self.side == 'SELL' and low <= self._partial_price):
@@ -181,9 +220,13 @@ class FakeOrder:
         return None
 
     def check_price(self, current_price: float) -> Optional[str]:
-        """For live/test mode: check a single price against TP/SL/trail.
-        Delegates to check() with current_price as both high and low."""
-        return self.check(current_price, current_price, self.open_candle, current_price, current_price)
+        """For live/test mode: check a single price against TP/SL/trail/early-exit.
+        Never updates the consecutive-losing-candles counter."""
+        return self.check(
+            current_price, current_price, self.open_candle,
+            current_price, current_price,
+            update_losing_candles=False,
+        )
 
     def _check_trail(self, high: float, low: float, candle_index: int) -> Optional[str]:
         if self.side == 'BUY':
@@ -203,6 +246,24 @@ class FakeOrder:
                 self._close('trail', trail_price, candle_index)
                 return 'trail'
         return None
+
+    @property
+    def _early_exit_price(self) -> float:
+        """The tighter (closer-to-entry) of the pct-based and amount-based early exit thresholds.
+        Returns 0.0 when both are disabled."""
+        prices: list[float] = []
+        if self._max_losing_pct > 0 and self.sl > 0:
+            sl_dist = abs(self.sl - self.entry_price)
+            frac = min(self._max_losing_pct, 100.0) / 100.0
+            if self.side == 'BUY':
+                prices.append(self.entry_price - sl_dist * frac)
+            else:
+                prices.append(self.entry_price + sl_dist * frac)
+        if self._early_loss_sl > 0:
+            prices.append(self._early_loss_sl)
+        if not prices:
+            return 0.0
+        return max(prices) if self.side == 'BUY' else min(prices)
 
     # ------------------------------------------------------------------ #
     # Stats helpers                                                        #
@@ -261,6 +322,11 @@ class FakeOrder:
             '_best_price': self._best_price,
             '_worst_price': self._worst_price,
             '_max_favorable': self._max_favorable,
+            '_max_losing_pct': self._max_losing_pct,
+            '_max_losing_candles': self._max_losing_candles,
+            '_early_loss_sl': self._early_loss_sl,
+            '_consecutive_losing_candles': self._consecutive_losing_candles,
+            '_last_losing_candle': self._last_losing_candle,
         }
 
     @classmethod
@@ -283,6 +349,11 @@ class FakeOrder:
         obj._best_price = state['_best_price']
         obj._worst_price = state['_worst_price']
         obj._max_favorable = state['_max_favorable']
+        obj._max_losing_pct = state.get('_max_losing_pct', 0.0)
+        obj._max_losing_candles = state.get('_max_losing_candles', 0)
+        obj._early_loss_sl = state.get('_early_loss_sl', 0.0)
+        obj._consecutive_losing_candles = state.get('_consecutive_losing_candles', 0)
+        obj._last_losing_candle = state.get('_last_losing_candle', -1)
         return obj
 
     @classmethod

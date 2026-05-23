@@ -26,6 +26,14 @@ const DEFAULT_CONFIG = {
   min_balance_pct: 15.0,
   telegram_notify_interval_s: 120,
   scenario: 'default',
+  weight_rebalancer: {
+    enabled: false,
+    rebalance_candles: 96,
+    backtest_window_candles: 96,
+    real_pnl_alpha: 0.5,
+    blend_rate: 0.15,
+    weight_floor_ratio: 0.3,
+  },
 }
 
 function readJson(filePath: string, fallback: unknown) {

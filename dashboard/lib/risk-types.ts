@@ -20,6 +20,29 @@ export interface RiskConfig {
   min_balance_pct: number
   scenario?: string
   symbol_leverage?: Record<string, number>
+  weight_rebalancer?: WeightRebalancerConfig
+}
+
+export interface WeightRebalancerConfig {
+  enabled: boolean
+  rebalance_candles: number
+  backtest_window_candles: number
+  real_pnl_alpha: number
+  blend_rate: number
+  weight_floor_ratio: number
+}
+
+export interface WeightRebalanceSymbolEntry {
+  backtest_pct: number
+  real_pnl_usdt: number
+  score: number
+  old_weight: number
+  new_weight: number
+}
+
+export interface WeightRebalanceLogEntry {
+  ts: number
+  symbols: Record<string, WeightRebalanceSymbolEntry>
 }
 
 export interface PerSymbol {

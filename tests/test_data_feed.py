@@ -1,6 +1,7 @@
 # tests/test_data_feed.py
 import asyncio
 import json
+import os
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -165,3 +166,44 @@ async def test_stream_combined_new_open_time_dispatches_again():
     await _run_feed(feed, msgs, fake_candle, fake_price, ['BTCUSDT'])
 
     assert candles == [4000000, 4900000]
+
+
+# ── has_gap() ──────────────────────────────────────────────────────────── #
+
+def make_kline(open_ms: int, interval_ms: int) -> list:
+    """Returns a minimal kline: [open_ms, o, h, l, c, v, close_ms]."""
+    return [open_ms, '1.0', '1.0', '1.0', '1.0', '1.0', open_ms + interval_ms - 1]
+
+
+def test_has_gap_no_cache_returns_false(tmp_path, monkeypatch):
+    """Missing cache → no gap assumed (safe default)."""
+    feed = make_feed()
+    monkeypatch.chdir(tmp_path)
+    os.makedirs('data', exist_ok=True)
+    assert feed.has_gap('BTCUSDT', '15m', 1_000_000) is False
+
+
+def test_has_gap_sequential_candle_returns_false(tmp_path, monkeypatch):
+    """Incoming candle opens exactly one interval after last cache close → no gap."""
+    feed = make_feed()
+    monkeypatch.chdir(tmp_path)
+    os.makedirs('data', exist_ok=True)
+    interval_ms = 15 * 60 * 1000
+    k = make_kline(0, interval_ms)         # close_ms = interval_ms - 1
+    cache_path = tmp_path / 'data' / 'BTCUSDT_15m_test.json'
+    cache_path.write_text(json.dumps([k]))
+    # Next candle opens at interval_ms (immediately after previous close)
+    assert feed.has_gap('BTCUSDT', '15m', interval_ms) is False
+
+
+def test_has_gap_with_gap_returns_true(tmp_path, monkeypatch):
+    """Incoming candle opens more than one interval after last cache close → gap."""
+    feed = make_feed()
+    monkeypatch.chdir(tmp_path)
+    os.makedirs('data', exist_ok=True)
+    interval_ms = 15 * 60 * 1000
+    k = make_kline(0, interval_ms)
+    cache_path = tmp_path / 'data' / 'BTCUSDT_15m_test.json'
+    cache_path.write_text(json.dumps([k]))
+    # Two intervals later = definitely a gap
+    assert feed.has_gap('BTCUSDT', '15m', interval_ms * 2 + 1) is True

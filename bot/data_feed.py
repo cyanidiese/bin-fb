@@ -135,6 +135,17 @@ class DataFeed:
         logger.info(f"Kline cache refreshed: {len(merged)} candles")
         return merged
 
+    def has_gap(self, symbol: str, timeframe: str, incoming_open_ms: int) -> bool:
+        """Return True if incoming_open_ms is more than one candle-interval after the
+        last cached candle's close time. Returns False if cache is missing or unreadable."""
+        cache_path = self._cache_path(symbol, timeframe)
+        cached = self._read_cache(cache_path)
+        if not cached:
+            return False
+        last_close_ms = int(cached[-1][6])
+        candle_ms = self._timeframe_to_ms(timeframe)
+        return incoming_open_ms > last_close_ms + candle_ms
+
     def _fetch(self, symbol: str, timeframe: str, limit: int, start_ms: Optional[int] = None) -> list:
         params = {'symbol': symbol, 'interval': timeframe, 'limit': limit}
         if start_ms is not None:

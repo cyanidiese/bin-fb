@@ -35,6 +35,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
 _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
+KLINE_REFRESH_EVERY = 4   # refresh once every N candles per symbol
+KLINE_STAGGER_SECS = 2    # seconds between each symbol's background refresh task
 
 
 def _tf_to_ms(timeframe: str) -> int:
@@ -336,6 +338,7 @@ async def run() -> None:
     _EXCHANGE_REFRESH_CANDLES = 96
     _candle_counter: list[int] = [0]
     _last_refresh_candle_open: list[int] = [0]
+    _kline_refresh_counters: dict[str, int] = {}
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
     _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
@@ -718,6 +721,14 @@ async def run() -> None:
         else:
             _loss_streak[sk] = 0
 
+    async def _refresh_klines_bg(symbol: str, count: int, stagger: float) -> None:
+        if stagger > 0:
+            await asyncio.sleep(stagger)
+        try:
+            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, count)
+        except Exception as _e:
+            logger.debug(f"[{symbol}] Background kline refresh failed: {_e}")
+
     async def on_candle_close(symbol: str, kline: list) -> None:
         nonlocal risk_cfg, _active_scenario_name, scenario
 
@@ -779,13 +790,23 @@ async def run() -> None:
         settings = sym_settings[symbol]
         analyzer = analyzers[symbol]
 
+        incoming_open_ms = int(kline[0])
         try:
-            refreshed = await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 20)
-        except Exception as e:
-            logger.warning(f"[{symbol}] Kline refresh failed, using WebSocket candle: {e}")
-            refreshed = None
+            if feed.has_gap(symbol, timeframe, incoming_open_ms):
+                asyncio.create_task(_refresh_klines_bg(symbol, count=100, stagger=0))
+            else:
+                _kline_refresh_counters[symbol] = _kline_refresh_counters.get(symbol, 0) + 1
+                if _kline_refresh_counters[symbol] >= KLINE_REFRESH_EVERY:
+                    _kline_refresh_counters[symbol] = 0
+                    _syms_list = symbol_registry.get_symbols()
+                    _idx = _syms_list.index(symbol) if symbol in _syms_list else 0
+                    asyncio.create_task(
+                        _refresh_klines_bg(symbol, count=20, stagger=_idx * KLINE_STAGGER_SECS)
+                    )
+        except Exception as _gap_e:
+            logger.debug(f"[{symbol}] Gap check error: {_gap_e}")
 
-        candle_to_add = refreshed[-1] if refreshed else kline
+        candle_to_add = kline
         recs = analyzer.add_candle(candle_to_add)
         best_for_this = analyzer.get_best_recommendation()
 

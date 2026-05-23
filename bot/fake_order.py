@@ -260,7 +260,10 @@ class FakeOrder:
             else:
                 prices.append(self.entry_price + sl_dist * frac)
         if self._early_loss_sl > 0:
-            prices.append(self._early_loss_sl)
+            if self.side == 'BUY' and self._early_loss_sl < self.entry_price:
+                prices.append(self._early_loss_sl)
+            elif self.side == 'SELL' and self._early_loss_sl > self.entry_price:
+                prices.append(self._early_loss_sl)
         if not prices:
             return 0.0
         return max(prices) if self.side == 'BUY' else min(prices)
@@ -376,6 +379,11 @@ class FakeOrder:
         obj._best_price = d.get('best_price', d['entry'])
         obj._worst_price = d.get('worst_price', d['entry'])
         obj._max_favorable = d.get('best_price', d['entry'])
+        obj._max_losing_pct = 0.0
+        obj._max_losing_candles = 0
+        obj._early_loss_sl = 0.0
+        obj._consecutive_losing_candles = 0
+        obj._last_losing_candle = -1
         return obj
 
     def _close(self, result: str, price: float, candle_index: int) -> None:

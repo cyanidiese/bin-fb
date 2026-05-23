@@ -3,12 +3,25 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-_MIN_TRADES = 8  # combined real + virtual trades before live score overrides the backtest seed
+def _score(stats: dict, min_trades: int) -> tuple[int, float]:
+    """Two-tier score: Tier 1 (live-proven) always beats Tier 2 (seed-only).
+
+    Tier 1: trade_count >= min_trades → ranked by live total_winning_usdt.
+    Tier 2: trade_count <  min_trades → ranked by seeded_winning_usdt (backtest).
+    Python tuple comparison ensures any (1, x) > any (0, y).
+    """
+    count = stats.get("trade_count", 0)
+    if count >= min_trades:
+        return (1, stats.get("total_winning_usdt", 0.0))
+    return (0, stats.get("seeded_winning_usdt", 0.0))
+
+
 _SENTINEL = object()  # distinguishes "never seen" from None in _last_best
 
 
@@ -18,10 +31,12 @@ class VirtualTracker:
         mode: Literal["test", "live"],
         orders_path: Path,
         efficiency_path: Path,
+        get_min_trades: Callable[[str], int] = lambda _: 3,
     ) -> None:
         self._mode = mode
         self._orders_path = orders_path
         self._efficiency_path = efficiency_path
+        self._get_min_trades = get_min_trades
         self._efficiency: dict = self._load_efficiency()
         self._last_best: dict[str, str | None] = {}
 
@@ -69,17 +84,9 @@ class VirtualTracker:
         if not symbol_data:
             return None
 
-        def _score(stats: dict) -> float:
-            count = stats.get("trade_count", 0)
-            seeded = stats.get("seeded_winning_usdt", 0.0)
-            live = stats.get("total_winning_usdt", 0.0)
-            # Pure seeded until MIN_TRADES to prevent early trades from displacing an established preset
-            if count >= _MIN_TRADES:
-                return live
-            return seeded
-
-        best = max(symbol_data, key=lambda n: _score(symbol_data[n]))
-        result = best if _score(symbol_data[best]) >= 0 else None
+        min_t = self._get_min_trades(symbol)
+        best = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t))
+        result = best if _score(symbol_data[best], min_t)[1] >= 0 else None
 
         prev = self._last_best.get(symbol, _SENTINEL)
         if prev is not _SENTINEL and prev != result:
@@ -90,11 +97,11 @@ class VirtualTracker:
                 f"prev(cnt={prev_stats.get('trade_count', 0)}, "
                 f"seeded={prev_stats.get('seeded_winning_usdt', 0.0):.2f}, "
                 f"live={prev_stats.get('total_winning_usdt', 0.0):.2f}, "
-                f"score={_score(prev_stats):.2f}) | "
+                f"score={_score(prev_stats, min_t)}) | "
                 f"new(cnt={new_stats.get('trade_count', 0)}, "
                 f"seeded={new_stats.get('seeded_winning_usdt', 0.0):.2f}, "
                 f"live={new_stats.get('total_winning_usdt', 0.0):.2f}, "
-                f"score={_score(new_stats):.2f})"
+                f"score={_score(new_stats, min_t)})"
             )
         self._last_best[symbol] = result
         return result
@@ -106,21 +113,13 @@ class VirtualTracker:
         symbol_data = self._efficiency.get(symbol, {})
         if not symbol_data:
             return 0.0
-        best = float('-inf')
-        for stats in symbol_data.values():
-            count = stats.get('trade_count', 0)
-            seeded = stats.get('seeded_winning_usdt', 0.0)
-            live = stats.get('total_winning_usdt', 0.0)
-            score = live if count >= _MIN_TRADES else seeded
-            best = max(best, score)
-        return best if best != float('-inf') else 0.0
+        min_t = self._get_min_trades(symbol)
+        best_tuple = max(_score(stats, min_t) for stats in symbol_data.values())
+        return best_tuple[1]
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})
-        count = stats.get('trade_count', 0)
-        seeded = stats.get('seeded_winning_usdt', 0.0)
-        live = stats.get('total_winning_usdt', 0.0)
-        return live if count >= _MIN_TRADES else seeded
+        return _score(stats, self._get_min_trades(symbol))[1]
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)

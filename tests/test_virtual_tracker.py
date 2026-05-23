@@ -4,11 +4,12 @@ from pathlib import Path
 from bot.virtual_tracker import VirtualTracker
 
 
-def _make_tracker(tmp_path, mode='test'):
+def _make_tracker(tmp_path, mode='test', min_trades=3):
     return VirtualTracker(
         mode=mode,
         orders_path=tmp_path / f"virtual_orders_{mode}.json",
         efficiency_path=tmp_path / f"preset_efficiency_{mode}.json",
+        get_min_trades=lambda _: min_trades,
     )
 
 
@@ -41,7 +42,7 @@ def test_seed_from_backtest(tmp_path):
 
 def test_best_preset_selection(tmp_path):
     tracker = _make_tracker(tmp_path)
-    # _MIN_TRADES = 8; counts below that fall back to seeded_winning_usdt (0)
+    # count=8,9 >= min_trades(3) → Tier 1, ranked by live. count=2 < 3 → Tier 2 (seed=0).
     tracker._set_efficiency("BTCUSDT", "slow", total_winning=100.0, count=8)
     tracker._set_efficiency("BTCUSDT", "fast", total_winning=250.0, count=9)
     tracker._set_efficiency("BTCUSDT", "too_few", total_winning=999.0, count=2)
@@ -68,8 +69,8 @@ def test_record_closed_trade_loss_reduces_score(tmp_path):
 
 
 def test_best_preset_returned_when_score_is_zero(tmp_path):
-    # Below _MIN_TRADES, _score falls back to seeded_winning_usdt which defaults to 0.
-    # score=0 is no worse than 'default'; the best preset should be returned (not None).
+    # count=2 < min_trades(3) → Tier 2, score uses seeded_winning_usdt which defaults to 0.
+    # score value 0 >= 0, so best preset is returned (not None).
     tracker = _make_tracker(tmp_path)
     tracker._set_efficiency("BTCUSDT", "p1", total_winning=999.0, count=2)
     assert tracker.best_preset("BTCUSDT") == "p1"
@@ -80,3 +81,44 @@ def test_best_preset_returns_none_only_when_all_scores_negative(tmp_path):
     tracker = _make_tracker(tmp_path)
     tracker._set_efficiency("BTCUSDT", "p1", total_winning=-10.0, count=10)
     assert tracker.best_preset("BTCUSDT") is None
+
+
+def test_tier1_always_beats_tier2_regardless_of_seed(tmp_path):
+    # A live-proven preset with $1 live P&L must beat a seed-only preset with $1000 seed.
+    tracker = _make_tracker(tmp_path, min_trades=3)
+    # Tier 2: huge seed, no live trades
+    tracker._set_efficiency("BTCUSDT", "seed_giant", total_winning=0.0, count=0)
+    tracker._efficiency["BTCUSDT"]["seed_giant"]["seeded_winning_usdt"] = 1000.0
+    # Tier 1: modest live profit, enough trades
+    tracker._set_efficiency("BTCUSDT", "live_small", total_winning=1.0, count=3)
+    assert tracker.best_preset("BTCUSDT") == "live_small"
+
+
+def test_losing_champion_dethroned_by_better_live_challenger(tmp_path):
+    # Mirrors the TIAUSDT scenario: champion has 4 real trades at -$14,
+    # challenger has 5 virtual trades at +$66. Challenger must win.
+    tracker = _make_tracker(tmp_path, min_trades=3)
+    tracker._set_efficiency("BTCUSDT", "champion", total_winning=-14.0, count=4)
+    tracker._set_efficiency("BTCUSDT", "challenger", total_winning=66.0, count=5)
+    assert tracker.best_preset("BTCUSDT") == "challenger"
+
+
+def test_seed_determines_rank_when_no_preset_has_enough_trades(tmp_path):
+    # With min_trades=3, if all presets have count < 3, seeded_winning_usdt decides.
+    tracker = _make_tracker(tmp_path, min_trades=3)
+    tracker._set_efficiency("BTCUSDT", "low_seed", total_winning=500.0, count=2)
+    tracker._efficiency["BTCUSDT"]["low_seed"]["seeded_winning_usdt"] = 10.0
+    tracker._set_efficiency("BTCUSDT", "high_seed", total_winning=0.0, count=1)
+    tracker._efficiency["BTCUSDT"]["high_seed"]["seeded_winning_usdt"] = 200.0
+    assert tracker.best_preset("BTCUSDT") == "high_seed"
+
+
+def test_custom_min_trades_per_symbol(tmp_path):
+    # With min_trades=5, a preset with count=4 is still Tier 2 (seed-only).
+    tracker = _make_tracker(tmp_path, min_trades=5)
+    tracker._set_efficiency("BTCUSDT", "almost_live", total_winning=100.0, count=4)
+    tracker._efficiency["BTCUSDT"]["almost_live"]["seeded_winning_usdt"] = 5.0
+    tracker._set_efficiency("BTCUSDT", "seed_winner", total_winning=0.0, count=0)
+    tracker._efficiency["BTCUSDT"]["seed_winner"]["seeded_winning_usdt"] = 50.0
+    # count=4 < min_trades=5 → Tier 2 with seed=5; seed_winner has seed=50 → wins
+    assert tracker.best_preset("BTCUSDT") == "seed_winner"

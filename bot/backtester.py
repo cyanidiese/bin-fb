@@ -366,6 +366,9 @@ class Backtester:
                         candle_index=i + 1,
                         partial_take_pct=settings.partial_take_pct,
                         trailing_stop_pct=settings.trailing_stop_pct,
+                        max_losing_pct=settings.max_losing_pct,
+                        max_losing_candles=settings.max_losing_candles,
+                        early_loss_sl=0.0,
                     )
                     break  # entered — stop checking this candle's price path
 

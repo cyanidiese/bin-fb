@@ -78,28 +78,44 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   const allRawScores = availableSymbols
     .map(sym => state?.per_symbol[sym]?.performance_score ?? null)
     .filter((s): s is number => s !== null)
-  const loScore = allRawScores.length > 0 ? Math.min(...allRawScores) : 0
-  const hiScore = allRawScores.length > 0 ? Math.max(...allRawScores) : 0
+
+  // In BGF mode, effective score = raw × weight (mirrors the backend BGF allocation formula).
+  // Weight multipliers let drag position influence allocation and leverage.
+  const effectiveScoreOf = (sym: string): number => {
+    const raw = state?.per_symbol[sym]?.performance_score ?? null
+    if (raw === null) return 0
+    const w = bgfMode ? Math.max(0, config.symbol_weights[sym] ?? 1) : 1
+    return Math.max(0, raw) * w
+  }
+
+  // Use effective scores for the leverage cross-score range in BGF mode.
+  const allEffScores = bgfMode
+    ? availableSymbols
+        .filter(sym => state?.per_symbol[sym]?.performance_score != null)
+        .map(sym => effectiveScoreOf(sym))
+    : allRawScores
+  const loScore = allEffScores.length > 0 ? Math.min(...allEffScores) : 0
+  const hiScore = allEffScores.length > 0 ? Math.max(...allEffScores) : 0
 
   function computeLeverage(sym: string): number {
     const raw = state?.per_symbol[sym]?.performance_score ?? null
     if (raw === null) return config.base_leverage
-    const crossScore = hiScore > loScore ? (raw - loScore) / (hiScore - loScore) : 1.0
+    const score = bgfMode ? effectiveScoreOf(sym) : raw
+    const crossScore = hiScore > loScore ? (score - loScore) / (hiScore - loScore) : 1.0
     const lev = config.base_leverage + Math.floor(crossScore * (effectiveMax - config.base_leverage))
     return Math.max(config.base_leverage, Math.min(effectiveMax, lev))
   }
 
   // BGF: determine which symbols are in the active top-N set.
-  // Score ranking is always by profit% desc, independent of the user's display sort.
-  // null score (no backtest yet) sorts below all real scores including 0.
+  // Ranked by effective score (raw × weight) so drag position influences top-N membership.
   const scoreRanked = bgfMode
     ? [...availableSymbols].sort((a, b) => {
-        const sa = state?.per_symbol[a]?.performance_score ?? null
-        const sb = state?.per_symbol[b]?.performance_score ?? null
-        if (sa === null && sb === null) return 0
-        if (sa === null) return 1   // null goes last
-        if (sb === null) return -1
-        return sb - sa
+        const rawA = state?.per_symbol[a]?.performance_score ?? null
+        const rawB = state?.per_symbol[b]?.performance_score ?? null
+        if (rawA === null && rawB === null) return 0
+        if (rawA === null) return 1   // null goes last
+        if (rawB === null) return -1
+        return effectiveScoreOf(b) - effectiveScoreOf(a)
       })
     : availableSymbols
 
@@ -110,7 +126,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   // totalScore sums only the active (top-N) symbols so excluded ones don't dilute shares
   const totalScore = bgfMode
     ? scoreRanked.slice(0, effectiveN).reduce(
-        (sum, sym) => sum + Math.max(0, state?.per_symbol[sym]?.performance_score ?? 0), 0
+        (sum, sym) => sum + effectiveScoreOf(sym), 0
       )
     : 0
 
@@ -123,20 +139,26 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   const sortedSymbols = bgfMode ? [...availableSymbols].sort((a, b) => {
     const scoreA = state?.per_symbol[a]?.performance_score ?? null
     const scoreB = state?.per_symbol[b]?.performance_score ?? null
-    const scoreANum = scoreA ?? 0
-    const scoreBNum = scoreB ?? 0
     const activeA = activeSet!.has(a)
     const activeB = activeSet!.has(b)
     const groupA = activeA ? 0 : scoreA === null ? 2 : 1
     const groupB = activeB ? 0 : scoreB === null ? 2 : 1
     if (groupA !== groupB) return groupA - groupB
-    const shareA = totalScore > 0 && activeA ? scoreANum / totalScore : 0
-    const shareB = totalScore > 0 && activeB ? scoreBNum / totalScore : 0
+    const effA = effectiveScoreOf(a)
+    const effB = effectiveScoreOf(b)
+    const wa = config.symbol_weights[a] ?? 1
+    const wb = config.symbol_weights[b] ?? 1
+    const shareA = totalScore > 0 && activeA ? effA / totalScore : 0
+    const shareB = totalScore > 0 && activeB ? effB / totalScore : 0
     const levA = config.symbol_leverage?.[a] ?? computeLeverage(a)
     const levB = config.symbol_leverage?.[b] ?? computeLeverage(b)
     let cmp = 0
     if (sortCol === 'symbol') cmp = a.localeCompare(b)
-    else if (sortCol === 'score') cmp = scoreANum - scoreBNum
+    else if (sortCol === 'score') {
+      // Default sort: weight desc so drag order is preserved on reload.
+      // Equal weights (before first drag): effective score desc = natural BGF order.
+      cmp = wa !== wb ? wa - wb : effA - effB
+    }
     else if (sortCol === 'alloc') cmp = shareA - shareB
     else if (sortCol === 'usdt') cmp = (deployable * shareA) - (deployable * shareB)
     else if (sortCol === 'leverage') cmp = levA - levB
@@ -277,8 +299,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   if (bgfMode) {
                     const isActive = activeSet!.has(sym)
                     const rawScore = live?.performance_score ?? null  // null = no backtest yet
-                    const score = rawScore ?? 0
-                    const share = (isActive && totalScore > 0) ? score / totalScore : 0
+                    const effScore = effectiveScoreOf(sym)
+                    const share = (isActive && totalScore > 0) ? effScore / totalScore : 0
                     const allocPct = (share * 100).toFixed(1)
                     const allocUSDT = deployable * share
                     const rowCls = isActive

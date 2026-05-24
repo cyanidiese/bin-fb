@@ -161,10 +161,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     const n = newOrder.length
     const newWeights: Record<string, number> = {}
     newOrder.forEach((sym, i) => { newWeights[sym] = n - i })
+    setDragOrder(newOrder)
     patchConfig({ symbol_weights: newWeights })
-    // Clear drag state — the parent will re-render with the new weights which
-    // become the canonical order, so we no longer need to hold it locally.
-    setDragOrder(null)
   }
 
   function SortHdr({ col, children, title }: { col: SortCol; children: React.ReactNode; title?: string }) {

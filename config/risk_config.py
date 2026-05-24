@@ -56,6 +56,12 @@ DEFAULT_CONFIG: dict = {
     # Global per-order loss cap: close any order whose unrealized loss exceeds this USDT amount.
     # 0 = disabled. Applied in both live/test trading and backtest simulation.
     "max_loss_usdt": 25.0,
+    # Per-symbol USDT overrides — replace the global cap for specific symbols.
+    "max_loss_usdt_per_symbol": {},
+    # TP-ratio cap: also cap loss at (ratio × tp_distance_usdt) per order.
+    # Takes the tighter of this and the USDT cap. 0 = disabled.
+    # Example: 1.5 means "never lose more than 1.5× the potential profit on this trade."
+    "max_loss_tp_ratio": 0.0,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

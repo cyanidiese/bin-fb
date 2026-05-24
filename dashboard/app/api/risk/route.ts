@@ -37,6 +37,8 @@ const DEFAULT_CONFIG = {
   min_trades_for_ranking: 3,
   min_trades_for_ranking_per_symbol: {} as Record<string, number>,
   max_loss_usdt: 25,
+  max_loss_usdt_per_symbol: {} as Record<string, number>,
+  max_loss_tp_ratio: 0,
 }
 
 function readJson(filePath: string, fallback: unknown) {

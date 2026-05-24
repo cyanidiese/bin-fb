@@ -199,13 +199,21 @@ class OrderExecutor:
                     else:
                         _early_loss_sl = entry + max_losing_amount_usdt / rounded_qty
                 # Apply global max-loss cap from risk config (tighter of preset and global wins)
-                _global_max_loss = load_risk_config().get("max_loss_usdt", 0.0)
-                if _global_max_loss > 0 and rounded_qty > 0:
+                _rl = load_risk_config()
+                _base_cap = _rl.get("max_loss_usdt", 0.0)
+                _sym_cap = _rl.get("max_loss_usdt_per_symbol", {}).get(symbol, _base_cap)
+                _tp_ratio = _rl.get("max_loss_tp_ratio", 0.0)
+                _effective_cap = _sym_cap
+                if _tp_ratio > 0 and _effective_cap > 0 and rounded_qty > 0:
+                    _tp_usdt = abs(tp - entry) * rounded_qty
+                    if _tp_usdt > 0:
+                        _effective_cap = min(_effective_cap, _tp_ratio * _tp_usdt)
+                if _effective_cap > 0 and rounded_qty > 0:
                     if side == 'BUY':
-                        _g_sl = entry - _global_max_loss / rounded_qty
+                        _g_sl = entry - _effective_cap / rounded_qty
                         _early_loss_sl = max(_early_loss_sl, _g_sl) if _early_loss_sl > 0 else _g_sl
                     else:
-                        _g_sl = entry + _global_max_loss / rounded_qty
+                        _g_sl = entry + _effective_cap / rounded_qty
                         _early_loss_sl = min(_early_loss_sl, _g_sl) if _early_loss_sl > 0 else _g_sl
                 self._fake_orders[symbol] = FakeOrder(
                     side=side,

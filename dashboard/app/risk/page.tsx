@@ -12,6 +12,7 @@ import LeverageControls from '@/components/risk/LeverageControls'
 import DrawdownGuard from '@/components/risk/DrawdownGuard'
 import LiveRiskState from '@/components/risk/LiveRiskState'
 import PresetRankingSection from '@/components/risk/PresetRankingSection'
+import MaxLossSection from '@/components/risk/MaxLossSection'
 
 const POLL_MS = 5000
 
@@ -130,6 +131,12 @@ export default function RiskPage() {
       )}
 
       <PresetRankingSection
+        config={config}
+        availableSymbols={availableSymbols}
+        patchConfig={patchConfig}
+      />
+
+      <MaxLossSection
         config={config}
         availableSymbols={availableSymbols}
         patchConfig={patchConfig}

@@ -181,12 +181,16 @@ class Backtester:
         peak_balance = balance
         hard_stop_pct = 20.0
         max_loss_usdt = 0.0
+        max_loss_per_symbol: dict = {}
+        max_loss_tp_ratio = 0.0
         max_notional = 500.0
         if self._initial_balance > 0 and self._risk_config_path is not None:
             from config.risk_config import load_risk_config
             _cfg = load_risk_config(self._risk_config_path)
             hard_stop_pct = _cfg.get("drawdown_hard_stop_pct", 20.0)
             max_loss_usdt = _cfg.get("max_loss_usdt", 0.0)
+            max_loss_per_symbol = _cfg.get("max_loss_usdt_per_symbol", {})
+            max_loss_tp_ratio = _cfg.get("max_loss_tp_ratio", 0.0)
             max_notional = _cfg.get("max_order_notional_usdt", 500.0)
         result.balance_start = balance
         drawdown_triggered = False
@@ -361,12 +365,20 @@ class Backtester:
                                 continue
 
                     _bt_early_loss_sl = 0.0
-                    if max_loss_usdt > 0 and max_notional > 0 and entry_price > 0:
+                    _bt_sym = self._base.symbol
+                    _bt_base_cap = max_loss_per_symbol.get(_bt_sym, max_loss_usdt)
+                    _bt_cap = _bt_base_cap
+                    if max_notional > 0 and entry_price > 0:
                         _approx_qty = max_notional / entry_price
-                        if side == 'BUY':
-                            _bt_early_loss_sl = entry_price - max_loss_usdt / _approx_qty
-                        else:
-                            _bt_early_loss_sl = entry_price + max_loss_usdt / _approx_qty
+                        if _bt_cap > 0 and max_loss_tp_ratio > 0:
+                            _tp_usdt = abs(tp - entry_price) * _approx_qty
+                            if _tp_usdt > 0:
+                                _bt_cap = min(_bt_cap, max_loss_tp_ratio * _tp_usdt)
+                        if _bt_cap > 0:
+                            if side == 'BUY':
+                                _bt_early_loss_sl = entry_price - _bt_cap / _approx_qty
+                            else:
+                                _bt_early_loss_sl = entry_price + _bt_cap / _approx_qty
                     open_order = FakeOrder(
                         side=side,
                         entry_price=entry_price,

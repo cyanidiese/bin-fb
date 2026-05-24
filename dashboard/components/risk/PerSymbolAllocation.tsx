@@ -346,6 +346,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                   }
                   const w = config.symbol_weights[sym] ?? 1
                   const allocPct = (w / totalWeight * 100).toFixed(1)
+                  const allocUsdt = (w / totalWeight) * deployable
+                  const lev = config.symbol_leverage?.[sym] ?? computeLeverage(sym)
                   return (
                     <SortableRow key={sym} id={sym}>
                       {(listeners) => (
@@ -369,11 +371,9 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                           </td>
                           <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
                           <td className="py-1.5 pr-4 text-gray-400">
-                            {live ? `$${live.allocation_usdt.toFixed(0)}` : '—'}
+                            {deployable > 0 ? `$${allocUsdt.toFixed(0)}` : (live ? `$${live.allocation_usdt.toFixed(0)}` : '—')}
                           </td>
-                          <td className="py-1.5 pr-4 text-gray-400">
-                            {live ? `${live.leverage}×` : '—'}
-                          </td>
+                          <td className="py-1.5 pr-4 text-gray-400">{lev}×</td>
                           <td className="py-1.5 text-gray-400">
                             {live?.performance_score != null ? `${live.performance_score.toFixed(2)}%` : '—'}
                           </td>

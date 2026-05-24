@@ -1,6 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { RiskConfig, RiskState } from '@/lib/risk-types'
 import { INPUT_CLS, SECTION_CLS, SECTION_HEADER_CLS, SECTION_BODY_CLS } from '@/lib/risk-styles'
 
@@ -15,9 +18,30 @@ interface Props {
   bgfMode?: boolean
 }
 
+const GripIcon = (
+  <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" className="text-gray-600 hover:text-gray-400 cursor-grab active:cursor-grabbing">
+    <circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/>
+    <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+    <circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/>
+  </svg>
+)
+
+function SortableRow({ id, children }: { id: string; children: (listeners: Record<string, unknown>, isDragging: boolean) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
+  return (
+    <tr ref={setNodeRef} style={style} {...attributes}>
+      {children(listeners ?? {}, isDragging)}
+    </tr>
+  )
+}
+
 export default function PerSymbolAllocation({ config, state, availableSymbols, patchConfig, bgfMode }: Props) {
   const [sortCol, setSortCol] = useState<SortCol>('score')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null)
+
+  const sensors = useSensors(useSensor(PointerSensor))
 
   function toggleSort(col: SortCol) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -119,6 +143,30 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     return sortDir === 'asc' ? cmp : -cmp
   }) : availableSymbols
 
+  // When the parent provides a new sort order (config or state changed), drop any
+  // stale drag state so the external order takes precedence again.
+  useEffect(() => {
+    setDragOrder(null)
+  }, [sortedSymbols.join(',')])
+
+  const displayOrder = dragOrder ?? sortedSymbols
+
+  function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIdx = displayOrder.indexOf(active.id as string)
+    const newIdx = displayOrder.indexOf(over.id as string)
+    if (oldIdx === -1 || newIdx === -1) return
+    const newOrder = arrayMove(displayOrder, oldIdx, newIdx)
+    const n = newOrder.length
+    const newWeights: Record<string, number> = {}
+    newOrder.forEach((sym, i) => { newWeights[sym] = n - i })
+    patchConfig({ symbol_weights: newWeights })
+    // Clear drag state — the parent will re-render with the new weights which
+    // become the canonical order, so we no longer need to hold it locally.
+    setDragOrder(null)
+  }
+
   function SortHdr({ col, children, title }: { col: SortCol; children: React.ReactNode; title?: string }) {
     const active = sortCol === col
     return (
@@ -195,6 +243,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="text-gray-600 border-b border-gray-800">
+              {/* empty header cell for the drag handle column */}
+              <th className="w-5" />
               {bgfMode ? (
                 <>
                   <SortHdr col="symbol">Symbol</SortHdr>
@@ -216,104 +266,126 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
             </tr>
           </thead>
           <tbody>
-            {sortedSymbols.map(sym => {
-              const live = state?.per_symbol[sym]
-              if (bgfMode) {
-                const isActive = activeSet!.has(sym)
-                const rawScore = live?.performance_score ?? null  // null = no backtest yet
-                const score = rawScore ?? 0
-                const share = (isActive && totalScore > 0) ? score / totalScore : 0
-                const allocPct = (share * 100).toFixed(1)
-                const allocUSDT = deployable * share
-                const rowCls = isActive
-                  ? 'border-b border-gray-900 hover:bg-gray-900/40'
-                  : 'border-b border-gray-900 opacity-35'
-                return (
-                  <tr key={sym} className={rowCls}>
-                    <td className="py-1.5 pr-4 text-indigo-300 font-semibold">
-                      {sym}
-                      {!isActive && <span className="ml-1.5 text-gray-600 font-normal text-[10px]">{rawScore === null ? 'no data' : 'excluded'}</span>}
-                    </td>
-                    <td className="py-1.5 pr-4 text-gray-400">
-                      {rawScore !== null ? `${rawScore.toFixed(2)}%` : '—'}
-                    </td>
-                    <td className="py-1.5 pr-4 text-gray-400">{isActive ? `${allocPct}%` : '—'}</td>
-                    <td className="py-1.5 pr-4 text-gray-400">
-                      {isActive && deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
-                    </td>
-                    <td className="py-1.5 pr-4">
-                      {(() => {
-                        const savedLev = config.symbol_leverage?.[sym]
-                        const predictedLev = computeLeverage(sym)
-                        const isOverridden = savedLev !== undefined
-                        const displayLev = savedLev ?? predictedLev
-                        return (
-                          <div className="flex items-center gap-1">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={displayOrder} strategy={verticalListSortingStrategy}>
+                {displayOrder.map(sym => {
+                  const live = state?.per_symbol[sym]
+                  if (bgfMode) {
+                    const isActive = activeSet!.has(sym)
+                    const rawScore = live?.performance_score ?? null  // null = no backtest yet
+                    const score = rawScore ?? 0
+                    const share = (isActive && totalScore > 0) ? score / totalScore : 0
+                    const allocPct = (share * 100).toFixed(1)
+                    const allocUSDT = deployable * share
+                    const rowCls = isActive
+                      ? 'border-b border-gray-900 hover:bg-gray-900/40'
+                      : 'border-b border-gray-900 opacity-35'
+                    return (
+                      <SortableRow key={sym} id={sym}>
+                        {(listeners) => (
+                          <>
+                            <td className="py-1.5 pr-2 w-5">
+                              <span {...listeners} className="cursor-grab active:cursor-grabbing">
+                                {GripIcon}
+                              </span>
+                            </td>
+                            <td className={`py-1.5 pr-4 text-indigo-300 font-semibold ${!isActive ? 'opacity-35' : ''}`}>
+                              {sym}
+                              {!isActive && <span className="ml-1.5 text-gray-600 font-normal text-[10px]">{rawScore === null ? 'no data' : 'excluded'}</span>}
+                            </td>
+                            <td className={`py-1.5 pr-4 text-gray-400 ${!isActive ? 'opacity-35' : ''}`}>
+                              {rawScore !== null ? `${rawScore.toFixed(2)}%` : '—'}
+                            </td>
+                            <td className={`py-1.5 pr-4 text-gray-400 ${!isActive ? 'opacity-35' : ''}`}>{isActive ? `${allocPct}%` : '—'}</td>
+                            <td className={`py-1.5 pr-4 text-gray-400 ${!isActive ? 'opacity-35' : ''}`}>
+                              {isActive && deployable > 0 ? `$${allocUSDT.toFixed(0)}` : '—'}
+                            </td>
+                            <td className="py-1.5 pr-4">
+                              {(() => {
+                                const savedLev = config.symbol_leverage?.[sym]
+                                const predictedLev = computeLeverage(sym)
+                                const isOverridden = savedLev !== undefined
+                                const displayLev = savedLev ?? predictedLev
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      min={config.base_leverage}
+                                      max={effectiveMax}
+                                      step={1}
+                                      value={displayLev}
+                                      title={isOverridden
+                                        ? `Override: ${displayLev}× (auto would be ${predictedLev}×)`
+                                        : `Auto-computed: ${predictedLev}× — edit to override`}
+                                      onChange={e => {
+                                        const val = Math.max(config.base_leverage, Math.min(effectiveMax, parseInt(e.target.value, 10) || config.base_leverage))
+                                        patchConfig({ symbol_leverage: { ...(config.symbol_leverage ?? {}), [sym]: val } })
+                                      }}
+                                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs font-mono focus:outline-none focus:border-indigo-500 w-14"
+                                    />
+                                    <span className="text-gray-600 text-[10px]">×</span>
+                                    {isOverridden ? (
+                                      <button
+                                        onClick={() => {
+                                          const sl = { ...(config.symbol_leverage ?? {}) }
+                                          delete sl[sym]
+                                          patchConfig({ symbol_leverage: sl })
+                                        }}
+                                        title={`Reset to auto (${predictedLev}×)`}
+                                        className="text-[9px] text-amber-600 hover:text-amber-400 transition-colors leading-none"
+                                      >⟳</button>
+                                    ) : (
+                                      <span className="text-[9px] text-gray-700">auto</span>
+                                    )}
+                                  </div>
+                                )
+                              })()}
+                            </td>
+                          </>
+                        )}
+                      </SortableRow>
+                    )
+                  }
+                  const w = config.symbol_weights[sym] ?? 1
+                  const allocPct = (w / totalWeight * 100).toFixed(1)
+                  return (
+                    <SortableRow key={sym} id={sym}>
+                      {(listeners) => (
+                        <>
+                          <td className="py-1.5 pr-2 w-5">
+                            <span {...listeners} className="cursor-grab active:cursor-grabbing">
+                              {GripIcon}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-4 text-indigo-300 font-semibold">{sym}</td>
+                          <td className="py-1.5 pr-4">
                             <input
-                              type="number"
-                              min={config.base_leverage}
-                              max={effectiveMax}
-                              step={1}
-                              value={displayLev}
-                              title={isOverridden
-                                ? `Override: ${displayLev}× (auto would be ${predictedLev}×)`
-                                : `Auto-computed: ${predictedLev}× — edit to override`}
-                              onChange={e => {
-                                const val = Math.max(config.base_leverage, Math.min(effectiveMax, parseInt(e.target.value, 10) || config.base_leverage))
-                                patchConfig({ symbol_leverage: { ...(config.symbol_leverage ?? {}), [sym]: val } })
-                              }}
-                              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs font-mono focus:outline-none focus:border-indigo-500 w-14"
+                              type="number" min={1} step={1}
+                              value={w}
+                              title={`Relative capital weight for ${sym}.`}
+                              onChange={e => patchConfig({
+                                symbol_weights: { ...config.symbol_weights, [sym]: Number(e.target.value) },
+                              })}
+                              className={INPUT_CLS + ' w-16'}
                             />
-                            <span className="text-gray-600 text-[10px]">×</span>
-                            {isOverridden ? (
-                              <button
-                                onClick={() => {
-                                  const sl = { ...(config.symbol_leverage ?? {}) }
-                                  delete sl[sym]
-                                  patchConfig({ symbol_leverage: sl })
-                                }}
-                                title={`Reset to auto (${predictedLev}×)`}
-                                className="text-[9px] text-amber-600 hover:text-amber-400 transition-colors leading-none"
-                              >⟳</button>
-                            ) : (
-                              <span className="text-[9px] text-gray-700">auto</span>
-                            )}
-                          </div>
-                        )
-                      })()}
-                    </td>
-                  </tr>
-                )
-              }
-              const w = config.symbol_weights[sym] ?? 1
-              const allocPct = (w / totalWeight * 100).toFixed(1)
-              return (
-                <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
-                  <td className="py-1.5 pr-4 text-indigo-300 font-semibold">{sym}</td>
-                  <td className="py-1.5 pr-4">
-                    <input
-                      type="number" min={1} step={1}
-                      value={w}
-                      title={`Relative capital weight for ${sym}.`}
-                      onChange={e => patchConfig({
-                        symbol_weights: { ...config.symbol_weights, [sym]: Number(e.target.value) },
-                      })}
-                      className={INPUT_CLS + ' w-16'}
-                    />
-                  </td>
-                  <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
-                  <td className="py-1.5 pr-4 text-gray-400">
-                    {live ? `$${live.allocation_usdt.toFixed(0)}` : '—'}
-                  </td>
-                  <td className="py-1.5 pr-4 text-gray-400">
-                    {live ? `${live.leverage}×` : '—'}
-                  </td>
-                  <td className="py-1.5 text-gray-400">
-                    {live?.performance_score != null ? `${live.performance_score.toFixed(2)}%` : '—'}
-                  </td>
-                </tr>
-              )
-            })}
+                          </td>
+                          <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
+                          <td className="py-1.5 pr-4 text-gray-400">
+                            {live ? `$${live.allocation_usdt.toFixed(0)}` : '—'}
+                          </td>
+                          <td className="py-1.5 pr-4 text-gray-400">
+                            {live ? `${live.leverage}×` : '—'}
+                          </td>
+                          <td className="py-1.5 text-gray-400">
+                            {live?.performance_score != null ? `${live.performance_score.toFixed(2)}%` : '—'}
+                          </td>
+                        </>
+                      )}
+                    </SortableRow>
+                  )
+                })}
+              </SortableContext>
+            </DndContext>
           </tbody>
         </table>
       </div>

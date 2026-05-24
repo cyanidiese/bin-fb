@@ -26,6 +26,7 @@ export interface RiskConfig {
   max_loss_usdt?: number
   max_loss_usdt_per_symbol?: Record<string, number>
   max_loss_tp_ratio?: number
+  locked_presets?: Record<string, string>
 }
 
 export interface WeightRebalancerConfig {

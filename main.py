@@ -422,7 +422,12 @@ async def run() -> None:
         if candle_ts > 0 and _placed_this_candle.get(symbol) == candle_ts:
             return 0.0
 
-        preset_name = virtual_tracker.best_preset(symbol)
+        _locked_presets = risk_cfg.get("locked_presets", {})
+        if symbol in _locked_presets:
+            preset_name = _locked_presets[symbol]
+            logger.info(f"[{symbol}] Using manually locked preset: {preset_name}")
+        else:
+            preset_name = virtual_tracker.best_preset(symbol)
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 

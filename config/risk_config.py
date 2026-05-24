@@ -62,6 +62,8 @@ DEFAULT_CONFIG: dict = {
     # Takes the tighter of this and the USDT cap. 0 = disabled.
     # Example: 1.5 means "never lose more than 1.5× the potential profit on this trade."
     "max_loss_tp_ratio": 0.0,
+    # Symbol → preset name. When set, bypasses virtual tracker scoring for that symbol.
+    "locked_presets": {},
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

@@ -167,6 +167,8 @@ export default function TradesPage() {
   const [selectedPreset, setSelectedPreset]   = useState<string | null>(null)
   const [sortKey, setSortKey]                 = useState<SortKey | null>(null)
   const [sortDir, setSortDir]                 = useState<'asc' | 'desc'>('desc')
+  const [lockedPreset, setLockedPreset]       = useState<string | null>(null)
+  const [lockBusy, setLockBusy]               = useState(false)
 
   useEffect(() => {
     if (!symbol) return
@@ -210,6 +212,13 @@ export default function TradesPage() {
       })
       .catch(() => {})
   }, [data])
+
+  useEffect(() => {
+    fetch('/api/risk')
+      .then(r => r.json())
+      .then(({ config }) => setLockedPreset(config?.locked_presets?.[symbol] ?? null))
+      .catch(() => setLockedPreset(null))
+  }, [symbol])
 
   const allRows = useMemo(() => data ? buildPresetRows(data) : [], [data])
 
@@ -298,6 +307,25 @@ export default function TradesPage() {
     } catch {
       // Revert on error
       setDisabledRanks(prev => willDisable ? prev.filter(r => r !== rank) : [...prev, rank])
+    }
+  }
+
+  async function handleLockToggle(presetName: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (lockBusy) return
+    setLockBusy(true)
+    const isAlreadyLocked = lockedPreset === presetName
+    try {
+      const res = await fetch('/api/risk/lock-preset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, preset: isAlreadyLocked ? null : presetName }),
+      })
+      if (res.ok) {
+        setLockedPreset(isAlreadyLocked ? null : presetName)
+      }
+    } finally {
+      setLockBusy(false)
     }
   }
 
@@ -492,6 +520,7 @@ export default function TradesPage() {
                     onClick={() => handlePresetClick(row.name)}
                     className={`border-b border-gray-800 cursor-pointer transition-colors ${
                       isSelected ? 'bg-indigo-950 ring-1 ring-inset ring-indigo-700' :
+                      lockedPreset === row.name ? 'bg-amber-950/30 hover:bg-amber-950/50' :
                       row.isBest ? 'bg-indigo-950/40 hover:bg-indigo-950/70' :
                       'hover:bg-gray-900/60'
                     }`}
@@ -499,6 +528,18 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-4 text-white">
                       {row.name}
                       {row.isBest && <span className="ml-2 text-[10px] text-indigo-400">BEST</span>}
+                      <button
+                        onClick={(e) => handleLockToggle(row.name, e)}
+                        disabled={lockBusy}
+                        title={lockedPreset === row.name ? `Unlock — resume scored selection` : `Lock ${row.name} as best preset for ${symbol}`}
+                        className={`ml-2 text-[10px] leading-none transition-colors disabled:opacity-40 ${
+                          lockedPreset === row.name
+                            ? 'text-amber-400 hover:text-amber-200'
+                            : 'text-gray-600 hover:text-amber-400'
+                        }`}
+                      >
+                        {lockedPreset === row.name ? '🔒' : '🔓'}
+                      </button>
                     </td>
                     <td className={`py-1.5 pr-4 text-left text-xs ${row.rank === 1 ? 'text-indigo-400' : row.rank != null ? 'text-gray-400' : 'text-gray-600'}`}>
                       <span className="flex items-center gap-1.5">

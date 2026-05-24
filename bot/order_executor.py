@@ -198,6 +198,15 @@ class OrderExecutor:
                         _early_loss_sl = entry - max_losing_amount_usdt / rounded_qty
                     else:
                         _early_loss_sl = entry + max_losing_amount_usdt / rounded_qty
+                # Apply global max-loss cap from risk config (tighter of preset and global wins)
+                _global_max_loss = load_risk_config().get("max_loss_usdt", 0.0)
+                if _global_max_loss > 0 and rounded_qty > 0:
+                    if side == 'BUY':
+                        _g_sl = entry - _global_max_loss / rounded_qty
+                        _early_loss_sl = max(_early_loss_sl, _g_sl) if _early_loss_sl > 0 else _g_sl
+                    else:
+                        _g_sl = entry + _global_max_loss / rounded_qty
+                        _early_loss_sl = min(_early_loss_sl, _g_sl) if _early_loss_sl > 0 else _g_sl
                 self._fake_orders[symbol] = FakeOrder(
                     side=side,
                     entry_price=entry,

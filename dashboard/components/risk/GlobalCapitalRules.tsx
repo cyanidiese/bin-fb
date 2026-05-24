@@ -147,6 +147,14 @@ export default function GlobalCapitalRules({ config, state, patchConfig }: Props
           min={10} step={100}
         />
 
+        <LabeledInput
+          label="Max loss per order (USDT)"
+          tooltip="If any open order's unrealized loss exceeds this amount, it is closed immediately. Applies to both live/test trading and backtest simulation. Set to 0 to disable."
+          value={config.max_loss_usdt ?? 30}
+          onChange={v => patchConfig({ max_loss_usdt: Number(v) })}
+          min={0} step={1}
+        />
+
       </div>
     </section>
   )

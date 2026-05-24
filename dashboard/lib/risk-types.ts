@@ -23,6 +23,7 @@ export interface RiskConfig {
   weight_rebalancer?: WeightRebalancerConfig
   min_trades_for_ranking?: number
   min_trades_for_ranking_per_symbol?: Record<string, number>
+  max_loss_usdt?: number
 }
 
 export interface WeightRebalancerConfig {

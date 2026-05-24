@@ -53,6 +53,9 @@ DEFAULT_CONFIG: dict = {
     },
     "min_trades_for_ranking": 3,
     "min_trades_for_ranking_per_symbol": {},
+    # Global per-order loss cap: close any order whose unrealized loss exceeds this USDT amount.
+    # 0 = disabled. Applied in both live/test trading and backtest simulation.
+    "max_loss_usdt": 30.0,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

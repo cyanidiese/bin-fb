@@ -180,10 +180,14 @@ class Backtester:
         balance = self._initial_balance
         peak_balance = balance
         hard_stop_pct = 20.0
+        max_loss_usdt = 0.0
+        max_notional = 500.0
         if self._initial_balance > 0 and self._risk_config_path is not None:
             from config.risk_config import load_risk_config
             _cfg = load_risk_config(self._risk_config_path)
             hard_stop_pct = _cfg.get("drawdown_hard_stop_pct", 20.0)
+            max_loss_usdt = _cfg.get("max_loss_usdt", 0.0)
+            max_notional = _cfg.get("max_order_notional_usdt", 500.0)
         result.balance_start = balance
         drawdown_triggered = False
 
@@ -356,6 +360,13 @@ class Backtester:
                                     _prev['tp'] > 0 and abs(tp - _prev['tp']) / _prev['tp'] <= _p):
                                 continue
 
+                    _bt_early_loss_sl = 0.0
+                    if max_loss_usdt > 0 and max_notional > 0 and entry_price > 0:
+                        _approx_qty = max_notional / entry_price
+                        if side == 'BUY':
+                            _bt_early_loss_sl = entry_price - max_loss_usdt / _approx_qty
+                        else:
+                            _bt_early_loss_sl = entry_price + max_loss_usdt / _approx_qty
                     open_order = FakeOrder(
                         side=side,
                         entry_price=entry_price,
@@ -368,7 +379,7 @@ class Backtester:
                         trailing_stop_pct=settings.trailing_stop_pct,
                         max_losing_pct=settings.max_losing_pct,
                         max_losing_candles=settings.max_losing_candles,
-                        early_loss_sl=0.0,
+                        early_loss_sl=_bt_early_loss_sl,
                     )
                     break  # entered — stop checking this candle's price path
 

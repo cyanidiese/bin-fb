@@ -174,9 +174,24 @@ class OrderExecutor:
                             rounded_qty = bumped
                         else:
                             raise FundsError(f"notional {rounded_qty * entry:.4f} < min_notional {min_notional_c2:.4f} even after bump")
+                    # Cap notional before creating OpenOrder so the stored quantity matches
+                    # what the exchange actually fills (prevents phantom PnL from uncapped qty).
+                    _rl_notional = load_risk_config()
+                    _max_notional = _rl_notional.get("max_order_notional_usdt", 0.0)
+                    if _max_notional > 0 and rounded_qty * entry > _max_notional:
+                        _capped_qty = float(
+                            Decimal(str(_max_notional / entry)).quantize(
+                                Decimal(str(lot_c2['step_size'])), rounding=ROUND_DOWN
+                            )
+                        )
+                        logger.warning(
+                            f"[{symbol}] Notional cap: qty {rounded_qty:.4f} → {_capped_qty:.4f} "
+                            f"(notional {rounded_qty * entry:.2f} > cap {_max_notional:.2f} USDT)"
+                        )
+                        rounded_qty = _capped_qty
 
                 order_id = await asyncio.wait_for(
-                    self._submit_to_exchange(symbol, side, rounded_qty, leverage, entry_price=entry),
+                    self._submit_to_exchange(symbol, side, rounded_qty, leverage),
                     timeout=self.PLACING_TIMEOUT,
                 )
                 self._open_orders[symbol] = OpenOrder(
@@ -603,7 +618,7 @@ class OrderExecutor:
         except Exception as exc:
             logger.warning(f"[{symbol}] Failed to cancel algo order {order_id}: {exc}")
 
-    async def _submit_to_exchange(self, symbol: str, side: str, quantity: float, leverage: int, entry_price: float = 0.0) -> str | None:
+    async def _submit_to_exchange(self, symbol: str, side: str, quantity: float, leverage: int) -> str | None:
         if self._feed is None:
             return None
         client = self._feed.client
@@ -619,22 +634,6 @@ class OrderExecutor:
             raise
 
         lot = await self._ensure_lot_size(symbol)
-
-        if entry_price > 0:
-            _cfg = load_risk_config()
-            _max_notional = _cfg.get("max_order_notional_usdt", 0.0)
-            if _max_notional > 0 and quantity * entry_price > _max_notional:
-                _capped = float(
-                    Decimal(str(_max_notional / entry_price)).quantize(
-                        Decimal(str(lot['step_size'])), rounding=ROUND_DOWN
-                    )
-                )
-                logger.warning(
-                    f"[{symbol}] Notional cap: qty {quantity:.4f} → {_capped:.4f} "
-                    f"(notional {quantity * entry_price:.2f} > cap {_max_notional:.2f} USDT)"
-                )
-                quantity = _capped
-
         qty_str = self._qty_str(quantity, lot['step_size'])
         try:
             result = await asyncio.to_thread(

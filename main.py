@@ -888,8 +888,13 @@ async def run() -> None:
             )
             if best_sym is None:
                 continue
-            score = virtual_tracker.get_efficiency_score(sym)
-            candidates.append((sym, best_sym, sym_settings.get(sym, settings), score))
+            raw_score = virtual_tracker.get_efficiency_score(sym)
+            # In BGF, apply symbol_weights as a multiplier so the rebalancer
+            # can dampen allocation for symbols that are losing in practice.
+            if not scenario.uses_weight_allocation:
+                sym_weight = risk_cfg.get("symbol_weights", {}).get(sym, 1.0)
+                raw_score = raw_score * max(0.0, sym_weight)
+            candidates.append((sym, best_sym, sym_settings.get(sym, settings), raw_score))
 
         candidates.sort(key=lambda x: x[3], reverse=True)
         if scenario.uses_weight_allocation:

@@ -974,11 +974,13 @@ async def run() -> None:
             )
 
         if symbol_registry.get_weight(symbol) > 0.0:
+            _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
             await virtual_order_simulator.on_candle_close(
                 symbol=symbol,
                 analyzer=analyzer,
                 best_preset_name=virtual_tracker.best_preset(symbol),
                 base_settings=settings,
+                locked_preset=_locked_preset,
             )
 
         weight_rebalancer.on_candle_close(candle_ts)

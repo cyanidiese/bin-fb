@@ -59,24 +59,40 @@ export async function GET(req: NextRequest) {
     return stats.seeded_winning_usdt ?? 0
   }
 
-  // Determine best preset: highest effective score > 0
-  let bestPreset: string | null = null
-  let bestScore = 0
-  for (const [name, stats] of Object.entries(symbolEfficiency)) {
-    const score = effectiveScore(stats)
-    if (score > bestScore) {
-      bestScore = score
-      bestPreset = name
+  // Check if this symbol has a manually locked preset
+  const riskConfig = readJson(path.join(BOT_ROOT, 'risk_config.json'), {}) as Record<string, unknown>
+  const lockedPreset: string | null = (riskConfig.locked_presets as Record<string, string> | undefined)?.[symbol] ?? null
+
+  // Determine best preset: locked preset wins; otherwise highest effective score > 0
+  let bestPreset: string | null = lockedPreset
+  if (!bestPreset) {
+    let bestScore = 0
+    for (const [name, stats] of Object.entries(symbolEfficiency)) {
+      const score = effectiveScore(stats)
+      if (score > bestScore) {
+        bestScore = score
+        bestPreset = name
+      }
     }
   }
 
-  // Compute preset ranks for this symbol (sorted by effective score descending)
+  // Compute preset ranks for this symbol.
+  // When locked: locked preset = rank 1; remaining presets (excluding locked) sorted by score from rank 2.
+  // When not locked: sorted by score, rank 1 = best.
   const presetRanks: Record<string, number> = {}
   const sortedByEff = Object.entries(symbolEfficiency)
     .sort(([, a], [, b]) => effectiveScore(b) - effectiveScore(a))
-  sortedByEff.forEach(([name], idx) => {
-    presetRanks[name] = idx + 1  // rank 1 = best
-  })
+  if (lockedPreset) {
+    presetRanks[lockedPreset] = 1
+    const others = sortedByEff.filter(([name]) => name !== lockedPreset)
+    others.forEach(([name], idx) => {
+      presetRanks[name] = idx + 2
+    })
+  } else {
+    sortedByEff.forEach(([name], idx) => {
+      presetRanks[name] = idx + 1
+    })
+  }
 
   // Read rank orders (ranks 2–rankMax) for this symbol
   const dataDir = path.join(BOT_ROOT, 'data')

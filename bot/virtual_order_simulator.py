@@ -168,9 +168,17 @@ class VirtualOrderSimulator:
         analyzer: 'Analyzer',
         best_preset_name: Optional[str],
         base_settings: 'Settings',
+        locked_preset: Optional[str] = None,
     ) -> None:
+        # When a preset is manually locked for real orders, exclude it from the
+        # virtual pool and shift the rank index so the formerly-best preset fills
+        # rank 2 (it is no longer used for real orders).
+        is_locked = locked_preset is not None
+        preset_items = [
+            (n, o) for n, o in self._all_presets.items() if n != locked_preset
+        ] if is_locked else list(self._all_presets.items())
         sorted_presets = sorted(
-            self._all_presets.items(),
+            preset_items,
             key=lambda kv: self._virtual_tracker.get_preset_efficiency(symbol, kv[0]),
             reverse=True,
         )
@@ -185,7 +193,9 @@ class VirtualOrderSimulator:
                     await self._evict(symbol, rank, current_price, 'rank_disabled')
                 continue
 
-            rank_idx = rank - 1  # 0-based: rank 1 = idx 0 (best), rank 2 = idx 1, …
+            # Not locked: idx 0 = best, used for real orders → virtual starts at idx 1.
+            # Locked: locked preset excluded from list → formerly-best is at idx 0 → start at idx 0.
+            rank_idx = rank - (2 if is_locked else 1)
             if rank_idx >= len(sorted_presets):
                 # Not enough presets → evict if anything open
                 if symbol in self._rank_open[rank]:

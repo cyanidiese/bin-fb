@@ -258,8 +258,16 @@ export default function TradesPage() {
         return (b.totalPnl + b.totalVirtualPnl) - (a.totalPnl + a.totalVirtualPnl)
       })
     }
+    // Locked preset always pins to position 0, above any sort order.
+    if (lockedPreset) {
+      const lockedIdx = rows.findIndex(r => r.name === lockedPreset)
+      if (lockedIdx > 0) {
+        const [locked] = rows.splice(lockedIdx, 1)
+        rows.unshift(locked)
+      }
+    }
     return rows
-  }, [allRows, hideNoOrders, hideHasVirtual, sortKey, sortDir])
+  }, [allRows, hideNoOrders, hideHasVirtual, sortKey, sortDir, lockedPreset])
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {

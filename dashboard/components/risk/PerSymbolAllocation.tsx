@@ -141,7 +141,13 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     else if (sortCol === 'usdt') cmp = (deployable * shareA) - (deployable * shareB)
     else if (sortCol === 'leverage') cmp = levA - levB
     return sortDir === 'asc' ? cmp : -cmp
-  }) : availableSymbols
+  }) : [...availableSymbols].sort((a, b) => {
+    // Sort by weight descending so saved drag order is reconstructed on reload
+    // and so the useEffect below correctly tracks order changes after each drag.
+    const wa = config.symbol_weights[a] ?? 1
+    const wb = config.symbol_weights[b] ?? 1
+    return wb - wa
+  })
 
   // When the parent provides a new sort order (config or state changed), drop any
   // stale drag state so the external order takes precedence again.
@@ -371,7 +377,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                           </td>
                           <td className="py-1.5 pr-4 text-gray-400">{allocPct}%</td>
                           <td className="py-1.5 pr-4 text-gray-400">
-                            {deployable > 0 ? `$${allocUsdt.toFixed(0)}` : (live ? `$${live.allocation_usdt.toFixed(0)}` : '—')}
+                            {deployable > 0 ? `$${allocUsdt.toFixed(0)}` : '—'}
                           </td>
                           <td className="py-1.5 pr-4 text-gray-400">{lev}×</td>
                           <td className="py-1.5 text-gray-400">

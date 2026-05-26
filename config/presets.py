@@ -176,6 +176,16 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 70.0,
         'max_losing_candles': 5,
     },
+    # Same as trail_15_from_15 but skip window reduced to 1 candle.
+    # Used for symbols (e.g. DOGEUSDT) where the 3-candle skip blocks ~48% of signals.
+    'trail_15_from_15_d1': {
+        'partial_take_pct': 0.15,
+        'trailing_stop_pct': 0.15,
+        'duplicate_skip_candles': 1,
+        'duplicate_skip_pct': 3.0,
+        'max_losing_pct': 70.0,
+        'max_losing_candles': 5,
+    },
     'trail_25_from_15': {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.25,

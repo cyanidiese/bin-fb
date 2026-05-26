@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
+from config.risk_config import load_risk_config
 
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
@@ -299,6 +300,16 @@ class VirtualOrderSimulator:
         else:
             alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
         quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
+        # Apply the same per-order notional cap as real orders so virtual PnL is
+        # comparable to real PnL and does not distort the efficiency scoreboard.
+        _max_notional = load_risk_config().get("max_order_notional_usdt", 0.0)
+        if _max_notional > 0 and quantity * entry > _max_notional:
+            logger.debug(
+                f"[{symbol}] Rank-{rank} virtual notional cap: "
+                f"qty {quantity:.4f} → {_max_notional / entry:.4f} "
+                f"(notional {quantity * entry:.2f} > cap {_max_notional:.2f})"
+            )
+            quantity = _max_notional / entry
         # Respect Binance per-symbol maxQty so virtual sizes match what real orders can place
         _max_qty = self._lot_cache.get(symbol, {}).get('max_qty', 0.0)
         if _max_qty > 0 and quantity > _max_qty:

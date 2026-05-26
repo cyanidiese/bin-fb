@@ -70,9 +70,12 @@ class VirtualTracker:
                 else:
                     trades = preset_data.get("trades", [])
                     seeded = sum(t.get("profit_pct", 0.0) / 100.0 * balance_start for t in trades)
-                self._efficiency.setdefault(symbol, {})[name] = {
-                    "total_winning_usdt": 0.0,
-                    "trade_count": 0,
+                # Preserve live-accumulated data across restarts — only refresh the
+                # seeded fallback score so rankings improve as live trades accumulate.
+                existing = self._efficiency.setdefault(symbol, {}).get(name, {})
+                self._efficiency[symbol][name] = {
+                    "total_winning_usdt": existing.get("total_winning_usdt", 0.0),
+                    "trade_count":        existing.get("trade_count", 0),
                     "seeded_winning_usdt": seeded,
                 }
             self._save_efficiency()

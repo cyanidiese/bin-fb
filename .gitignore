@@ -60,3 +60,4 @@ dashboard/.env*.local
 
 # Bot-generated dashboard data
 dashboard/public/backtest_results_*.json
+tmp_analysis/

@@ -167,6 +167,44 @@ See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 - [x] `dashboard/lib/types.ts` — CandidateResult, DiscoveryState, DiscoveryCandidatesFile interfaces
 - [ ] End-to-end test: run discovery from UI, verify candidates appear, add one, verify it disappears
 
+## Session 33 — Lock Preset, Drag-and-Drop Weights, Rebalancer Restyle, Notional Cap, BGF Multiplier (completed 2026-05-24)
+
+- [x] Lock preset per symbol — API endpoint + risk_config field + dashboard UI (🔒/🔓 button, amber highlight)
+- [x] Drag-and-drop symbol weights in PerSymbolAllocation — dnd-kit libraries + SortableRow + onDragEnd handler
+- [x] WeightRebalancerSection restyle — standard layout, LabeledInput, matching colors
+- [x] Notional cap bug fix — move cap from _submit_to_exchange into place_order before OpenOrder creation
+- [x] BGF weight multiplier — multiply raw efficiency score by symbol_weights[sym] before ranking
+- [ ] Deploy all five features to server 185.237.14.105 via `bash scripts/push.sh`
+
+## Session 32 — Two-Tier Preset Ranking (completed 2026-05-24)
+
+- [x] Design two-tier tuple-based ranking (tier 1 live-proven vs tier 0 seed-only)
+- [x] Replace `_MIN_TRADES=8` with configurable threshold per symbol
+- [x] Add `get_min_trades_for_ranking()` helper to risk_config.py
+- [x] Update `bot/virtual_tracker.py` with module-level `_score()` function
+- [x] Wire `get_min_trades` callable into VirtualTracker constructor (both startup + mode-switch)
+- [x] Add tests for tier ordering, TIAUSDT scenario, seed-only fallback, custom thresholds
+- [x] Create PresetRankingSection dashboard component with global/per-symbol controls
+- [x] Add TypeScript types for new risk_config fields
+- [x] All 10 VirtualTracker tests pass; TypeScript clean build
+- [x] Deploy two-tier preset ranking to server — NOT YET (included in session 33 batch)
+
+## Session 31 — Dynamic Weight Rebalancer (completed 2026-05-23)
+
+- [x] Design weight rebalancer algorithm (rank-normalize, soft-blend, floor clamp)
+- [x] Create bot/weight_rebalancer.py with full WeightRebalancer class
+- [x] Write 19 unit tests for weight rebalancer
+- [x] Wire WeightRebalancer into main.py candle-close loop
+- [x] Add weight_rebalancer config block to risk_config.py
+- [x] Create dashboard WeightRebalancerSection component
+- [x] Add weight_rebalancer types to risk-types.ts
+- [x] Final code review (APPROVED_WITH_CONCERNS)
+- [ ] Fix IMPORTANT issue: live config changes require bot restart (hot-reload needed for production)
+- [ ] Fix IMPORTANT issue: datetime.fromisoformat() uses local timezone (needs explicit UTC handling)
+- [ ] Push main branch to remote (currently local only)
+- [ ] Add .claude/worktrees/ to .gitignore (minor housekeeping)
+- [ ] Deploy to server when ready
+
 ## Session 30 — Docker service split + backtest_api fix (completed 2026-05-23)
 
 - [x] Fix backtest_api.py missing max_losing_pct/amount/candles Settings fields
@@ -364,6 +402,14 @@ Design approved + implemented in session 14.
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
 
+## Session 34 — Graceful Shutdown Fix (completed 2026-05-26)
+
+- [x] **Fix SIGTERM handler / graceful shutdown** — docker-compose 60s grace period + 45s API timeout wrapping
+- [x] **Investigate bot crash pattern (API rate limit)** — confirmed: not crashes, were manual restarts via docker
+- [ ] **Deploy graceful shutdown fix to server** — already deployed 2026-05-26, monitoring for orphan positions
+- [ ] **Deploy session 33 features** (lock preset, drag-and-drop weights, notional cap fix, BGF multiplier) — pending user approval
+- [ ] **Fix over-allocation during concurrent trades** — pending
+
 ## Session 29 — Code Review Fixes + Early Loss Exit + Green Dot Fix (completed 2026-05-23)
 
 - [x] **Lot constraint detector fixes** — tier selection reversed, `min_bal_pct` from config, fallback to 0.0
@@ -372,7 +418,7 @@ Design approved + implemented in session 14.
 - [x] **Early loss exit settings** — `max_losing_pct`, `max_losing_amount_usdt`, `max_losing_candles` added to 29 presets
 - [x] **Dashboard early exit UI** — PresetSettingsPanel + presetFilters + Create page abbrevs (mlp, mla, mlc)
 - [x] **Green dot data source fix** — new `/api/open-positions` route replaces `preset_efficiency_test.json` fetch
-- [ ] **Deploy to server** — `bash scripts/push.sh` (stop bot first)
+- [x] **Deploy to server** — `bash scripts/push.sh` (stop bot first)
 
 ## Session 27 — Precision & Login Fixes (completed 2026-05-21)
 

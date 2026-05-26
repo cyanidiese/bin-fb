@@ -237,11 +237,15 @@ Tracks N independent virtual positions for the top non-best presets (ranks 2–6
 - When preset efficiency rankings change, rank-N position switches to new preset
 - Position switchover recorded as `rank_change` result (evict at current price)
 
-**Preset efficiency scoring (session 26 refinement)**:
-- Binary mode: pure seeded score (from backtest) until `_MIN_TRADES=8` live trades, then pure live score
-- No blend formula at crossover (eliminates abrupt rank inversions)
-- `best_preset(symbol)` returns highest-score preset; tracks rank history in `_last_best` dict
-- Logs preset changes with trade counts and score values for analysis
+**Preset efficiency scoring (session 32 refinement — two-tier ranking)**:
+- Two-tier tuple system: `(tier: int, value: float)` where tier 1 (live-proven) always beats tier 0 (seed-only)
+- Tier 1: preset has ≥ N real+virtual trades (default N=3, per-symbol overrides in risk_config.json)
+- Tier 0: preset has < N trades (backtest-only seed, ranked by seeded_winning_usdt)
+- Configurable threshold: `get_min_trades_for_ranking(cfg, symbol)` reads global default then per-symbol override
+- No blend formula (eliminates abrupt inversions where large seed beat better live record)
+- Fixes TIAUSDT case: `trail_15_from_15` (4 real, -$14, 25% win) no longer blocks `pre_confirm_prox15_trail15` (5 virtual, +$66, 60% win)
+- `best_preset(symbol)` returns highest-tier, highest-score preset; tracks rank history in `_last_best` dict
+- Logs preset changes with trade counts and tier/score values for analysis
 - `get_efficiency_score(symbol)` used to rank symbols for real-order loop
 - `get_preset_efficiency(symbol, preset)` used to rank presets within symbol for virtual allocation
 
@@ -263,6 +267,93 @@ Tracks N independent virtual positions for the top non-best presets (ranks 2–6
 ---
 
 ## Risk Management
+
+### Lock Preset Per Symbol (Session 33)
+Allows manual override of automatic preset selection for a specific symbol. When locked, bot uses the designated preset for that symbol instead of calling `best_preset()` for efficiency ranking.
+
+**Files**: `dashboard/app/api/risk/lock-preset/route.ts` (NEW), `config/risk_config.py`, `dashboard/app/api/risk/route.ts`, `dashboard/lib/risk-types.ts`, `dashboard/app/trades/page.tsx`, `main.py` (~line 425 in `_try_place_order`)
+**Key details**:
+- **API endpoint** (`/api/risk/lock-preset`): POST `{symbol, preset}` to lock, POST `{symbol: "BTCUSDT", preset: null}` to unlock
+- **Config field**: `locked_presets: Record<string, string>` in risk_config.json (maps symbol → preset name)
+- **Bot behavior**: In `_try_place_order`, before calling `best_preset()`, checks `if symbol in locked_presets: use locked_presets[symbol]` directly; logs info-level message
+- **Dashboard UI** (Trades page): 🔒/🔓 button appears per preset row; locked row highlighted in amber; button fetches locked preset state on symbol change
+- **Use case**: Manually pin a specific preset to a symbol when you want to override the auto-ranking (e.g., lock a conservative preset during high drawdown, or lock a winner you want to protect from demotion)
+
+### Drag-and-Drop Symbol Weights (Session 33)
+Interactive reordering of symbol allocation weights via drag-and-drop in the Risk dashboard. Dragging a row reassigns weights 1..N based on drop position, then updates risk_config.json atomically.
+
+**Files**: `dashboard/components/risk/PerSymbolAllocation.tsx`, `dashboard/package.json` (added `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`)
+**Key details**:
+- **Libraries**: `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/utilities` (lightweight, no heavy UI library)
+- **Component**: Wraps table tbody with `DndContext` + `SortableContext`. Each row is a `SortableRow` with `useSortable()` hook.
+- **Drag handle**: `GripIcon` SVG (hamburger icon) appears in first column, allows grab-and-drag
+- **Drop logic**: `onDragEnd` computes new weight order (1..N), updates state, calls `patchConfig` to persist
+- **Both modes**: Works in both BGF (Best-Gets-First) and non-BGF (allocation weighting) modes
+- **Visual feedback**: Row opacity changes during drag; standard pointer cursor on handle
+
+### WeightRebalancer Restyle (Session 33)
+Unified visual styling for WeightRebalancerSection to match all other risk management widgets. Removed collapsible state and standardized layout.
+
+**Files**: `dashboard/components/risk/WeightRebalancerSection.tsx`
+**Key details**:
+- **Layout primitives**: Uses `SECTION_CLS`, `SECTION_HEADER_CLS`, `SECTION_BODY_CLS` (standard throughout Risk page)
+- **Form inputs**: All numeric fields wrapped in `LabeledInput` components (consistent with other sections)
+- **Colors**: Text changed to `text-xs` and `gray-*` palette to match peer sections
+- **Visibility**: Body always visible (removed `open` collapsible state)
+- **No behavioral change**: Feature logic unchanged, only visual unification
+
+### Two-Tier Preset Ranking (Session 32)
+Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ranking system. Live-proven presets (≥N real+virtual trades) are always ranked above seed-only presets (backtest-only), regardless of seed magnitude. Solves the TIAUSDT problem where a less-profitable preset with a large backtest seed outranked a better-performing preset with fewer live trades.
+
+**Files**: `config/risk_config.py`, `bot/virtual_tracker.py`, `tests/test_virtual_tracker.py`, `main.py`, `dashboard/lib/risk-types.ts`, `dashboard/app/api/risk/route.ts`, `dashboard/components/risk/PresetRankingSection.tsx`, `dashboard/app/risk/page.tsx`
+**Key details**:
+- **Scoring**: Each preset gets a tuple `(tier, value)` where:
+  - Tier 1: preset has ≥ N real+virtual trades (tier value = total_winning_usdt, live track record)
+  - Tier 0: preset has < N trades (tier value = seeded_winning_usdt, backtest seed)
+  - Python tuple comparison ensures tier 1 always beats tier 0 regardless of magnitude
+- **Configurable threshold N**: Default 3, stored in `risk_config.json["min_trades_for_ranking"]`, per-symbol overrides in `risk_config.json["min_trades_for_ranking_per_symbol"]`
+- **Implementation**: Module-level `_score(stats, min_trades) -> tuple[int, float]` in `bot/virtual_tracker.py` computes tier and value. VirtualTracker constructor accepts `get_min_trades: Callable[[str], int]` callable.
+- **Lambda closure**: In `main.py`, `_get_min_trades` lambda correctly captures hot-reloaded `risk_cfg` because Python closures capture cell references, not values.
+- **Dashboard UI** (PresetRankingSection): Global threshold input (slider 1–20), per-symbol override table with add/remove controls
+- **Motivation**: TIAUSDT had `trail_15_from_15` (4 real trades, -$14, 25% win rate, $694 backtest seed) blocking `pre_confirm_prox15_trail15` (5 virtual trades, +$66, 60% win rate) purely due to seed magnitude. Two-tier ranking fixes this by elevating the better-performing 5-trade preset despite its smaller seed.
+
+### Dynamic Weight Rebalancer (Session 31)
+Gradually rebalances `symbol_weights` in risk_config.json based on real-time symbol performance. Every N closed candles, scores each symbol on two metrics (mini-backtest recent klines + real closed P&L), rank-normalizes both, and soft-blends current weights toward new scores. Better-performing symbols accumulate more allocation; a floor prevents any symbol from dropping below minimum share.
+
+**Files**: `bot/weight_rebalancer.py`, `tests/test_weight_rebalancer.py`, `dashboard/components/risk/WeightRebalancerSection.tsx`
+**Key details**:
+- Triggered: every `rebalance_candles` closed candles (default 96, ~1 day at 15m)
+- Scoring: `backtest_window_candles` lookback window (default 96)
+  - `backtest_score`: mini-backtest profit % on recent klines using best preset for symbol
+  - `real_pnl_score`: actual closed P&L $ from real orders in same window
+  - `real_pnl_alpha`: weight blending between the two (default 0.5 = equal weight)
+- Rank-normalization: both scores normalized to [0, 1] range per symbol
+- Soft-blend: current weights move `blend_rate` toward new scores (default 0.15 = 15% per rebalance)
+- Floor protection: no symbol can drop below `weight_floor_ratio / n_active` of equal share (default 0.3 = 30% of equal share)
+- State: `_running` dedup prevents concurrent rebalances; log entries appended to state JSON for UI display
+- Enabled: **false by default**. When enabled, requires monitoring to ensure blend rate and window match strategy rhythm.
+
+**Config schema** (risk_config.json):
+```json
+{
+  "enabled": false,
+  "rebalance_candles": 96,
+  "backtest_window_candles": 96,
+  "real_pnl_alpha": 0.5,
+  "blend_rate": 0.15,
+  "weight_floor_ratio": 0.3
+}
+```
+
+**Known issues** (documented during code review, not blocking for disabled state):
+1. Live config changes via dashboard do NOT take effect until bot restart (WeightRebalancer holds stale dict reference)
+2. `close_time` ISO string parsing uses `datetime.fromisoformat()` which uses local system timezone (safe on UTC VPS but fragile if timezone changes)
+
+**Dashboard UI** (WeightRebalancerSection):
+- Enable/disable toggle
+- Config controls: all 6 settings with sliders/inputs
+- Last rebalance status: timestamp, number of symbols, current blend rate applied
+- Per-symbol table: symbol name, previous weight, new weight, backtest score, real PnL, delta %
 
 ### Risk Configuration & State
 Centralized risk controls with persistent config and runtime state. Loaded from `risk_config.json` (created on first run with sensible defaults). State persists to `risk_state.json` for dashboard polling.
@@ -488,16 +579,19 @@ Switches between test (testnet) and live (real) at runtime via command channel. 
 - Backtest gate: every mode switch runs `backtest.py --mode {new_mode}` before accepting
 - 2s polling interval for commands
 
-### Graceful SIGTERM Shutdown
+### Graceful SIGTERM Shutdown (Session 34 enhanced)
 Bot handles SIGTERM signal (from `docker stop` or deployment scripts) by closing all open positions gracefully before exit. Wired via `signal.signal(signal.SIGTERM, on_stop_bot)` handler.
 
-**Files**: `main.py` (on_stop_bot), `bot/virtual_order_simulator.py` (get_open_positions)
+**Files**: `main.py` (on_stop_bot), `bot/virtual_order_simulator.py` (get_open_positions), `docker-compose.yml`
 **Key details**:
+- **Docker grace period** (session 34): `stop_grace_period: 60s` on bot service — increased from default 10s to allow sufficient time for API calls to complete
+- **Docker PID 1** (session 34): `exec` prefix on command ensures Python is PID 1 and receives SIGTERM directly (not wrapped by shell)
+- **API timeout protection** (session 34): `on_stop_bot()` wraps `close_all_open` + `close_all_orders_at_market` in `asyncio.wait_for(timeout=45s)` to prevent hanging indefinitely if exchange API becomes unresponsive
 - On SIGTERM: `on_stop_bot()` triggers, which calls `OrderExecutor.market_close_all()` + `VirtualOrderSimulator.on_stop_bot()`
 - All open positions closed at market price and recorded to `data/real_orders_{symbol}_{mode}.json`
 - Virtual positions written to final JSON file via `_write_open_positions()`
-- Bot then exits cleanly after pending order closes complete
-- Prevents orphan positions when bot restarts during deploy
+- Bot then exits cleanly after pending order closes complete (within 45s window)
+- **Prevents orphan positions** when bot restarts during deploy; graceful shutdown ensures all exchange orders are cancelled/closed before process exits
 
 ### Notifier & Telegram Alerts
 Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencies to alert state file. Implements cooldown to avoid spam.
@@ -754,4 +848,16 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 
 ---
 
-**Last updated**: Session 29 (2026-05-23) — Early loss exit settings, green dot data source fix, three critical bug fixes (lot_constraint_detector, symbol_registry thread safety, main.py balance fallback).
+**Bugs fixed — session 33 (2026-05-24):**
+
+1. **Notional cap poisoning virtual tracker** (`bot/order_executor.py`)
+   - **Cause**: Quantity was capped in `_submit_to_exchange()` after `OpenOrder` was created with uncapped qty. Virtual tracker recorded uncapped qty, creating phantom PnL that didn't match exchange fills.
+   - **Effect**: For INJUSDT, virtual tracker thought position was much larger than actually filled, leading to phantom loss calculations and trading suspension.
+   - **Fix**: Moved notional cap logic from `_submit_to_exchange()` into `place_order()` before `OpenOrder` is created. Now stored quantity in order record matches what exchange actually fills.
+
+2. **BGF weight multiplier missing** (`main.py`)
+   - **Cause**: When using Best-Gets-First (BGF) scenario, efficiency scores were ranked without considering symbol weights, so losing symbols competed equally with winners for capital.
+   - **Effect**: Capital distribution ignored symbol allocation preferences; weights became cosmetic.
+   - **Fix**: Added weight multiplier: `efficiency_score *= symbol_weights[sym]` before candidate ranking. Losing symbols now get proportionally less allocation even if they rank higher on raw score.
+
+**Last updated**: Session 33 (2026-05-24) — Lock preset per symbol, drag-and-drop weights, weight rebalancer restyle, notional cap fix, BGF weight multiplier.

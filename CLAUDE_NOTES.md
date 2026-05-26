@@ -1,6 +1,119 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-23 (session 30)
+## Last updated: 2026-05-26 (session 34 — graceful shutdown fix deployed, root causes investigated)
+
+---
+
+## ⟳ RESUME POINT — session 34 (2026-05-26) — root cause analysis + graceful shutdown fix deployed
+
+**Investigation findings**:
+
+1. **"15 crashes in 4 days" root cause**: ALL restarts were intentional manual operations (`docker stop/restart/deploy`), NOT actual bot crashes. Confirmed via `journalctl -u docker` — every restart shows SIGTERM from docker compose/stop.
+
+2. **Orphan positions root cause**: Docker's default 10s stop timeout was too short. Bot's graceful shutdown calls exchange APIs to close orders, which takes >10s, causing force-kill (SIGKILL) before cleanup completed.
+
+3. **API rate limit bans (-1003)**: Happen but are handled gracefully — bot falls back to WebSocket and doesn't crash.
+
+**Graceful shutdown fix deployed (commit 4a1aa5a)**:
+- `docker-compose.yml`: added `stop_grace_period: 60s` to bot service (was using default 10s)
+- `docker-compose.yml`: added `exec` prefix to command so Python is PID 1 and receives SIGTERM directly
+- `main.py:on_stop_bot()`: wrapped `close_all_open` + `close_all_orders_at_market` in `asyncio.wait_for(timeout=45s)` to prevent hanging indefinitely during API calls
+
+**System state after fix**:
+- Bot running on testnet, actively placing orders
+- No unhandled crashes; graceful shutdown tested and working
+- Efficiency data cleanly seeded on last restart, accumulating live trade data
+
+**Previous session features still pending deployment** (not included in today's deploy):
+- Session 33 (lock preset, drag-and-drop weights, weight rebalancer restyle, notional cap fix, BGF weight multiplier) — implemented but not deployed yet
+- Session 32 (two-tier preset ranking)
+- Session 31 (dynamic weight rebalancer)
+- Session 30 (split Docker services)
+
+---
+
+## ⟳ RESUME POINT — session 33 (2026-05-24) — five features completed, all committed to main, not yet deployed
+
+**Completed features** (commit 950b60f):
+
+1. **Lock preset per symbol** — New API endpoint: `dashboard/app/api/risk/lock-preset/route.ts` — POST `{symbol, preset}` to lock, POST `{symbol, preset: null}` to unlock. New field `locked_presets: {}` added to `DEFAULT_CONFIG` in `config/risk_config.py` and `dashboard/app/api/risk/route.ts`. Type field `locked_presets?: Record<string, string>` added to `RiskConfig` in `dashboard/lib/risk-types.ts`. Main.py (~line 425 in `_try_place_order`): reads `locked_presets` from risk config and, if symbol is locked, uses that preset directly instead of calling `best_preset()`; logs info message. Dashboard Trades page: 🔒/🔓 button per preset row; fetches locked preset on symbol change; calls `/api/risk/lock-preset`; locked row highlighted amber.
+
+2. **Drag-and-drop symbol weights in PerSymbolAllocation** — Installed `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`. `dashboard/components/risk/PerSymbolAllocation.tsx`: added `SortableRow` component, `GripIcon` SVG, `DndContext`/`SortableContext` wrapping tbody, `onDragEnd` handler that reassigns weights N→1 by rank and calls `patchConfig`. Drag handle column added to both BGF and non-BGF table heads.
+
+3. **WeightRebalancerSection restyle** — `dashboard/components/risk/WeightRebalancerSection.tsx` rewritten to use standard layout primitives (`SECTION_CLS`, `SECTION_HEADER_CLS`, `SECTION_BODY_CLS`), `LabeledInput` for numeric fields, `text-xs`/`gray-*` colors — matching all other risk widgets. Collapsible `open` state removed (body always visible).
+
+4. **Notional cap bug fix** (commit 78aec73) — `bot/order_executor.py`: moved notional cap from `_submit_to_exchange` into `place_order` before `OpenOrder` creation so stored quantity matches exchange fill. Root cause: phantom PnL from uncapped quantity was poisoning virtual tracker, suspending trading for INJUSDT.
+
+5. **BGF weight multiplier** (commit f9db450) — `main.py`: in BGF scenario, raw efficiency score is multiplied by `symbol_weights[sym]` before candidate ranking so losing symbols get proportionally less allocation.
+
+**Previously committed but not yet deployed**:
+- Session 32: Two-tier preset ranking
+- Session 31: Dynamic weight rebalancer
+- Session 30: Split Docker services + backtest_api fix
+- Session 29: Lot_constraint_detector fixes, thread safety, early loss exit
+
+**All work committed to main, ready for deployment.**
+
+**Immediate next action**: Deploy to server 185.237.14.105 via `bash scripts/push.sh` (stops bot gracefully, rebuilds, restarts). All features in bot layer only (no breaking dashboard changes). User to confirm deployment is safe before executing.
+
+---
+
+## ⟳ RESUME POINT — session 32 (2026-05-24) — two-tier preset ranking implementation complete
+
+**Feature completed**: Two-Tier Preset Ranking — replaces hard-coded `_MIN_TRADES = 8` constant with configurable tuple-based scoring. Live-proven presets (≥N real+virtual trades) always rank above seed-only presets (backtest only), regardless of seed magnitude. Fixes TIAUSDT case where `trail_15_from_15` (4 real trades, -$14, 25% win) blocked `pre_confirm_prox15_trail15` (5 virtual trades, +$66, 60% win) solely due to large backtest seed.
+
+**Design**: Python tuple `(tier, value)` comparison ensures tier 1 (live-proven) always beats tier 0 (seed-only). Configurable threshold N (default 3, per-symbol overrides) stored in risk_config.json. Lambda closure in main.py correctly captures hot-reloaded risk_cfg because Python closures capture cell references, not values.
+
+**All implementation files**:
+- `config/risk_config.py` — added `"min_trades_for_ranking": 3` and `"min_trades_for_ranking_per_symbol": {}` to DEFAULT_CONFIG; added `get_min_trades_for_ranking(cfg, symbol)` helper
+- `bot/virtual_tracker.py` — removed `_MIN_TRADES = 8`; added module-level `_score(stats, min_trades) -> tuple[int, float]`; updated `__init__` to accept `get_min_trades: Callable[[str], int]`; updated `best_preset()`, `get_efficiency_score()`, `get_preset_efficiency()`
+- `tests/test_virtual_tracker.py` — added 4 new tests (tier1 beats tier0, TIAUSDT scenario, seed-only ranking, custom min_trades); updated `_make_tracker` helper
+- `main.py` — imports `get_min_trades_for_ranking`; creates `_get_min_trades` lambda; both VirtualTracker constructions (startup + mode-switch) pass `get_min_trades=_get_min_trades`
+- `dashboard/lib/risk-types.ts` — added optional fields to `RiskConfig` interface
+- `dashboard/app/api/risk/route.ts` — added defaults to DEFAULT_CONFIG
+- `dashboard/components/risk/PresetRankingSection.tsx` — new component: global threshold input + per-symbol override table
+- `dashboard/app/risk/page.tsx` — imports and renders `PresetRankingSection`
+
+**Test results**: 10/10 VirtualTracker tests pass. TypeScript: no errors.
+
+**Next steps**: Deploy two-tier preset ranking to server.
+
+---
+
+## ⟳ RESUME POINT — session 31 (2026-05-23) — dynamic weight rebalancer implementation complete
+
+**Feature completed**: Dynamic Weight Rebalancer — full design, implementation, testing, code review, and commit. 9 implementation tasks done, 19 tests passing, code review returned APPROVED_WITH_CONCERNS (no critical bugs; two important issues documented and deferred).
+
+**What it does**: Every N closed candles, scores each active symbol on two signals (mini-backtest recent klines + real closed P&L from same window), rank-normalizes both, and soft-blends current `symbol_weights` toward new scores. Better performers accumulate allocation; floor clamp prevents any symbol dropping below floor.
+
+**All implementation files**:
+- `bot/weight_rebalancer.py` (NEW, full class)
+- `tests/test_weight_rebalancer.py` (NEW, 19 tests)
+- `config/risk_config.py` (weight_rebalancer config block added)
+- `main.py` (WeightRebalancer instantiated, on_candle_close wired)
+- `dashboard/lib/risk-types.ts` (types added)
+- `dashboard/app/api/risk/route.ts` (TS defaults added)
+- `dashboard/components/risk/WeightRebalancerSection.tsx` (NEW component)
+- `dashboard/app/risk/page.tsx` (section rendered)
+- `docs/superpowers/specs/2026-05-23-dynamic-weight-rebalancer-design.md` (spec)
+- `docs/superpowers/plans/2026-05-23-dynamic-weight-rebalancer.md` (plan)
+
+**Key commits** (all on main):
+- `abbc126` `c121d2a` `626c4fd` `66a1e82` `53014c0` `023a69f` `b51cd03` `0dfce79` `437cb51` `13e2ba0` `bc08c6b`
+
+**Known issues (not blocking — feature disabled by default)**:
+1. **IMPORTANT** — Live config changes via dashboard don't take effect until bot restart (WeightRebalancer holds stale dict reference from construction)
+2. **IMPORTANT** — `close_time` ISO parsing uses local system timezone (safe on UTC VPS but fragile if timezone changes)
+3. MINOR — No test for `_running` clear on `_do_rebalance` exception
+4. MINOR — Dashboard panel doesn't auto-refresh while open
+
+**Next session**:
+1. Push main to remote (all local currently)
+2. Fix two IMPORTANT issues if high priority (live-config hot-reload, datetime parsing robustness)
+3. Add `.claude/worktrees/` to .gitignore (minor housekeeping)
+4. Deploy when ready
+
+**State**: Implementation complete and committed locally. Not yet pushed to remote or deployed.
 
 ---
 
@@ -270,6 +383,13 @@ During deploy, bot closed 3 orphan positions at startup: APTUSDT SELL (-64.86 US
 - **BUG-16**: `get_symbol_allocation` reads risk_config.json on every call (hot path caching)
 
 ---
+
+**Bugs fixed — session 34 (2026-05-26):**
+
+1. **Graceful shutdown incomplete (SIGKILL after 10s)** (`docker-compose.yml`, `main.py`)
+   - **Cause**: Docker's default stop grace period (10s) was insufficient for bot to close all orders via exchange API (takes >10s). Bot received SIGKILL before cleanup completed, leaving orphan positions.
+   - **Effect**: Every restart/deploy left open positions on exchange, requiring manual cleanup.
+   - **Fix**: Added `stop_grace_period: 60s` to bot service (was using default 10s). Added `exec` prefix to command so Python is PID 1 and receives SIGTERM directly. Wrapped `close_all_open` + `close_all_orders_at_market` in `asyncio.wait_for(timeout=45s)` to prevent hanging indefinitely if exchange API becomes unresponsive.
 
 **Bugs fixed — session 30 (2026-05-23):**
 
@@ -691,6 +811,8 @@ Design consequences — apply these in every session without being asked:
 | `dashboard/components/SymbolDiscovery.tsx` — discovery UI on Settings page | **done** |
 | `dashboard/app/api/_utils.ts` — shared BOT_ROOT + isAlive | **done** |
 | Tests (symbol_discovery — 10 tests) | **done** |
+| **Dynamic Weight Rebalancer** — full feature complete | **done** |
+| Tests (weight_rebalancer — 19 tests) | **done** |
 | Tests (other modules) | not started |
 | Deployment files | not started |
 

@@ -121,7 +121,28 @@ def make_analyzer(price=50000.0):
     a = MagicMock()
     a.get_current_price.return_value = price
     a.get_trend.return_value = MagicMock()
+    a.get_klines.return_value = []
     return a
+
+
+def make_preset_settings():
+    """Return a MagicMock preset settings with all filter thresholds disabled (0 = off)."""
+    s = MagicMock()
+    s.tp_multiplier = 1.0
+    s.max_profit_pct = 0.0
+    s.min_sl_pct = 0.0
+    s.max_sl_pct = 0.0
+    s.min_sl_atr_mult = 0.0
+    s.atr_lookback = 0
+    s.min_profit_loss_ratio = 0.0
+    s.sl_adjust_to_rr = False
+    s.duplicate_skip_candles = 0
+    s.partial_take_pct = 0.0
+    s.trailing_stop_pct = 0.0
+    s.max_losing_pct = 0.0
+    s.max_losing_candles = 0
+    s.max_losing_amount_usdt = 0.0
+    return s
 
 
 # ── balance initialisation ─────────────────────────────────────────────────
@@ -184,7 +205,7 @@ async def test_on_candle_close_opens_rank2_and_rank3(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
 
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
@@ -203,7 +224,7 @@ async def test_on_candle_close_does_not_double_open(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
 
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
         after_first = dict(sim._rank_open[2])
@@ -222,7 +243,7 @@ async def test_no_signal_leaves_slot_empty(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = None
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
 
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
@@ -240,7 +261,7 @@ async def test_check_prices_closes_on_tp(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     closed = await sim.check_prices('BTCUSDT', 55001.0)
@@ -258,7 +279,7 @@ async def test_check_prices_closes_on_sl(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     closed = await sim.check_prices('BTCUSDT', 47999.0)
@@ -275,7 +296,7 @@ async def test_check_prices_updates_rank_balance(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     balance_before = sim._rank_balance[2]
@@ -292,7 +313,7 @@ async def test_check_prices_returns_rank_in_closed_dict(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     closed = await sim.check_prices('BTCUSDT', 55001.0)
@@ -324,7 +345,7 @@ async def test_rank_change_evicts_old_preset(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_b'
@@ -335,7 +356,7 @@ async def test_rank_change_evicts_old_preset(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
 
     # preset_b evicted, preset_c now in rank-2 slot
@@ -362,7 +383,7 @@ async def test_evicted_order_written_to_rank_file(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     # Shift rankings to trigger eviction
@@ -370,7 +391,7 @@ async def test_evicted_order_written_to_rank_file(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
 
     rank_file = tmp_path / 'data' / 'virtual_orders_rank2_BTCUSDT_test.json'
@@ -392,7 +413,7 @@ async def test_close_all_open_clears_all_ranks(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     feed = MagicMock()
@@ -413,7 +434,7 @@ async def test_close_all_open_writes_closed_early_to_file(tmp_path):
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec
-        mock_dc.replace.return_value = MagicMock()
+        mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
 
     feed = MagicMock()

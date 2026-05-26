@@ -272,12 +272,16 @@ class FakeOrder:
     # Stats helpers                                                        #
     # ------------------------------------------------------------------ #
 
-    def profit_pct(self) -> Optional[float]:
-        """Profit/loss as % of entry. Positive = win/partial/trail, negative = loss."""
+    def profit_pct(self, fee_rate: float = 0.0) -> Optional[float]:
+        """Profit/loss as % of entry. Positive = win/partial/trail, negative = loss.
+        Pass fee_rate=0.0004 for net-of-fees result (taker fee charged both sides)."""
         if self.close_price is None:
             return None
         raw = (self.close_price - self.entry_price) / self.entry_price * 100
-        return raw if self.side == 'BUY' else -raw
+        directional = raw if self.side == 'BUY' else -raw
+        if fee_rate > 0:
+            directional -= (1.0 + self.close_price / self.entry_price) * fee_rate * 100
+        return directional
 
     @property
     def max_tp_reach_pct(self) -> float:
@@ -392,6 +396,7 @@ class FakeOrder:
         self.close_candle = candle_index
 
     def to_dict(self) -> dict:
+        _pnl = self.profit_pct(fee_rate=0.0004)
         return {
             'side': self.side,
             'level': self.level,
@@ -402,7 +407,7 @@ class FakeOrder:
             'partial_price': self._partial_price,
             'result': self.result,
             'close_price': self.close_price,
-            'profit_pct': round(self.profit_pct(), 4) if self.profit_pct() is not None else None,
+            'profit_pct': round(_pnl, 4) if _pnl is not None else None,
             'open_candle': self.open_candle,
             'close_candle': self.close_candle,
             'best_price': round(self._best_price, 8),

@@ -263,10 +263,64 @@ class VirtualOrderSimulator:
             return
 
         entry = rec.getEntryPrice()
-        tp = rec.getTarget()
-        sl = rec.getStop() or 0.0
-        if entry <= 0 or tp <= 0 or sl <= 0:
+        raw_tp = rec.getTarget()
+        sl_raw = rec.getStop() or 0.0
+        if entry <= 0 or raw_tp <= 0 or sl_raw <= 0:
             return
+
+        side = rec.getSide()
+
+        # Apply tp_multiplier and compute filter metrics (mirrors backtester + _try_place_order)
+        if side == 'BUY':
+            if raw_tp <= entry or sl_raw >= entry:
+                return
+            tp = entry + (raw_tp - entry) * preset_settings.tp_multiplier
+            sl = sl_raw
+            sl_dist_pct = (entry - sl) / entry * 100
+            profit_dist_pct = (tp - entry) / entry * 100
+        else:
+            if raw_tp >= entry or sl_raw <= entry:
+                return
+            tp = entry - (entry - raw_tp) * preset_settings.tp_multiplier
+            sl = sl_raw
+            sl_dist_pct = (sl - entry) / entry * 100 * 1.5  # SELL SL spikes harsher
+            profit_dist_pct = (entry - tp) / entry * 100
+
+        if abs(sl - entry) < entry * 0.0001:
+            return
+
+        if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
+            return
+        if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
+            return
+        if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
+            return
+
+        if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:
+            _klines = analyzer.get_klines()
+            if _klines:
+                _tail = _klines[-preset_settings.atr_lookback:]
+                _avg_range = sum(float(k[2]) - float(k[3]) for k in _tail) / len(_tail)
+                if _avg_range > 0 and abs(sl - entry) < preset_settings.min_sl_atr_mult * _avg_range:
+                    return
+
+        _profit_dist = abs(tp - entry)
+        _loss_dist = abs(sl - entry)
+        if _loss_dist == 0:
+            return
+
+        if _profit_dist / _loss_dist < preset_settings.min_profit_loss_ratio:
+            if preset_settings.sl_adjust_to_rr and _profit_dist > 0:
+                _req_loss = _profit_dist / preset_settings.min_profit_loss_ratio
+                if side == 'BUY':
+                    sl = entry - _req_loss
+                else:
+                    sl = entry + _req_loss
+                _new_sl_pct = _req_loss / entry * 100 * (1.5 if side == 'SELL' else 1.0)
+                if preset_settings.min_sl_pct > 0 and _new_sl_pct < preset_settings.min_sl_pct:
+                    return
+            else:
+                return
 
         # Duplicate-signal skip
         if preset_settings.duplicate_skip_candles > 0:
@@ -277,8 +331,7 @@ class VirtualOrderSimulator:
                 _dur = _tf_to_ms(base_settings.timeframe)
                 _candles_since = (_now_ms - _prev['ts_ms']) // _dur if _dur else 0
                 if _candles_since <= preset_settings.duplicate_skip_candles:
-                    _side = rec.getSide()
-                    if _side == _prev['side']:
+                    if side == _prev['side']:
                         _p = preset_settings.duplicate_skip_pct / 100.0
                         if (_prev['entry'] > 0 and abs(entry - _prev['entry']) / _prev['entry'] <= _p and
                                 _prev['sl'] > 0 and abs(sl - _prev['sl']) / _prev['sl'] <= _p and
@@ -300,9 +353,13 @@ class VirtualOrderSimulator:
         else:
             alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
         quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
+
+        # Load risk config once — used for both notional cap and loss cap below.
+        _risk_cfg = load_risk_config()
+
         # Apply the same per-order notional cap as real orders so virtual PnL is
         # comparable to real PnL and does not distort the efficiency scoreboard.
-        _max_notional = load_risk_config().get("max_order_notional_usdt", 0.0)
+        _max_notional = _risk_cfg.get("max_order_notional_usdt", 0.0)
         if _max_notional > 0 and quantity * entry > _max_notional:
             logger.debug(
                 f"[{symbol}] Rank-{rank} virtual notional cap: "
@@ -318,7 +375,6 @@ class VirtualOrderSimulator:
         if quantity <= 0:
             return
 
-        side = rec.getSide()
         partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
         trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
 
@@ -342,13 +398,29 @@ class VirtualOrderSimulator:
         }
         self._rank_open[rank][symbol] = record
 
+        # Apply max_loss_usdt from risk config (matches backtester and order_executor).
+        _global_cap = _risk_cfg.get("max_loss_usdt", 0.0)
+        _sym_cap = _risk_cfg.get("max_loss_usdt_per_symbol", {}).get(symbol, _global_cap)
+        _tp_ratio = _risk_cfg.get("max_loss_tp_ratio", 0.0)
+        if _sym_cap > 0 and _tp_ratio > 0:
+            _tp_usdt = abs(tp - entry) * quantity
+            if _tp_usdt > 0:
+                _sym_cap = min(_sym_cap, _tp_ratio * _tp_usdt)
+
         _max_losing_amt = float(getattr(preset_settings, 'max_losing_amount_usdt', 0.0))
+        if _max_losing_amt > 0 and _sym_cap > 0:
+            _effective_cap = min(_max_losing_amt, _sym_cap)
+        elif _max_losing_amt > 0:
+            _effective_cap = _max_losing_amt
+        else:
+            _effective_cap = _sym_cap
+
         _early_loss_sl = 0.0
-        if _max_losing_amt > 0 and quantity > 0:
+        if _effective_cap > 0 and quantity > 0:
             if side == 'BUY':
-                _early_loss_sl = entry - _max_losing_amt / quantity
+                _early_loss_sl = entry - _effective_cap / quantity
             else:
-                _early_loss_sl = entry + _max_losing_amt / quantity
+                _early_loss_sl = entry + _effective_cap / quantity
 
         self._rank_fake[rank][symbol] = FakeOrder(
             side=side,

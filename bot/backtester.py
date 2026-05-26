@@ -46,7 +46,7 @@ class PresetResult:
         return good / self.total() if self.total() else 0.0
 
     def total_profit_pct(self) -> float:
-        return sum(t.profit_pct() or 0.0 for t in self.trades)
+        return sum(t.profit_pct(fee_rate=0.0004) or 0.0 for t in self.trades)
 
     def avg_rr(self) -> float:
         rrs = []
@@ -132,9 +132,8 @@ class Backtester:
 
     Simulation rules:
     - Feed klines[0..i] to a fresh Analyzer on every candle close.
-    - Entry: check synthetic price path through candle i+1 (open→low→high→close for
-      ascending candles, open→high→low→close for descending). Enter at the first price
-      that produces a valid signal, mirroring the 60-second tick checks in paper trading.
+    - Entry: at the close price of candle i, matching the live bot which evaluates
+      signals at the candle-close tick.
     - While a fake order is open: skip new signals (no stacking).
     - Same-candle TP+SL hit → loss (SL takes priority).
     """
@@ -221,7 +220,7 @@ class Backtester:
                 if outcome is not None:
                     result.add(open_order)
                     if self._initial_balance > 0:
-                        pct = open_order.profit_pct() or 0.0
+                        pct = open_order.profit_pct(fee_rate=0.0004) or 0.0
                         balance *= (1 + pct / 100.0)
                         if balance > peak_balance:
                             peak_balance = balance
@@ -269,9 +268,6 @@ class Backtester:
 
             # ── Try to open a new order if none is open ──────────────────
             if open_order is None:
-                if i + 1 >= len(klines):
-                    continue
-
                 if drawdown_triggered:
                     continue
 
@@ -279,16 +275,9 @@ class Backtester:
                 if trend is None:
                     continue
 
-                # Synthetic price path through candle i+1.
-                # Ascending: open → low → high → close (price likely dips before rising).
-                # Descending: open → high → low → close.
-                # Enter at the first price that produces a valid signal, mirroring the
-                # 60-second tick-based checks in paper trading.
-                nk = klines[i + 1]
-                nxt_o, nxt_h, nxt_l, nxt_c = float(nk[1]), float(nk[2]), float(nk[3]), float(nk[4])
-                price_path = [nxt_o, nxt_l, nxt_h, nxt_c] if nxt_c >= nxt_o else [nxt_o, nxt_h, nxt_l, nxt_c]
-
-                for entry_price in price_path:
+                # Enter at current candle close price — matches live bot behavior
+                # where signals are evaluated at the candle-close tick.
+                for entry_price in [close_price]:
                     analyzer.update_price(entry_price)
                     rec = engine.generate(trend, entry_price)
                     if rec is None:
@@ -386,14 +375,14 @@ class Backtester:
                         sl=sl,
                         level=rec.getLevel(),
                         signal_type=rec.getType().value,
-                        candle_index=i + 1,
+                        candle_index=i,
                         partial_take_pct=settings.partial_take_pct,
                         trailing_stop_pct=settings.trailing_stop_pct,
                         max_losing_pct=settings.max_losing_pct,
                         max_losing_candles=settings.max_losing_candles,
                         early_loss_sl=_bt_early_loss_sl,
                     )
-                    break  # entered — stop checking this candle's price path
+                    break
 
         # Any order still open at end-of-data is discarded.
         result.balance_end = balance

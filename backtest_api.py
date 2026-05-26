@@ -50,6 +50,8 @@ DEFAULTS = {
     'higher_low_buy': False,
     'min_sl_atr_mult': 0.0,
     'atr_lookback': 20,
+    'trail_activation_pct': 0.0,
+    'trail_min_distance_pct': 0.0,
 }
 
 
@@ -95,6 +97,8 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         higher_low_buy=bool(p['higher_low_buy']),
         min_sl_atr_mult=float(p['min_sl_atr_mult']),
         atr_lookback=int(p['atr_lookback']),
+        trail_activation_pct=float(p['trail_activation_pct']),
+        trail_min_distance_pct=float(p['trail_min_distance_pct']),
     )
 
 

@@ -423,11 +423,15 @@ async def run() -> None:
             return 0.0
 
         _locked_presets = risk_cfg.get("locked_presets", {})
-        if symbol in _locked_presets:
+        is_locked = symbol in _locked_presets
+        if is_locked:
             preset_name = _locked_presets[symbol]
             logger.info(f"[{symbol}] Using manually locked preset: {preset_name}")
         else:
             preset_name = virtual_tracker.best_preset(symbol)
+            if virtual_tracker.is_virtual_only(symbol):
+                logger.info(f"[{symbol}] Virtual-only floor active — skipping real order")
+                return 0.0
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 

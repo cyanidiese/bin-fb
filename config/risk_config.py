@@ -51,6 +51,8 @@ DEFAULT_CONFIG: dict = {
         "blend_rate": 0.15,
         "weight_floor_ratio": 0.3,
     },
+    "ranking_window_size": 10,
+    "virtual_only_floor": -20.0,
     "min_trades_for_ranking": 3,
     "min_trades_for_ranking_per_symbol": {},
     # Global per-order loss cap: close any order whose unrealized loss exceeds this USDT amount.

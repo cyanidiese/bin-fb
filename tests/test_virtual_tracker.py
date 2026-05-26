@@ -1,6 +1,7 @@
 import json
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 from bot.virtual_tracker import VirtualTracker
 
 
@@ -10,6 +11,18 @@ def _make_tracker(tmp_path, mode='test', min_trades=3):
         orders_path=tmp_path / f"virtual_orders_{mode}.json",
         efficiency_path=tmp_path / f"preset_efficiency_{mode}.json",
         get_min_trades=lambda _: min_trades,
+    )
+
+
+def _patch_config(min_trades=3, window_size=10, floor=-20.0):
+    """Patch load_risk_config so tests don't depend on a risk_config.json on disk."""
+    return patch(
+        'bot.virtual_tracker.load_risk_config',
+        return_value={
+            'min_trades_for_ranking': min_trades,
+            'ranking_window_size': window_size,
+            'virtual_only_floor': floor,
+        },
     )
 
 
@@ -122,3 +135,97 @@ def test_custom_min_trades_per_symbol(tmp_path):
     tracker._efficiency["BTCUSDT"]["seed_winner"]["seeded_winning_usdt"] = 50.0
     # count=4 < min_trades=5 → Tier 2 with seed=5; seed_winner has seed=50 → wins
     assert tracker.best_preset("BTCUSDT") == "seed_winner"
+
+
+# ── Window-based ranking tests ─────────────────────────────────────────────
+
+
+def test_window_score_used_when_warmed_up(tmp_path):
+    # trade_count=10 >= min_trades=3, recent_trades has 10 entries summing to 42.0.
+    # Score must come from the window (42.0), not from cumulative total_winning_usdt (200.0).
+    with _patch_config(min_trades=3, window_size=10):
+        tracker = _make_tracker(tmp_path)
+        recent = [3.0, 5.0, -1.0, 4.0, 6.0, 2.0, 7.0, 8.0, 4.0, 4.0]  # sum = 42.0
+        assert sum(recent) == pytest.approx(42.0)
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=200.0, count=10, recent_trades=recent)
+        score = tracker.get_preset_efficiency("BTCUSDT", "p1")
+        assert score == pytest.approx(42.0)
+
+
+def test_window_falls_back_to_cumulative_during_warmup(tmp_path):
+    # trade_count=5 >= min_trades=3 but window_size=10 and recent_trades only has 5 entries.
+    # Score must fall back to cumulative total_winning_usdt (80.0).
+    with _patch_config(min_trades=3, window_size=10):
+        tracker = _make_tracker(tmp_path)
+        recent = [1.0, 2.0, 3.0, 4.0, 5.0]  # 5 entries, sum=15, but window not yet full
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=80.0, count=5, recent_trades=recent)
+        score = tracker.get_preset_efficiency("BTCUSDT", "p1")
+        assert score == pytest.approx(80.0)
+
+
+def test_record_closed_trade_fills_and_trims_window(tmp_path):
+    # Call record_closed_trade 12 times. Window size = 10, so only last 10 entries kept.
+    with _patch_config(min_trades=3, window_size=10):
+        tracker = _make_tracker(tmp_path)
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=0.0, count=0)
+        profits = [float(i) for i in range(1, 13)]  # 1.0 … 12.0
+        for p in profits:
+            tracker.record_closed_trade("BTCUSDT", "p1", p)
+        eff = tracker.get_efficiency("BTCUSDT", "p1")
+        assert len(eff["recent_trades"]) == 10
+        # Last 10 values are 3.0 … 12.0
+        assert sum(eff["recent_trades"]) == pytest.approx(sum(range(3, 13)))
+
+
+def test_is_virtual_only_true_when_score_below_floor(tmp_path):
+    # Best preset has trade_count >= min_trades and window sum = -25.0 < floor (-20.0).
+    with _patch_config(min_trades=3, window_size=5, floor=-20.0):
+        tracker = _make_tracker(tmp_path)
+        recent = [-5.0, -5.0, -5.0, -5.0, -5.0]  # sum = -25.0
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=-25.0, count=5, recent_trades=recent)
+        assert tracker.is_virtual_only("BTCUSDT") is True
+
+
+def test_is_virtual_only_false_when_score_above_floor(tmp_path):
+    # Window sum = +5.0 > floor (-20.0): gate does not activate.
+    with _patch_config(min_trades=3, window_size=5, floor=-20.0):
+        tracker = _make_tracker(tmp_path)
+        recent = [1.0, 1.0, 1.0, 1.0, 1.0]  # sum = 5.0
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=5.0, count=5, recent_trades=recent)
+        assert tracker.is_virtual_only("BTCUSDT") is False
+
+
+def test_is_virtual_only_false_before_min_trades(tmp_path):
+    # trade_count=1 < min_trades=3: floor gate must not activate regardless of score.
+    with _patch_config(min_trades=3, window_size=5, floor=-20.0):
+        tracker = _make_tracker(tmp_path)
+        recent = [-100.0]  # very negative, but count too low to trigger gate
+        tracker._set_efficiency("BTCUSDT", "p1", total_winning=-100.0, count=1, recent_trades=recent)
+        assert tracker.is_virtual_only("BTCUSDT") is False
+
+
+def test_cold_start_missing_recent_trades_key(tmp_path):
+    # Write efficiency JSON without the recent_trades field (old format).
+    # After loading + one record_closed_trade, recent_trades must have exactly 1 entry.
+    eff_path = tmp_path / "preset_efficiency_test.json"
+    eff_path.write_text(json.dumps({
+        "BTCUSDT": {
+            "p1": {
+                "total_winning_usdt": 10.0,
+                "trade_count": 3,
+                "seeded_winning_usdt": 5.0,
+                # no recent_trades key — old format
+            }
+        }
+    }))
+    with _patch_config(min_trades=3, window_size=10):
+        tracker = VirtualTracker(
+            mode='test',
+            orders_path=tmp_path / "virtual_orders_test.json",
+            efficiency_path=eff_path,
+            get_min_trades=lambda _: 3,
+        )
+        tracker.record_closed_trade("BTCUSDT", "p1", profit_usdt=7.0)
+        eff = tracker.get_efficiency("BTCUSDT", "p1")
+        assert len(eff["recent_trades"]) == 1
+        assert eff["recent_trades"][0] == pytest.approx(7.0)

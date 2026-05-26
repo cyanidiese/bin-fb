@@ -7,17 +7,26 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
+from config.risk_config import load_risk_config
+
 logger = logging.getLogger(__name__)
 
-def _score(stats: dict, min_trades: int) -> tuple[int, float]:
-    """Two-tier score: Tier 1 (live-proven) always beats Tier 2 (seed-only).
 
-    Tier 1: trade_count >= min_trades → ranked by live total_winning_usdt.
-    Tier 2: trade_count <  min_trades → ranked by seeded_winning_usdt (backtest).
+def _score(stats: dict, min_trades: int, window_size: int) -> tuple[int, float]:
+    """Two-tier score with last-N window when warmed up.
+
+    Tier 1: trade_count >= min_trades → ranked by last window_size trade profits
+            when recent_trades has enough entries; falls back to cumulative while
+            the window is still filling.
+    Tier 0: trade_count <  min_trades → ranked by seeded_winning_usdt (backtest).
     Python tuple comparison ensures any (1, x) > any (0, y).
     """
     count = stats.get("trade_count", 0)
     if count >= min_trades:
+        recent = stats.get("recent_trades", [])
+        if len(recent) >= window_size:
+            return (1, sum(recent[-window_size:]))
+        # fallback to cumulative while window filling
         return (1, stats.get("total_winning_usdt", 0.0))
     return (0, stats.get("seeded_winning_usdt", 0.0))
 
@@ -77,6 +86,7 @@ class VirtualTracker:
                     "total_winning_usdt": existing.get("total_winning_usdt", 0.0),
                     "trade_count":        existing.get("trade_count", 0),
                     "seeded_winning_usdt": seeded,
+                    "recent_trades":      existing.get("recent_trades", []),
                 }
             self._save_efficiency()
         except Exception as exc:
@@ -87,9 +97,11 @@ class VirtualTracker:
         if not symbol_data:
             return None
 
+        cfg = load_risk_config()
         min_t = self._get_min_trades(symbol)
-        best = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t))
-        result = best if _score(symbol_data[best], min_t)[1] >= 0 else None
+        window_size = int(cfg.get("ranking_window_size", 10))
+        best = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t, window_size))
+        result = best if _score(symbol_data[best], min_t, window_size)[1] >= 0 else None
 
         prev = self._last_best.get(symbol, _SENTINEL)
         if prev is not _SENTINEL and prev != result:
@@ -100,47 +112,96 @@ class VirtualTracker:
                 f"prev(cnt={prev_stats.get('trade_count', 0)}, "
                 f"seeded={prev_stats.get('seeded_winning_usdt', 0.0):.2f}, "
                 f"live={prev_stats.get('total_winning_usdt', 0.0):.2f}, "
-                f"score={_score(prev_stats, min_t)}) | "
+                f"score={_score(prev_stats, min_t, window_size)}) | "
                 f"new(cnt={new_stats.get('trade_count', 0)}, "
                 f"seeded={new_stats.get('seeded_winning_usdt', 0.0):.2f}, "
                 f"live={new_stats.get('total_winning_usdt', 0.0):.2f}, "
-                f"score={_score(new_stats, min_t)})"
+                f"score={_score(new_stats, min_t, window_size)})"
             )
         self._last_best[symbol] = result
         return result
 
     def get_efficiency(self, symbol: str, preset: str) -> dict:
-        return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0})
+        return self._efficiency.get(symbol, {}).get(preset, {"total_winning_usdt": 0.0, "trade_count": 0, "recent_trades": []})
 
     def get_efficiency_score(self, symbol: str) -> float:
         symbol_data = self._efficiency.get(symbol, {})
         if not symbol_data:
             return 0.0
+        cfg = load_risk_config()
         min_t = self._get_min_trades(symbol)
-        best_tuple = max(_score(stats, min_t) for stats in symbol_data.values())
+        window_size = int(cfg.get("ranking_window_size", 10))
+        best_tuple = max(_score(stats, min_t, window_size) for stats in symbol_data.values())
         return best_tuple[1]
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})
-        return _score(stats, self._get_min_trades(symbol))[1]
+        cfg = load_risk_config()
+        window_size = int(cfg.get("ranking_window_size", 10))
+        return _score(stats, self._get_min_trades(symbol), window_size)[1]
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)
-        self._set_efficiency(symbol, preset, total_winning=eff["total_winning_usdt"] + profit_usdt, count=eff["trade_count"] + 1)
+        cfg = load_risk_config()
+        window_size = int(cfg.get("ranking_window_size", 10))
+        recent_trades = list(eff.get("recent_trades", []))
+        recent_trades.append(profit_usdt)
+        recent_trades = recent_trades[-window_size:]
+        self._set_efficiency(
+            symbol, preset,
+            total_winning=eff["total_winning_usdt"] + profit_usdt,
+            count=eff["trade_count"] + 1,
+            recent_trades=recent_trades,
+        )
 
-    def _set_efficiency(self, symbol: str, preset: str, total_winning: float, count: int) -> None:
+    def is_virtual_only(self, symbol: str) -> bool:
+        """Return True if the symbol's best preset score is below virtual_only_floor.
+        Only activates once the best preset has enough live trades (>= min_trades_for_ranking).
+        """
+        cfg = load_risk_config()
+        floor = float(cfg.get("virtual_only_floor", -20.0))
+        min_trades = int(cfg.get("min_trades_for_ranking", 3))
+
+        presets = self._efficiency.get(symbol, {})
+        if not presets:
+            return False
+
+        best_score = None
+        best_count = 0
+        window_size = int(cfg.get("ranking_window_size", 10))
+        for stats in presets.values():
+            tier, score = _score(stats, min_trades, window_size)
+            if tier > 0:  # only live-ranked presets trigger the floor
+                best_count = max(best_count, stats.get("trade_count", 0))
+                if best_score is None or score > best_score:
+                    best_score = score
+
+        # Gate only activates once we have real live data
+        if best_count < min_trades or best_score is None:
+            return False
+
+        return best_score < floor
+
+    def _set_efficiency(self, symbol: str, preset: str, total_winning: float, count: int, recent_trades: list | None = None) -> None:
         existing = self._efficiency.get(symbol, {}).get(preset, {})
+        if recent_trades is None:
+            recent_trades = existing.get("recent_trades", [])
         self._efficiency.setdefault(symbol, {})[preset] = {
             "total_winning_usdt": total_winning,
             "trade_count": count,
             "seeded_winning_usdt": existing.get("seeded_winning_usdt", 0.0),
+            "recent_trades": recent_trades,
         }
         self._save_efficiency()
 
     def _load_efficiency(self) -> dict:
         if self._efficiency_path.exists():
             try:
-                return json.loads(self._efficiency_path.read_text())
+                data = json.loads(self._efficiency_path.read_text())
+                for symbol_presets in data.values():
+                    for record in symbol_presets.values():
+                        record.setdefault("recent_trades", [])
+                return data
             except (json.JSONDecodeError, ValueError, OSError):
                 pass
         return {}

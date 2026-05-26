@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   const backtestPath   = path.join(BOT_ROOT, 'dashboard', 'public', `backtest_results_${symbol}.json`)
 
   const realOrders = readJson(realOrdersPath, []) as unknown[]
-  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }>>
+  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number; recent_trades?: number[] }>>
   const backtest   = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
 
   const symbolEfficiency = efficiency[symbol] ?? {}
@@ -51,16 +51,23 @@ export async function GET(req: NextRequest) {
     ? Array.from(new Set([...Object.keys(backtest.presets), ...Object.keys(symbolEfficiency)]))
     : Object.keys(symbolEfficiency)
 
-  // Mirror VirtualTracker scoring: pure seeded until MIN_TRADES, pure live after.
-  // No linear blend — prevents early trades from displacing established preset rankings.
-  const MIN_TRADES = 8
-  function effectiveScore(stats: { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number }): number {
-    if ((stats.trade_count ?? 0) >= MIN_TRADES) return stats.total_winning_usdt
-    return stats.seeded_winning_usdt ?? 0
-  }
-
   // Check if this symbol has a manually locked preset
   const riskConfig = readJson(path.join(BOT_ROOT, 'risk_config.json'), {}) as Record<string, unknown>
+
+  // Mirror VirtualTracker scoring: window-based once warmed up, cumulative fallback while
+  // filling, seeded score (Tier 0) before min_trades are reached.
+  const minTrades = (riskConfig?.min_trades_for_ranking as number) ?? 3
+  const windowSize = (riskConfig?.ranking_window_size as number) ?? 10
+  function effectiveScore(stats: { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number; recent_trades?: number[] }): number {
+    if ((stats.trade_count ?? 0) >= minTrades) {
+      const recent = stats.recent_trades ?? []
+      if (recent.length >= windowSize) {
+        return recent.slice(-windowSize).reduce((a, b) => a + b, 0)
+      }
+      return stats.total_winning_usdt
+    }
+    return stats.seeded_winning_usdt ?? 0
+  }
   const lockedPreset: string | null = (riskConfig.locked_presets as Record<string, string> | undefined)?.[symbol] ?? null
 
   // Determine best preset: locked preset wins; otherwise highest effective score > 0

@@ -37,6 +37,8 @@ const NAME_ABBREV: Record<string, string> = {
   sl_adjust_to_rr: 'sladj',
   partial_take_pct: 'partial',
   trailing_stop_pct: 'trail',
+  trail_activation_pct: 'tact',
+  trail_min_distance_pct: 'tmin',
   loss_streak_max: 'ls',
   loss_streak_cooldown_candles: 'lsc',
   global_pause_trigger_candles: 'gpt',

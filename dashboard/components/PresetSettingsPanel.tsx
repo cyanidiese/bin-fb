@@ -91,6 +91,20 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     description: 'Once armed, close the trade when price pulls back by this fraction of the maximum gain seen from entry. For example, 0.15 = trail closes if price retraces 15% of peak gain. 0 = use fixed partial retrace to the arm threshold instead.',
     category: 'Exit strategy',
   },
+  trail_activation_pct: {
+    label: 'Trail activation',
+    default: 0.0,
+    unit: '% gain',
+    description: 'Minimum % gain from entry before the trailing stop can fire. Prevents trail exits while the trade is still near breakeven. For example, 3.0 = trail only activates once price is 3% in profit. 0 = trail fires as soon as it is armed.',
+    category: 'Exit strategy',
+  },
+  trail_min_distance_pct: {
+    label: 'Trail min distance',
+    default: 0.0,
+    unit: '% entry',
+    description: 'Minimum trail distance as a % of entry price. Acts as a noise floor so small wicks cannot trigger the trail. For example, 1.0 = trail never fires closer than 1% from peak. 0 = no floor.',
+    category: 'Exit strategy',
+  },
 
   // ── Cooldown ───────────────────────────────────────────────────────────
   loss_streak_max: {

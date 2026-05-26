@@ -716,6 +716,8 @@ async def run() -> None:
             max_losing_pct=preset_settings.max_losing_pct,
             max_losing_amount_usdt=preset_settings.max_losing_amount_usdt,
             max_losing_candles=preset_settings.max_losing_candles,
+            trail_activation_pct=preset_settings.trail_activation_pct,
+            trail_min_distance_pct=preset_settings.trail_min_distance_pct,
             level=best.getLevel(),
             signal_type=best.getType().value,
             balance_at_open=balance,

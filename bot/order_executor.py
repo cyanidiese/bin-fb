@@ -145,6 +145,8 @@ class OrderExecutor:
         max_losing_pct: float = 0.0,
         max_losing_amount_usdt: float = 0.0,
         max_losing_candles: int = 0,
+        trail_activation_pct: float = 0.0,
+        trail_min_distance_pct: float = 0.0,
         level: Optional[int] = None,
         signal_type: str = '',
         balance_at_open: float = 0.0,
@@ -243,6 +245,8 @@ class OrderExecutor:
                     max_losing_pct=max_losing_pct,
                     max_losing_candles=max_losing_candles,
                     early_loss_sl=_early_loss_sl,
+                    trail_activation_pct=trail_activation_pct,
+                    trail_min_distance_pct=trail_min_distance_pct,
                 )
                 self._states[symbol] = OrderState.OPEN
                 self._open_orders[symbol].open_time = datetime.now(timezone.utc).isoformat()

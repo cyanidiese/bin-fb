@@ -58,6 +58,8 @@ class FakeOrder:
         candle_index: int,
         partial_take_pct: float = 0.0,
         trailing_stop_pct: float = 0.0,
+        trail_activation_pct: float = 0.0,
+        trail_min_distance_pct: float = 0.0,
         max_losing_pct: float = 0.0,
         max_losing_candles: int = 0,
         early_loss_sl: float = 0.0,
@@ -79,6 +81,8 @@ class FakeOrder:
 
         # Partial / trailing stop
         self._trailing_stop_pct = trailing_stop_pct
+        self._trail_activation_pct = trail_activation_pct
+        self._trail_min_distance = entry_price * trail_min_distance_pct / 100.0
         self._partial_armed = False
 
         if partial_take_pct > 0:
@@ -233,7 +237,14 @@ class FakeOrder:
             gained = self._max_favorable - self.entry_price
             if gained <= 0:
                 return None
-            trail_price = self._max_favorable - self._trailing_stop_pct * gained
+            if self._trail_activation_pct > 0:
+                if gained / self.entry_price * 100 < self._trail_activation_pct:
+                    return None
+            trail_distance = max(
+                self._trailing_stop_pct * gained,
+                self._trail_min_distance,
+            )
+            trail_price = self._max_favorable - trail_distance
             if low <= trail_price:
                 self._close('trail', trail_price, candle_index)
                 return 'trail'
@@ -241,7 +252,14 @@ class FakeOrder:
             gained = self.entry_price - self._max_favorable
             if gained <= 0:
                 return None
-            trail_price = self._max_favorable + self._trailing_stop_pct * gained
+            if self._trail_activation_pct > 0:
+                if gained / self.entry_price * 100 < self._trail_activation_pct:
+                    return None
+            trail_distance = max(
+                self._trailing_stop_pct * gained,
+                self._trail_min_distance,
+            )
+            trail_price = self._max_favorable + trail_distance
             if high >= trail_price:
                 self._close('trail', trail_price, candle_index)
                 return 'trail'
@@ -325,6 +343,8 @@ class FakeOrder:
             'open_candle': self.open_candle,
             '_partial_price': self._partial_price,
             '_trailing_stop_pct': self._trailing_stop_pct,
+            '_trail_activation_pct': self._trail_activation_pct,
+            '_trail_min_distance': self._trail_min_distance,
             '_partial_armed': self._partial_armed,
             '_best_price': self._best_price,
             '_worst_price': self._worst_price,
@@ -352,6 +372,8 @@ class FakeOrder:
         obj.close_price = None
         obj._partial_price = state['_partial_price']
         obj._trailing_stop_pct = state['_trailing_stop_pct']
+        obj._trail_activation_pct = state.get('_trail_activation_pct', 0.0)
+        obj._trail_min_distance = state.get('_trail_min_distance', 0.0)
         obj._partial_armed = state['_partial_armed']
         obj._best_price = state['_best_price']
         obj._worst_price = state['_worst_price']
@@ -379,6 +401,8 @@ class FakeOrder:
         obj.close_price = d.get('close_price')
         obj._partial_price = d.get('partial_price')
         obj._trailing_stop_pct = 0.0
+        obj._trail_activation_pct = 0.0
+        obj._trail_min_distance = 0.0
         obj._partial_armed = False
         obj._best_price = d.get('best_price', d['entry'])
         obj._worst_price = d.get('worst_price', d['entry'])

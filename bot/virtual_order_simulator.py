@@ -435,6 +435,8 @@ class VirtualOrderSimulator:
             max_losing_pct=float(getattr(preset_settings, 'max_losing_pct', 0.0)),
             max_losing_candles=int(getattr(preset_settings, 'max_losing_candles', 0)),
             early_loss_sl=_early_loss_sl,
+            trail_activation_pct=float(getattr(preset_settings, 'trail_activation_pct', 0.0)),
+            trail_min_distance_pct=float(getattr(preset_settings, 'trail_min_distance_pct', 0.0)),
         )
         logger.debug(
             f"[{symbol}] Rank-{rank} opened: {preset_name} {side} @ {entry} "

@@ -381,6 +381,8 @@ class Backtester:
                         max_losing_pct=settings.max_losing_pct,
                         max_losing_candles=settings.max_losing_candles,
                         early_loss_sl=_bt_early_loss_sl,
+                        trail_activation_pct=settings.trail_activation_pct,
+                        trail_min_distance_pct=settings.trail_min_distance_pct,
                     )
                     break
 

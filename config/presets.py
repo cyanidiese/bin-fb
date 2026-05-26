@@ -51,6 +51,10 @@ class PresetOverrides(TypedDict, total=False):
     max_losing_pct: float
     max_losing_amount_usdt: float
     max_losing_candles: int
+    # Trailing stop activation gate (0.0 = disabled)
+    trail_activation_pct: float
+    # Trailing stop minimum distance as % of entry (0.0 = disabled)
+    trail_min_distance_pct: float
 
 
 # ── Locked presets ─────────────────────────────────────────────────────────────
@@ -593,6 +597,81 @@ PRESETS: dict[str, PresetOverrides] = {
         'global_pause_candles': 10,
         'max_losing_pct': 55.0,
         'max_losing_candles': 2,
+    },
+
+    # ── Trail activation / min-distance variants ──────────────────────────────
+    # Base: trail_15_from_30 (arm=30%, trail=15%, max_losing_pct=25, max_losing_candles=5)
+    'trail_15_from_30_act2_min1': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15,
+        'max_losing_pct': 25.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_15_from_30_act3_min1': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15,
+        'max_losing_pct': 25.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_15_from_30_act5_min15': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15,
+        'max_losing_pct': 25.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
+    },
+
+    # Base: trail_20_from_30_cooldown (arm=30%, trail=20%, cooldown 2/5/3/10)
+    'trail_20_from_30_act2_min1': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_20_from_30_act3_min1': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_20_from_30_act5_min15': {
+        'partial_take_pct': 0.30, 'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+        'global_pause_trigger_candles': 3, 'global_pause_candles': 10,
+        'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
+    },
+
+    # Base: trail_15_from_15 (arm=15%, trail=15%, dup-skip 3/3, max_losing_pct=70, max_losing_candles=5)
+    'trail_15_from_15_act2_min1': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 3.0,
+        'max_losing_pct': 70.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_15_from_15_act3_min1': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 3.0,
+        'max_losing_pct': 70.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_15_from_15_act5_min15': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
+        'duplicate_skip_candles': 3, 'duplicate_skip_pct': 3.0,
+        'max_losing_pct': 70.0, 'max_losing_candles': 5,
+        'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
+    },
+
+    # Base: trail_20_from_15 (arm=15%, trail=20%, max_losing_pct=25, max_losing_candles=2)
+    'trail_20_from_15_act2_min1': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
+        'max_losing_pct': 25.0, 'max_losing_candles': 2,
+        'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_20_from_15_act3_min1': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
+        'max_losing_pct': 25.0, 'max_losing_candles': 2,
+        'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
+    },
+    'trail_20_from_15_act5_min15': {
+        'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
+        'max_losing_pct': 25.0, 'max_losing_candles': 2,
+        'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
     },
 }
 

@@ -82,6 +82,12 @@ class Settings:
     max_losing_amount_usdt: float
     # max_losing_candles: close after N consecutive candles whose close is on wrong side of entry
     max_losing_candles: int
+    # Trailing stop activation gate: trail only fires after price has moved this % from entry.
+    # 0.0 = disabled (trail fires on any positive gain, current behaviour).
+    trail_activation_pct: float
+    # Trailing stop minimum distance: trail distance = max(trail_pct × gained, entry × min_pct / 100).
+    # Prevents the trail from sitting too close to price on small gains. 0.0 = disabled.
+    trail_min_distance_pct: float
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -154,6 +160,8 @@ def load_settings(symbol: str | None = None) -> Settings:
         max_losing_pct=float(os.getenv('MAX_LOSING_PCT', '0.0')),
         max_losing_amount_usdt=float(os.getenv('MAX_LOSING_AMOUNT_USDT', '0.0')),
         max_losing_candles=int(os.getenv('MAX_LOSING_CANDLES', '0')),
+        trail_activation_pct=float(os.getenv('TRAIL_ACTIVATION_PCT', '0.0')),
+        trail_min_distance_pct=float(os.getenv('TRAIL_MIN_DISTANCE_PCT', '0.0')),
     )
 
     if symbol is not None:

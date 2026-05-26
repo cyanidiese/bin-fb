@@ -1104,9 +1104,17 @@ async def run() -> None:
 
     async def on_stop_bot() -> None:
         current_symbols = symbol_registry.get_symbols()
-        await virtual_order_simulator.close_all_open(current_symbols, feed)
-        await order_executor.close_all_orders_at_market()
-        _write_open_positions()  # clears to empty after all orders closed
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    virtual_order_simulator.close_all_open(current_symbols, feed),
+                    order_executor.close_all_orders_at_market(),
+                ),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Graceful shutdown timed out after 45s — forcing exit")
+        _write_open_positions()
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
 

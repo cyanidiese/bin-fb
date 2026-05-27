@@ -52,9 +52,13 @@ DEFAULT_CONFIG: dict = {
         "weight_floor_ratio": 0.3,
     },
     "ranking_window_size": 10,
-    "virtual_only_floor": -20.0,
+    "virtual_only_floor": -5.0,
     "min_trades_for_ranking": 3,
     "min_trades_for_ranking_per_symbol": {},
+    # Hard floor on SL distance (% of entry). Any signal whose SL is tighter than this
+    # is rejected at order-placement time, regardless of preset. 0 = disabled.
+    # Prevents micro-SL orders (< noise level) from reaching real execution.
+    "global_min_sl_pct": 0.3,
     # Global per-order loss cap: close any order whose unrealized loss exceeds this USDT amount.
     # 0 = disabled. Applied in both live/test trading and backtest simulation.
     "max_loss_usdt": 25.0,

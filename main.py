@@ -483,6 +483,7 @@ async def run() -> None:
             return 0.0
 
         _eff_for_dl = virtual_tracker.get_efficiency_score(symbol)
+        _global_min_sl = risk_cfg.get("global_min_sl_pct", 0.0)
 
         # max_profit_pct filter
         if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
@@ -495,7 +496,22 @@ async def run() -> None:
             )
             return 0.0
 
-        # min_sl_pct filter
+        # Global SL hard floor — rejects any signal whose SL is too close to entry
+        # regardless of which preset is active (catches micro-SL noise signals).
+        if _global_min_sl > 0 and sl_dist_pct < _global_min_sl:
+            logger.info(
+                f"[{symbol}] Signal skipped — SL too tight: {sl_dist_pct:.3f}% < global_min={_global_min_sl}% (preset={preset_name})"
+            )
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision='skip_global_min_sl',
+                reason=f'sl_dist={sl_dist_pct:.3f}% < global_min={_global_min_sl}%',
+                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                preset_name=preset_name, scenario=_active_scenario_name,
+            )
+            return 0.0
+
+        # min_sl_pct filter (per-preset, can be stricter than the global floor)
         if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
@@ -549,11 +565,15 @@ async def run() -> None:
                 else:
                     sl = entry + required_loss_dist
                     _new_sl_pct = required_loss_dist / entry * 100 * 1.5
-                if preset_settings.min_sl_pct > 0 and _new_sl_pct < preset_settings.min_sl_pct:
+                _floor_sl = max(
+                    preset_settings.min_sl_pct if preset_settings.min_sl_pct > 0 else 0.0,
+                    _global_min_sl,
+                )
+                if _floor_sl > 0 and _new_sl_pct < _floor_sl:
                     dl_record(
                         dl_path, candle_ts=candle_ts, symbol=symbol,
                         decision='skip_sl_adjust_too_tight',
-                        reason=f'adjusted_sl={_new_sl_pct:.3f}% < min_sl={preset_settings.min_sl_pct}%',
+                        reason=f'adjusted_sl={_new_sl_pct:.3f}% < min_sl={_floor_sl:.3f}%',
                         balance=balance, leverage=0, efficiency_score=_eff_for_dl,
                         preset_name=preset_name, scenario=_active_scenario_name,
                     )

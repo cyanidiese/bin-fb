@@ -782,7 +782,10 @@ async def run() -> None:
         tf_ms = _tf_to_ms(timeframe)
         sk = f"{sym}:{pname}:{side}"
         other_sk = f"{sym}:{pname}:{'SELL' if side == 'BUY' else 'BUY'}"
-        if c.get('result') == 'loss':
+        is_loss = c.get('result') == 'loss' or (
+            c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0
+        )
+        if is_loss:
             cnt = _loss_streak.get(sk, 0) + 1
             _last_loss_ts[sk] = ts
             if cnt >= ps.loss_streak_max:

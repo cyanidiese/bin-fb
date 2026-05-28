@@ -402,6 +402,16 @@ Design approved + implemented in session 14.
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
 
+## Session 39 — Strategy Page Time Travel (2026-05-28)
+
+- [x] **replay_api.py** — Python script re-runs Analyzer.build_from_klines(klines[:idx+1]) on stored results JSON
+- [x] **tests/test_replay_api.py** — 6 pytest tests for symbol validation, negative index guard, boundary cases
+- [x] **dashboard/app/api/replay/route.ts** — POST route, validate input, subprocess timeout guard
+- [x] **TimeScrubber.tsx** — React slider with ◀ ▶ buttons, LIVE badge, datetime label, loading state
+- [x] **Integration** — scrubber state in Strategy page, 300ms debounced fetch, data-source switching
+- [x] **Update FEATURES.md** — documented Strategy Page Time Travel with design details
+- [x] **Update CLAUDE_NOTES.md** — RESUME POINT for session 39
+
 ## Session 38 — Range Position Max Sweep & Preset Tuning (2026-05-28)
 
 - [x] **Complete sweep analysis** — 78 presets × 15 symbols × 6 values = 7,020 combinations tested

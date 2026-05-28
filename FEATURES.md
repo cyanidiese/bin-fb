@@ -892,6 +892,22 @@ Filter chart klines by date range. Two `datetime-local` inputs with in-memory fi
 - Reset button clears both pickers
 - Charts update immediately without server round-trip
 
+### Strategy Page Time Travel (Session 39)
+Replay bot's trend analysis state at any historical candle index. Users can scrub backward through the strategy timeline to see what signals were active at past moments, including swing points, trend levels, and indicators at that candle.
+
+**Files**: `replay_api.py`, `tests/test_replay_api.py`, `dashboard/app/api/replay/route.ts`, `dashboard/components/TimeScrubber.tsx`, `dashboard/lib/types.ts`, `dashboard/app/page.tsx`
+
+**Key details**:
+- **`replay_api.py`**: Python script that re-runs `Analyzer.build_from_klines(klines[:idx+1])` on stored results JSON. Returns `{trend_levels, all_points, signals}` for historical moment. Symbol validation (regex), negative index guard, 10s CLI usage.
+- **`tests/test_replay_api.py`**: 6 pytest tests covering symbol validation, negative index guard, boundary cases.
+- **`dashboard/app/api/replay/route.ts`**: POST route validates `{symbol, candle_index}`, spawns `replay_api.py`, 10-second subprocess timeout guard.
+- **`dashboard/components/TimeScrubber.tsx`**: React component with `input[type=range]` slider, ◀ ▶ tick buttons (±10 klines), LIVE badge (green pulsing dot) when at live position, datetime label when historical, "updating…" while loading.
+- **Travel range**: Limited to klines in `results_{symbol}.json` (up to 1000 candles, ~10 days at 15-min).
+- **Swing neighbours**: Hardcoded `swing_neighbours=2` in replay script (matches live analyzer default).
+- **Overlay sync**: Klines AND overlays (swing points, trend levels, signals) all clip together — no visual mismatch.
+- **Live polling**: Continues in background during replay; returning slider to max position instantly resumes live view.
+- **Clear on load**: `replayData` cleared immediately on each scrub position so stale overlay data never persists during loading.
+
 ### Duplicate-Signal Skip (Avoid Churning After SL-Hit)
 Prevents re-entry on similar signals shortly after stop loss. When enabled, skips new signal if it closely matches a recent SL-hit signal (same direction, entry/sl/tp within threshold %, within N candles). **Fully visible in logs** with dedicated logger.info() call.
 

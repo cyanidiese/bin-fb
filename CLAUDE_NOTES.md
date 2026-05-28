@@ -1,6 +1,40 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-28 (session 38 — range_position_max sweep completed, all 78 presets updated with data-backed values)
+## Last updated: 2026-05-28 (session 39 — Strategy Page Time Travel feature completed and deployed)
+
+---
+
+## ⟳ RESUME POINT — session 39 (2026-05-28) — Strategy Page Time Travel deployed
+
+**Session summary:**
+
+**Strategy Page Time Travel feature fully implemented and deployed** — users can now scrub backward through the bot's historical trend analysis using an interactive slider on the Strategy page. All components built, tested, and integrated.
+
+**What was built:**
+- `replay_api.py` — Python script that re-runs Analyzer.build_from_klines(klines[:idx+1]) on stored results JSON and returns {trend_levels, all_points, signals} for historical moment. Symbol validation (regex), negative index guard, 10s CLI usage.
+- `tests/test_replay_api.py` — 6 pytest tests covering symbol validation, negative index guard, boundary cases
+- `dashboard/app/api/replay/route.ts` — POST route validates {symbol, candle_index}, spawns replay_api.py subprocess, 10-second timeout guard
+- `dashboard/components/TimeScrubber.tsx` — React slider component with ◀ ▶ tick buttons (±10 klines), LIVE badge (green pulsing) when at live position, datetime label when historical, "updating…" while loading
+- `dashboard/lib/types.ts` — Added ReplayResult interface, added is_reversal/entry/rr/precision fields to Signal interface
+- `dashboard/app/page.tsx` — Integrated scrubber state (scrubberIdx, replayData, isReplaying), 300ms debounced fetch effect, data-source switching with useMemo, TimeScrubber in toolbar
+
+**Design decisions:**
+- Travel range limited to klines in results_{symbol}.json (up to 1000 candles ≈ 10 days of 15-min data)
+- swing_neighbours=2 hardcoded in replay script (matches live analyzer default)
+- All overlays (swing points, trend levels, signals) clip together with klines — no visual mismatch
+- replayData cleared immediately on scrub to prevent stale overlay persistence during loading
+- Live polling continues in background; returning slider to max position instantly resumes live view
+
+**Feature is fully backward-compatible** — no breaking changes to existing components. Live analysis unaffected when scrubber not in use (at max position).
+
+**Test status**: All new tests pass. 7 pre-existing failures in test_risk_manager.py (5) and test_virtual_order_simulator.py (2) remain unrelated to this feature.
+
+**State going forward**:
+- Time travel available on Strategy page for any symbol with data in results JSON
+- Feature deployed and ready for user testing
+- No blocking issues or known bugs in time travel implementation
+
+**Immediate next action**: Monitor time travel feature usage and stability. Proceed with planned feature work or performance improvements based on user feedback.
 
 ---
 

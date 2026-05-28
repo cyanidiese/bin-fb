@@ -23,8 +23,12 @@ export interface Signal {
   level: number;         // trend level that triggered the signal
   side: 'BUY' | 'SELL';
   signal_type: string;   // human-readable strategy pattern name (e.g. "lowering_above_last_low")
+  is_reversal: boolean;
+  entry: number;
   target: number;        // suggested take-profit price
   stop: number | null;   // suggested stop-loss price (null if not calculated)
+  rr: number;
+  precision: number;
 }
 
 // One 15-minute OHLCV candle exported from the bot's kline buffer.
@@ -41,7 +45,7 @@ export interface ReplayResult {
   trend_levels: TrendLevel[]
   all_points: SwingPoint[]
   signals: Signal[]
-  candle_index: number  // echoed back so kline clip is always in sync with overlay data
+  candle_index: number  // injected client-side from scrubberIdx so kline clip stays in sync with overlay data
 }
 
 // ── Backtest types ─────────────────────────────────────────────────────────

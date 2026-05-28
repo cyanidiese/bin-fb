@@ -40,19 +40,31 @@ export async function POST(req: NextRequest) {
   return new Promise<NextResponse>(resolve => {
     let stdout = ''
     let stderr = ''
+    let settled = false
+
+    function settle(r: NextResponse) {
+      if (!settled) { settled = true; resolve(r) }
+    }
 
     const child = spawn(python, ['replay_api.py', payload], { cwd: BOT_ROOT })
+
+    const killTimer = setTimeout(() => {
+      child.kill()
+      settle(NextResponse.json({ error: 'replay_api.py timed out' }, { status: 504 }))
+    }, 10_000)
 
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk })
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk })
 
     child.on('error', (err: Error) => {
-      resolve(NextResponse.json({ error: `Failed to start Python: ${err.message}` }, { status: 500 }))
+      clearTimeout(killTimer)
+      settle(NextResponse.json({ error: `Failed to start Python: ${err.message}` }, { status: 500 }))
     })
 
-    child.on('close', (code: number) => {
+    child.on('close', (code: number | null) => {
+      clearTimeout(killTimer)
       if (code !== 0) {
-        resolve(NextResponse.json(
+        settle(NextResponse.json(
           { error: stderr.trim() || `Python exited with code ${code}` },
           { status: 500 },
         ))
@@ -61,12 +73,12 @@ export async function POST(req: NextRequest) {
       try {
         const data = JSON.parse(stdout)
         if (data.error) {
-          resolve(NextResponse.json({ error: data.error }, { status: 500 }))
+          settle(NextResponse.json({ error: data.error }, { status: 500 }))
           return
         }
-        resolve(NextResponse.json(data))
+        settle(NextResponse.json(data))
       } catch {
-        resolve(NextResponse.json(
+        settle(NextResponse.json(
           { error: 'Failed to parse Python output', raw: stdout.slice(0, 500) },
           { status: 500 },
         ))

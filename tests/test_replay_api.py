@@ -77,8 +77,8 @@ def test_replay_zero_candles_returns_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(replay_api, 'RESULTS_DIR', tmp_path)
     _write_results(tmp_path, 'TESTUSDT', _make_klines(50))
 
-    result = replay_api.replay('TESTUSDT', -1)
-    assert result == {'trend_levels': [], 'all_points': [], 'signals': []}
+    assert replay_api.replay('TESTUSDT', -1) == {'trend_levels': [], 'all_points': [], 'signals': []}
+    assert replay_api.replay('TESTUSDT', -2) == {'trend_levels': [], 'all_points': [], 'signals': []}
 
 
 def test_replay_missing_file_raises(tmp_path, monkeypatch):
@@ -87,3 +87,11 @@ def test_replay_missing_file_raises(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         replay_api.replay('NONEXISTENT', 10)
+
+
+def test_replay_invalid_symbol_raises(tmp_path, monkeypatch):
+    import replay_api
+    monkeypatch.setattr(replay_api, 'RESULTS_DIR', tmp_path)
+
+    with pytest.raises(ValueError):
+        replay_api.replay('../etc', 10)

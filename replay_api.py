@@ -8,13 +8,14 @@ Prints JSON to stdout on success.
 Prints {"error": "..."} and exits with code 1 on failure.
 """
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from bot.analyzer import Analyzer
 
-RESULTS_DIR = Path('dashboard/public')
+RESULTS_DIR = Path(__file__).parent / 'dashboard' / 'public'
 
 
 def _ts(unix_seconds) -> str | None:
@@ -60,6 +61,9 @@ def replay(symbol: str, candle_index: int) -> dict:
 
     Raises FileNotFoundError if the results JSON for symbol is missing.
     """
+    if not re.fullmatch(r'[A-Z0-9]{2,20}', symbol):
+        raise ValueError(f'Invalid symbol: {symbol!r}')
+
     path = RESULTS_DIR / f'results_{symbol}.json'
     if not path.exists():
         raise FileNotFoundError(f'results_{symbol}.json not found')
@@ -72,6 +76,9 @@ def replay(symbol: str, candle_index: int) -> dict:
         [int(k['time']) * 1000, float(k['open']), float(k['high']), float(k['low']), float(k['close']), 0]
         for k in data['klines']
     ]
+
+    if candle_index < 0:
+        return {'trend_levels': [], 'all_points': [], 'signals': []}
 
     sliced = analyzer_klines[:candle_index + 1]
     if not sliced:
@@ -89,20 +96,18 @@ def replay(symbol: str, candle_index: int) -> dict:
 
     trend_levels = _format_trend_levels(trend)
 
-    all_points = sorted(
-        [
-            {
-                'time':   _ts(p['time']),
-                'level':  p['level'],
-                'type':   p['type'],
-                'price':  p['price'],
-                'active': p['active'],
-            }
-            for p in analyzer.get_all_points()
-        ],
-        key=lambda p: p['time'],
-        reverse=True,
-    )
+    raw_points = analyzer.get_all_points()
+    raw_points.sort(key=lambda p: p['time'] or 0, reverse=True)
+    all_points = [
+        {
+            'time':   _ts(p['time']),
+            'level':  p['level'],
+            'type':   p['type'],
+            'price':  p['price'],
+            'active': p['active'],
+        }
+        for p in raw_points
+    ]
 
     recs = trend.getRecommendations(entry_price=replay_price, proximity_zone_pct=10.0)
     signals = [_format_rec(r) for r in recs]

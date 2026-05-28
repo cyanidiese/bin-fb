@@ -1,6 +1,6 @@
 'use client'
 
-const TICK = 10  // klines per step button press
+const TICK = 1  // klines per step button press
 
 interface Props {
   klines: { time: number }[]

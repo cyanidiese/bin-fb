@@ -50,6 +50,7 @@ The Librarian agent (`/librarian`) is responsible for writing and updating `FEAT
 - **Flag anything risky** explicitly before touching it. Especially anything related to order execution, position sizing, or live mode.
 - **Never switch to live mode** or remove testnet guards without my explicit instruction.
 - **Never implement based on an assumption you have not verified.** If you are not certain how an external system behaves (API, library, protocol), say so explicitly and verify first — run a test, check the docs, or ask me. Do not write or revert code based on guesses.
+- **Make decisions only after deep and thorough analysis.** Before assigning any configuration value, parameter, or setting — read the actual data (CSV, logs, backtest results). Do not rely on summaries alone. A metric that looks optimal on the surface (e.g. "highest profit") may be optimal for the wrong reason (e.g. "nearly zero trades = nearly zero losses"). Always ask: *why* is this value winning? Is it because entries are better, or because trading is suppressed? The latter is not an improvement.
 
 ---
 

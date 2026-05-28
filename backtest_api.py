@@ -55,6 +55,7 @@ DEFAULTS = {
     'min_precision_score': 0.0,
     'zone_sl_max': 0,
     'zone_sl_cooldown_candles': 16,
+    'range_position_max': 1.0,
 }
 
 
@@ -105,6 +106,7 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         min_precision_score=float(p['min_precision_score']),
         zone_sl_max=int(p['zone_sl_max']),
         zone_sl_cooldown_candles=int(p['zone_sl_cooldown_candles']),
+        range_position_max=float(p['range_position_max']),
     )
 
 

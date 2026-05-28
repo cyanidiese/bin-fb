@@ -1,9 +1,9 @@
 {
   "generated_at": "2026-05-23T20:29:01.802927+00:00",
   "mode": "test",
-  "balance": 1000.0,
+  "balance": 1000,
   "peak_balance": null,
-  "drawdown_pct": 0.0,
+  "drawdown_pct": 0,
   "warning_active": false,
   "hard_stop_active": false,
   "active_tier": {
@@ -20,91 +20,91 @@
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 22.592
+      "performance_score": 13.12
     },
     "THETAUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 14.501
+      "performance_score": 13.217
     },
     "REZUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 10,
       "leverage_level": 0,
-      "performance_score": 77.303
+      "performance_score": 30.595
     },
     "DOGEUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 25.94
+      "performance_score": 12.06
     },
     "1000PEPEUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 5,
       "leverage_level": 0,
-      "performance_score": 37.327
+      "performance_score": 3.071
     },
     "WLDUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 16.414
+      "performance_score": 5.961
     },
     "MEMEUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 18.655
+      "performance_score": 11.611
     },
     "AVAXUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 2.934
+      "performance_score": 1.571
     },
     "ETHFIUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 10.096
+      "performance_score": 3.541
     },
     "TIAUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 9,
       "leverage_level": 0,
-      "performance_score": 69.377
+      "performance_score": 30.808
     },
     "EIGENUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 24.179
+      "performance_score": 24.627
     },
     "1000SHIBUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 4.872
+      "performance_score": 0
     },
     "INJUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 14.875
+      "performance_score": 10.43
     },
     "JUPUSDT": {
-      "allocation_usdt": 0.0,
+      "allocation_usdt": 0,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 12.623
+      "performance_score": 9.88
     },
     "APTUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 8.668
+      "performance_score": 7.978
     }
   }
 }

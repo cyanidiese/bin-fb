@@ -131,8 +131,30 @@ Prevents repeated entries after losses and reduces overtrading in choppy markets
 **Files**: `bot/recommendation_engine.py`, `config/settings.py`, `main.py` (live implementation), `bot/backtester.py` (backtest implementation)
 **Key details**:
 - **Loss streak cooldown**: After `loss_streak_max` consecutive losses on one side (BUY or SELL), block that side for `loss_streak_cooldown_candles` candles. Per-direction isolation — BUY losses don't affect SELL and vice versa.
+- **Loss counting** (session 36): Now includes trail and partial exits with negative PnL. Previously only SL-hit losses (`result == 'loss'`) incremented streak; trail/partial exits with `pnl_usdt < 0` fell into else branch and RESET the streak. Now: `is_loss = c.get('result') == 'loss' or (c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0)`. Prevents rapid re-entry after losing trail exits.
 - **Global pause**: If both BUY and SELL lose within `global_pause_trigger_candles` of each other, pause ALL entries for `global_pause_candles` candles.
 - **Live bot implementation** (session 28): Added state dicts `_loss_streak`, `_streak_blocked`, `_global_pause_until`, `_last_loss_ts`. New helper `_update_loss_streak()` called from both candle-close and price-update loops. Gate check in `_try_place_order()` skips signals during active cooldowns.
+- **Zone SL cooldown** (session 37): After `zone_sl_max` consecutive SL hits at the same price level (within `duplicate_skip_pct%`), block that side for `zone_sl_cooldown_candles` candles. Prevents re-entry on stale support/resistance zones. State tracked in `_zone_sl_count`, `_zone_sl_level`, `_zone_sl_block` dicts. Implemented in both main.py and backtester for consistency.
+
+### Hard Parent-Trend Alignment Gate (Session 37)
+Filters continuation-type signals that oppose the parent trend direction. Prevents entry into signals that contradict coarser trend structure.
+
+**Files**: `bot/recommendation_engine.py`, `config/settings.py`
+**Key details**:
+- **Continuation types** (exempt from counter-trend entry): RISING_BELOW_LAST_HIGH, LOWERING_ABOVE_LAST_LOW
+- **Reversal types** (allowed counter-trend): RISING_ABOVE_SUPPOSED_HIGH, DESCENDING_NEAR_LOWER_HIGH, ASCENDING_NEAR_HIGHER_LOW
+- **Logic**: New helper `_parent_is_opposing()` checks if L2+ trend explicitly opposes signal direction (BUY in descending trend = skip). Only applies to continuation types.
+- **Root cause fixed** (session 37): May 23-25 analysis showed every BUY trade lost because continuation signals fired while L2 trend was descending. Now blocked at filter stage.
+
+### Minimum Precision Floor (Session 37)
+Filters low-confidence signals based on precision score. Tunable per preset for fine-grained control.
+
+**Files**: `bot/recommendation_engine.py`, `config/settings.py`, `config/presets.py`
+**Key details**:
+- **Setting**: `min_precision_score: float` (default 0.0 = disabled)
+- **Implementation**: In `_score_and_filter()`, after computing precision (0.0–1.0), skip candidates with `score < min_precision_score`
+- **Use case**: Raise threshold to 0.3–0.4 in choppy markets to filter noisy signals; lower in trending markets
+- **Dashboard**: PresetSettingsPanel shows as "Entry filter" control, per-preset override
 
 ---
 
@@ -149,6 +171,16 @@ Prevents repeated entries after losses and reduces overtrading in choppy markets
 - `backtest.py` and `discover.py` import from `config/presets.py`
 - Backtest output: `backtest_results.json` (live feed) and `backtest_{timestamp}.json` (archive)
 - Klines limit control: `--klines-count N` CLI flag for faster reruns on cached data
+
+### Range Position Max Tuning (Session 38)
+Each of the 78 presets has been tuned with an optimal `range_position_max` value (0.1–1.0) based on systematic sweep analysis across all 15 symbols.
+
+**Files**: `config/presets.py` — each preset has `range_position_max` field
+**Key details**:
+- **Sweep methodology**: 78 presets × 15 symbols × 6 values [1.0, 0.8, 0.65, 0.5, 0.3, 0.1] tested. Average profit per symbol calculated for each combination.
+- **Assignment rationale**: Values chosen based on data, not heuristic. 4 groups flip from negative to positive; 27 in 0.10 group confirmed to show monotonic improvement across all sweep values (genuine quality gain, not trade suppression).
+- **Grand total improvement**: +1,670.47% aggregate profit across all 78×15 combinations.
+- **Verification step**: Deep analysis confirmed the 0.10 group improvement is real (trade quality) not artifact (zero-trade suppression bias). All 31 presets show consistent improvement across all 6 values and 15 symbols.
 
 ### Fake Order Engine
 Simulates order entry/exit without exchange API. Entry at next-candle open. Exit on TP hit, SL hit, or trailing stop trigger. Computes PnL, win/loss/partial result.
@@ -264,6 +296,22 @@ Tracks N independent virtual positions for the top non-best presets (ranks 2–6
 - Real and virtual orders intermixed and sorted chronologically by `open_time` descending
 - Unified timeline view across all ranks and trade types
 
+### Last-N Preset Ranking with Virtual-Only Floor Gate (Session 35)
+Sliding-window ranking system that elevates recent performance and prevents negative-efficiency presets from executing real orders. Once a preset accumulates N live trades, scoring switches from all-time cumulative to sum of last N trades.
+
+**Files**: `bot/virtual_tracker.py`, `config/risk_config.py`, `main.py`, `dashboard/app/api/trades/route.ts`, `tests/test_virtual_tracker.py`
+**Key details**:
+- **Recent trades window**: VirtualTracker stores `recent_trades: float[]` per preset (capped to `ranking_window_size`, default 10)
+- **Window-based scoring**: Once preset has ≥ `min_trades_for_ranking` live trades (default 3), ranking uses sum of last N trades instead of all-time cumulative. Fallback to cumulative during warm-up phase.
+- **Virtual-only floor gate**: New method `is_virtual_only(symbol)` checks if best-ranked preset score < `virtual_only_floor` (default -20.0 USDT) AND trade_count ≥ min_trades_for_ranking. If true, skip real order; log warning. Locked presets bypass gate entirely.
+- **Config keys** (new in session 35):
+  - `ranking_window_size: int` (default 10) — number of recent trades to include in window
+  - `virtual_only_floor: float` (default -20.0) — minimum score threshold for real order eligibility
+- **Backward compatibility**: preset_efficiency JSON files gain `recent_trades: []` field (missing field treated as empty list)
+- **Dashboard**: effectiveScore() helper now mirrors Python window logic; MIN_TRADES hard-code removed (reads from risk_config default)
+- **Tests**: 17 passing (test_virtual_tracker.py includes window logic + floor gate tests)
+- **Impact**: Eliminates negative-efficiency order execution (session 35 analysis found 12/54 orders from negative-efficiency presets, -$25 loss). Promotes recent winners faster than all-time averaging allows.
+
 ---
 
 ## Risk Management
@@ -301,6 +349,17 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Colors**: Text changed to `text-xs` and `gray-*` palette to match peer sections
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
+
+### Per-Symbol Settings Overrides (Session 37)
+Override any preset setting for a specific symbol, allowing capital-unlock and fine-tuning without creating new presets. Applied at order placement time after preset selection.
+
+**Files**: `main.py` (_try_place_order), `config/risk_config.py`, server `risk_config.json`
+**Key details**:
+- **Config structure**: `risk_config.json["per_symbol_settings"]: { "INJUSDT": { "max_profit_pct": 5.0 }, ... }`
+- **Application**: In `_try_place_order()`, after constructing `preset_settings`, reads overrides and applies via `setattr()` on the Settings object
+- **Use case**: INJUSDT had 75 signals blocked at 4.3–5.0% projected profit by global 3.0% cap. Override to 5.0% unlocks those signals.
+- **Any setting supported**: Any Settings field can be overridden (e.g., tp_multiplier, max_sl_pct, min_precision_score, etc.)
+- **Priority**: Per-symbol override > preset setting > default setting
 
 ### Two-Tier Preset Ranking (Session 32)
 Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ranking system. Live-proven presets (≥N real+virtual trades) are always ranked above seed-only presets (backtest-only), regardless of seed magnitude. Solves the TIAUSDT problem where a less-profitable preset with a large backtest seed outranked a better-performing preset with fewer live trades.
@@ -428,14 +487,16 @@ Append-only log of balance snapshots (cap 10k entries). Records at: startup, ord
 - Each entry: timestamp, balance, trigger (startup / order_open / order_close / change_threshold)
 - Correlates with decision log for post-run analysis
 
-### Allocation Weighting (Archived)
-Optional feature for distributing capital by preset weight. Disabled by default (`use_allocation_weighting: false`). Can be re-enabled via Settings checkbox.
+### Allocation Weighting
+Optional feature for distributing capital proportionally by symbol weight. Can be toggled via Settings checkbox or risk_config.json.
 
-**Files**: `config/risk_config.py`, `config/settings.py`
+**Files**: `config/risk_config.py`, `config/settings.py`, `main.py`
 **Key details**:
-- `symbol_weights` dict in risk config (weight per symbol)
-- When enabled: deployable capital = account balance × symbol allocation %
-- When disabled: all symbols compete equally for capital (ranking determines priority)
+- `symbol_weights` dict in risk config (weight per symbol, default 0-20 range)
+- `use_allocation_weighting` flag controls behavior (default false)
+- When enabled (session 36): deployable capital distributed as `symbol_allocation = total_deployable × symbol_weight / sum(weights)`. Capital flows proportionally to higher-weighted symbols.
+- When disabled: all symbols compete equally for available capital (ranking determines priority)
+- Current weights (session 36): TIAUSDT:20, 1000PEPEUSDT:18, SOLUSDT:16, INJUSDT:14, THETAUSDT:12, EIGENUSDT:11, DOGEUSDT:10, MEMEUSDT:8, REZUSDT:6, JUPUSDT:5, APTUSDT:4, 1000SHIBUSDT:3, WLDUSDT:2, AVAXUSDT:1, ETHFIUSDT:0
 
 ---
 
@@ -848,6 +909,25 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 
 ---
 
+**Bugs fixed — session 36 (2026-05-27):**
+
+1. **Trail/partial exits with negative PnL not counting as losses** (`main.py`)
+   - **Cause**: `_update_loss_streak()` only incremented on `result == 'loss'`; trail/partial exits with negative PnL fell into else branch and RESET streak to 0.
+   - **Effect**: Rapid re-entry after losing trail exits, overtrading in choppy markets.
+   - **Fix**: Changed to: `is_loss = c.get('result') == 'loss' or (c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0)`. Trail and partial exits with negative PnL now count as losses in streak tracking.
+
+**Bugs fixed — session 35 (2026-05-26):**
+
+1. **Negative efficiency presets placed real orders** (`main.py`, `bot/virtual_tracker.py`, `config/risk_config.py`)
+   - **Cause**: No gate preventing presets with negative efficiency from real order execution. Floor threshold existed only in documentation.
+   - **Effect**: 12/54 live orders (22%) came from negative-efficiency presets, losing -$25 (46% of daily -$52 loss).
+   - **Fix**: Added `is_virtual_only(symbol)` method. In main.py `_try_place_order`, gate checks: if best-ranked preset is virtual-only (score < floor AND trade_count ≥ min_trades) → skip real order, log warning. Locked presets bypass gate.
+
+2. **Last-N window ranking not implemented** (`bot/virtual_tracker.py`, `config/risk_config.py`, `dashboard/app/api/trades/route.ts`)
+   - **Cause**: All-time cumulative ranking continued even after preset accumulated live trades, preventing recent performance improvement from elevating preset rank.
+   - **Effect**: Presets with poor all-time record but recent winning streak remained deprioritized.
+   - **Fix**: Added `recent_trades: float[]` field to VirtualTracker. Once trade_count ≥ min_trades_for_ranking (default 3), ranking uses sum of last N (default 10) instead of all-time cumulative. Fallback to cumulative during warm-up. Dashboard effectiveScore() now mirrors Python window logic.
+
 **Bugs fixed — session 33 (2026-05-24):**
 
 1. **Notional cap poisoning virtual tracker** (`bot/order_executor.py`)
@@ -860,4 +940,12 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
    - **Effect**: Capital distribution ignored symbol allocation preferences; weights became cosmetic.
    - **Fix**: Added weight multiplier: `efficiency_score *= symbol_weights[sym]` before candidate ranking. Losing symbols now get proportionally less allocation even if they rank higher on raw score.
 
-**Last updated**: Session 33 (2026-05-24) — Lock preset per symbol, drag-and-drop weights, weight rebalancer restyle, notional cap fix, BGF weight multiplier.
+**Bugs fixed — session 37 (2026-05-28):**
+
+1. **May 23-25 all-loss pattern (out-of-trend continuations)** — Root cause: RISING_BELOW_LAST_HIGH and LOWERING_ABOVE_LAST_LOW signals (continuation types) were firing in opposing parent trends. BUY continuations placed during L2 descending trend = systematic loss pattern. **Fix**: Hard parent-trend alignment gate added to recommendation_engine.py; continuation types now checked against parent trend and skipped if opposing. Reversal types remain allowed for counter-trend entry.
+
+2. **DOGEUSDT $8.95 loss from zone re-entry** — Root cause: After winning trade, bot re-entered same price zone 5 times on subsequent candles, each hitting SL. **Fix**: Zone SL cooldown added (settings: `zone_sl_max`, `zone_sl_cooldown_candles`); after N consecutive SL hits at same level, block that side for cooldown period. Prevents churn on stale support/resistance.
+
+3. **INJUSDT 75 signals blocked by global cap** — Root cause: 75 profitable signals at 4.3–5.0% TP distance were blocked by global `max_profit_pct=3.0%` gate, unable to override. **Fix**: Per-symbol Settings overrides added; risk_config.json["per_symbol_settings"]["INJUSDT"]["max_profit_pct"] now unlocks those signals.
+
+**Last updated**: Session 37 (2026-05-28) — Signal quality: alignment gate, precision floor, zone SL cooldown, per-symbol overrides.

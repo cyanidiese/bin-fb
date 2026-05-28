@@ -126,6 +126,11 @@ class RecommendationEngine:
             if rec.getType() in _CONTINUATION_TYPES and self._parent_is_opposing(trend, rec.getSide()):
                 continue
 
+            # Range position gate: block continuation signals where entry is too far into
+            # the peak zone (BUY) or valley zone (SELL). 1.0 = disabled.
+            if rec.getType() in _CONTINUATION_TYPES and not self._passes_range_position(rec, trend):
+                continue
+
             precision = self._precision(rec, trend, correction_info)
 
             # Proposal 2: skip candidates below the minimum precision floor.
@@ -209,6 +214,45 @@ class RecommendationEngine:
         if bigger is None or not bigger.hasDefinedTrend():
             return False
         return bigger.isAscending() != (side == 'BUY')
+
+    def _passes_range_position(self, rec: Recommendation, trend: Trend) -> bool:
+        """
+        Returns False when the entry is too far into the peak zone (BUY) or valley
+        zone (SELL) relative to the generating trend's swing range.
+
+        BUY: position = (entry - last_low) / range — blocked when > range_position_max.
+        SELL: blocked when position < (1 - range_position_max).
+
+        Falls back to the smaller trend's range if the generating level is missing either
+        anchor. Returns True (allow) when range cannot be computed.
+        """
+        max_pos = self._s.range_position_max
+        if max_pos >= 1.0:
+            return True
+
+        last_high = trend.getLastHigh()
+        last_low = trend.getLastLow()
+
+        if last_high is None or last_low is None:
+            smaller = trend.getSmallerTrend()
+            if smaller is not None:
+                last_high = last_high or smaller.getLastHigh()
+                last_low = last_low or smaller.getLastLow()
+
+        if last_high is None or last_low is None:
+            return True
+
+        range_size = last_high.getHighValue() - last_low.getLowValue()
+        if range_size <= 0:
+            return True
+
+        entry = rec.getEntryPrice()
+        position = (entry - last_low.getLowValue()) / range_size
+
+        if rec.getSide() == 'BUY':
+            return position <= max_pos
+        else:
+            return position >= (1.0 - max_pos)
 
     def _entry_quality(self, how_close: float) -> float:
         """

@@ -96,6 +96,10 @@ class Settings:
     zone_sl_max: int
     # Candles to block a side after zone_sl_max consecutive SL hits at the same zone.
     zone_sl_cooldown_candles: int
+    # Range position gate for continuation signals (RISING_BELOW_LAST_HIGH / LOWERING_ABOVE_LAST_LOW).
+    # BUY blocked if entry is above this fraction of the swing range (0 = low, 1 = high).
+    # SELL blocked if entry is below (1 - value). 1.0 = disabled.
+    range_position_max: float
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -173,6 +177,7 @@ def load_settings(symbol: str | None = None) -> Settings:
         min_precision_score=float(os.getenv('MIN_PRECISION_SCORE', '0.0')),
         zone_sl_max=int(os.getenv('ZONE_SL_MAX', '0')),
         zone_sl_cooldown_candles=int(os.getenv('ZONE_SL_COOLDOWN_CANDLES', '16')),
+        range_position_max=float(os.getenv('RANGE_POSITION_MAX', '1.0')),
     )
 
     if symbol is not None:

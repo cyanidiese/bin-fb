@@ -402,11 +402,49 @@ Design approved + implemented in session 14.
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
 
+## Session 38 — Range Position Max Sweep & Preset Tuning (2026-05-28)
+
+- [x] **Complete sweep analysis** — 78 presets × 15 symbols × 6 values = 7,020 combinations tested
+- [x] **Assign optimal values to all presets** — data-backed assignment in config/presets.py with rationale per value group
+- [x] **Verify 0.10 group quality gain** — confirmed monotonic improvement across all sweep values and symbols (genuine quality, not suppression)
+- [x] **Update CLAUDE.md** — added decision mandate for deep analysis before metric assignment
+- [x] **Update FEATURES.md** — documented Range Position Max Tuning with methodology and results
+- [ ] **Run full backtest on server** — validate range_position_max impact on live preset performance
+
+## Session 37 — Signal Quality Improvements (2026-05-28)
+
+- [x] **Hard parent-trend alignment gate** — CONTINUATION_TYPES + _parent_is_opposing() helper, skips out-of-trend continuations (commit 21e480e)
+- [x] **Minimum precision floor** — min_precision_score setting, per-preset tuning (commit 21e480e)
+- [x] **Zone SL cooldown** — zone_sl_max/cooldown_candles settings, blocks zone re-entry after N losses (commit 21e480e)
+- [x] **Per-symbol Settings overrides** — per_symbol_settings dict in risk_config.json, applied in _try_place_order (commit 21e480e)
+- [x] **Dashboard UI updates** — PresetSettingsPanel + Create page abbreviations (mprec, zslm, zslc)
+- [x] **Investigation doc** — saved signal quality analysis findings
+
+## Session 36 — All 5 Improvement Items Completed (2026-05-27)
+
+- [x] **Item 1: disable ETHFIUSDT** — symbol_registry.json disabled dict + is_disabled() check in on_candle_close()
+- [x] **Item 2: remove APTUSDT lock** — removed from locked_presets, now uses virtual tracker scoring
+- [x] **Item 3: fix loss streak (Problem 2)** — trail/partial exits with negative PnL now count as losses in streak tracker (commit 6392635)
+- [x] **Item 4: backtests for idle symbols** — ran TIAUSDT THETAUSDT INJUSDT EIGENUSDT, updated scores
+- [x] **Item 7: enable allocation weighting + rebalance** — use_allocation_weighting=true, 15 symbols weighted 20-0
+- [ ] **Item 5: lock top performers** — deferred, awaiting decision
+- [ ] **Item 6: raise base leverage** — deferred, user waiting for avg profit > avg loss
+
+## Session 35 — HLB Locks, Last-N Ranking Floor Gate (completed 2026-05-26)
+
+- [x] **Lock HLB presets for 3 positive-balance symbols** — TIAUSDT, SOLUSDT, EIGENUSDT locked; 3 negative-balance symbols reverted
+- [x] **Implement last-N sliding-window ranking** — VirtualTracker.recent_trades field + window-based score selection
+- [x] **Add virtual-only floor gate** — is_virtual_only() check in main.py, skip real orders for floor-gated presets
+- [x] **Analyze daily order data** — 39 orders, -$52 USDT, 12 from negative-efficiency presets
+- [x] **Problem 2: trail exit cooldown** — fixed in session 36: trail/partial exits with negative PnL now count as losses
+- [x] **Problem 3: min_sl_pct default floor** — deferred, not implemented
+- [x] **Re-run all backtests** — completed in session 36 for idle symbols
+
 ## Session 34 — Graceful Shutdown Fix (completed 2026-05-26)
 
 - [x] **Fix SIGTERM handler / graceful shutdown** — docker-compose 60s grace period + 45s API timeout wrapping
 - [x] **Investigate bot crash pattern (API rate limit)** — confirmed: not crashes, were manual restarts via docker
-- [ ] **Deploy graceful shutdown fix to server** — already deployed 2026-05-26, monitoring for orphan positions
+- [x] **Deploy graceful shutdown fix to server** — already deployed 2026-05-26, monitoring for orphan positions
 - [ ] **Deploy session 33 features** (lock preset, drag-and-drop weights, notional cap fix, BGF multiplier) — pending user approval
 - [ ] **Fix over-allocation during concurrent trades** — pending
 

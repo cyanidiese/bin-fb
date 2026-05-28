@@ -111,6 +111,12 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     description: 'Discard recommendations whose computed precision score (0–1) is below this value. Higher = fewer but more confident entries. 0 = disabled.',
     category: 'Entry filter',
   },
+  range_position_max: {
+    label: 'Range position max',
+    default: 1.0,
+    description: 'For continuation signals: BUY blocked when entry is above this fraction of the swing range (0 = low end, 1 = high end). SELL mirrored. 1.0 = disabled. E.g. 0.5 = only buy in the lower half of the range (valley zone).',
+    category: 'Entry filter',
+  },
 
   // ── Cooldown ───────────────────────────────────────────────────────────
   loss_streak_max: {

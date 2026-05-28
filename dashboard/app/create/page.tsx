@@ -40,6 +40,7 @@ const NAME_ABBREV: Record<string, string> = {
   trail_activation_pct: 'tact',
   trail_min_distance_pct: 'tmin',
   min_precision_score: 'mprec',
+  range_position_max: 'rpos',
   zone_sl_max: 'zslm',
   zone_sl_cooldown_candles: 'zslc',
   loss_streak_max: 'ls',

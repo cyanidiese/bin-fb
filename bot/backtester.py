@@ -201,6 +201,10 @@ class Backtester:
         global_blocked_until: int = 0
         # Duplicate-signal skip: last SL-hit signal per side (only active when duplicate_skip_candles > 0)
         last_sl_signal: Dict[str, dict] = {'BUY': {}, 'SELL': {}}
+        # Zone SL cooldown: block after N consecutive SL hits at the same SL level
+        zone_sl_count: Dict[str, int] = {'BUY': 0, 'SELL': 0}
+        zone_sl_level: Dict[str, float] = {'BUY': 0.0, 'SELL': 0.0}
+        zone_blocked_until: Dict[str, int] = {'BUY': 0, 'SELL': 0}
 
         for i in range(len(klines)):
             candle = klines[i]
@@ -257,6 +261,24 @@ class Backtester:
                             'sl': open_order.sl,
                             'tp': open_order.tp,
                         }
+                    if outcome == 'loss' and settings.zone_sl_max > 0:
+                        _side_z = open_order.side
+                        _sl_z = open_order.sl
+                        _tol = settings.duplicate_skip_pct / 100.0
+                        _prev_z = zone_sl_level[_side_z]
+                        _same_zone = (
+                            _prev_z > 0
+                            and abs(_sl_z - _prev_z) / max(_prev_z, 1e-10) <= _tol
+                        )
+                        if _same_zone:
+                            zone_sl_count[_side_z] += 1
+                        else:
+                            zone_sl_count[_side_z] = 1
+                            zone_sl_level[_side_z] = _sl_z
+                        if zone_sl_count[_side_z] >= settings.zone_sl_max:
+                            zone_blocked_until[_side_z] = i + settings.zone_sl_cooldown_candles
+                            zone_sl_count[_side_z] = 0
+                            zone_sl_level[_side_z] = 0.0
                     open_order = None
 
             # ── Feed this candle to the analyzer ────────────────────────
@@ -291,6 +313,10 @@ class Backtester:
                     if settings.loss_streak_max > 0:
                         if i < global_blocked_until or i < blocked_until.get(side, 0):
                             continue
+
+                    # Zone SL cooldown gate
+                    if settings.zone_sl_max > 0 and i < zone_blocked_until.get(side, 0):
+                        continue
 
                     if side == 'BUY':
                         if raw_tp <= entry_price or sl is None or sl >= entry_price:

@@ -88,6 +88,14 @@ class Settings:
     # Trailing stop minimum distance: trail distance = max(trail_pct × gained, entry × min_pct / 100).
     # Prevents the trail from sitting too close to price on small gains. 0.0 = disabled.
     trail_min_distance_pct: float
+    # Minimum precision score to enter a trade. Candidates whose computed precision is below
+    # this value are discarded by the recommendation engine. 0.0 = disabled.
+    min_precision_score: float
+    # Zone SL cooldown: block re-entry on a side after this many consecutive SL hits at the
+    # same SL level (within duplicate_skip_pct% of the previous SL). 0 = disabled.
+    zone_sl_max: int
+    # Candles to block a side after zone_sl_max consecutive SL hits at the same zone.
+    zone_sl_cooldown_candles: int
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -162,6 +170,9 @@ def load_settings(symbol: str | None = None) -> Settings:
         max_losing_candles=int(os.getenv('MAX_LOSING_CANDLES', '0')),
         trail_activation_pct=float(os.getenv('TRAIL_ACTIVATION_PCT', '0.0')),
         trail_min_distance_pct=float(os.getenv('TRAIL_MIN_DISTANCE_PCT', '0.0')),
+        min_precision_score=float(os.getenv('MIN_PRECISION_SCORE', '0.0')),
+        zone_sl_max=int(os.getenv('ZONE_SL_MAX', '0')),
+        zone_sl_cooldown_candles=int(os.getenv('ZONE_SL_COOLDOWN_CANDLES', '16')),
     )
 
     if symbol is not None:

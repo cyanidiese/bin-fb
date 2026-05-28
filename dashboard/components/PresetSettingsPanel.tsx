@@ -105,6 +105,12 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     description: 'Minimum trail distance as a % of entry price. Acts as a noise floor so small wicks cannot trigger the trail. For example, 1.0 = trail never fires closer than 1% from peak. 0 = no floor.',
     category: 'Exit strategy',
   },
+  min_precision_score: {
+    label: 'Min precision score',
+    default: 0.0,
+    description: 'Discard recommendations whose computed precision score (0–1) is below this value. Higher = fewer but more confident entries. 0 = disabled.',
+    category: 'Entry filter',
+  },
 
   // ── Cooldown ───────────────────────────────────────────────────────────
   loss_streak_max: {
@@ -146,7 +152,21 @@ export const SETTINGS_META: Record<string, SettingMeta> = {
     label: 'Duplicate threshold',
     default: 2.0,
     unit: '%',
-    description: 'Max % difference between the new signal\'s entry, SL, and TP and the last SL-hit signal for it to be considered a duplicate.',
+    description: 'Max % difference between the new signal\'s entry, SL, and TP and the last SL-hit signal for it to be considered a duplicate. Also used as the zone-match tolerance for zone_sl_max.',
+    category: 'Cooldown',
+  },
+  zone_sl_max: {
+    label: 'Zone SL limit',
+    default: 0,
+    unit: 'SL hits',
+    description: 'Block a side after this many consecutive SL hits at the same SL level (within duplicate_skip_pct% of previous SL). Prevents repeated re-entry into a resistant zone. 0 = disabled.',
+    category: 'Cooldown',
+  },
+  zone_sl_cooldown_candles: {
+    label: 'Zone SL cooldown',
+    default: 16,
+    unit: 'candles',
+    description: 'Candles to block a side after hitting zone_sl_max consecutive SL hits at the same level. At 15m timeframe: 16 candles ≈ 4 h.',
     category: 'Cooldown',
   },
 

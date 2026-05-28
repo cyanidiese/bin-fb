@@ -1,9 +1,17 @@
 import math
 from typing import List, Optional, Tuple
 
-from bot.recommendation import Recommendation
+from bot.recommendation import Recommendation, RecommendationTypes
 from bot.trend import Trend
 from config.settings import Settings
+
+# Continuation signal types: fire when a trend is already established and we expect
+# it to continue. These require parent-trend alignment — counter-trend continuations
+# are blocked by the alignment gate.
+_CONTINUATION_TYPES = frozenset({
+    RecommendationTypes.RISING_BELOW_LAST_HIGH,
+    RecommendationTypes.LOWERING_ABOVE_LAST_LOW,
+})
 
 
 class RecommendationEngine:
@@ -113,7 +121,17 @@ class RecommendationEngine:
             if rr < self._s.min_profit_loss_ratio:
                 continue
 
+            # Proposal 1: block continuation signals when parent trend explicitly opposes.
+            # Reversal and structural types (e.g. RISING_ABOVE_SUPPOSED_HIGH) are exempt.
+            if rec.getType() in _CONTINUATION_TYPES and self._parent_is_opposing(trend, rec.getSide()):
+                continue
+
             precision = self._precision(rec, trend, correction_info)
+
+            # Proposal 2: skip candidates below the minimum precision floor.
+            if self._s.min_precision_score > 0 and precision < self._s.min_precision_score:
+                continue
+
             rec.setRR(rr).setPrecision(precision)
             scored.append(rec)
 
@@ -184,6 +202,13 @@ class RecommendationEngine:
             return 0.175
         aligned = bigger.isAscending() == (side == 'BUY')
         return 0.35 if aligned else 0.0
+
+    def _parent_is_opposing(self, trend: Trend, side: str) -> bool:
+        """True only when a defined parent trend explicitly opposes the signal direction."""
+        bigger = trend.getBiggerTrend() if trend.hasBiggerTrend() else None
+        if bigger is None or not bigger.hasDefinedTrend():
+            return False
+        return bigger.isAscending() != (side == 'BUY')
 
     def _entry_quality(self, how_close: float) -> float:
         """

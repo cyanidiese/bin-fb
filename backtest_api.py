@@ -52,6 +52,9 @@ DEFAULTS = {
     'atr_lookback': 20,
     'trail_activation_pct': 0.0,
     'trail_min_distance_pct': 0.0,
+    'min_precision_score': 0.0,
+    'zone_sl_max': 0,
+    'zone_sl_cooldown_candles': 16,
 }
 
 
@@ -99,6 +102,9 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         atr_lookback=int(p['atr_lookback']),
         trail_activation_pct=float(p['trail_activation_pct']),
         trail_min_distance_pct=float(p['trail_min_distance_pct']),
+        min_precision_score=float(p['min_precision_score']),
+        zone_sl_max=int(p['zone_sl_max']),
+        zone_sl_cooldown_candles=int(p['zone_sl_cooldown_candles']),
     )
 
 

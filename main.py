@@ -396,6 +396,10 @@ async def run() -> None:
     _streak_blocked: dict[str, int] = {}     # "symbol:preset:side" → candle_ts after which block expires
     _global_pause_until: dict[str, int] = {} # "symbol:preset" → candle_ts after which global pause expires
     _last_loss_ts: dict[str, int] = {}       # "symbol:preset:side" → candle_ts of last loss
+    # Zone SL cooldown state — blocks re-entry after N consecutive SL hits at same level
+    _zone_sl_count: dict[str, int] = {}      # "symbol:preset:side" → consecutive zone hit count
+    _zone_sl_level: dict[str, float] = {}    # "symbol:preset:side" → SL price of current sequence
+    _zone_sl_block: dict[str, int] = {}      # "symbol:preset:side" → candle_ts until zone block expires
 
     async def _get_fresh_balance() -> float:
         now = time.monotonic()
@@ -434,6 +438,19 @@ async def run() -> None:
                 return 0.0
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
+
+        # Per-symbol Settings overrides from risk_config (applied on top of preset).
+        # Use this for symbol-specific tuning that isn't captured by any single preset,
+        # e.g. a wider max_profit_pct for one symbol or a looser SL cap for another.
+        _sym_cfg_overrides = risk_cfg.get("per_symbol_settings", {}).get(symbol, {})
+        if _sym_cfg_overrides:
+            _valid_fields = {f.name for f in dataclasses.fields(Settings)}
+            _filtered = {k: v for k, v in _sym_cfg_overrides.items() if k in _valid_fields}
+            if _filtered:
+                try:
+                    preset_settings = dataclasses.replace(preset_settings, **_filtered)
+                except Exception:
+                    pass  # malformed override — skip silently
 
         # Re-run the engine with the best preset's own settings so that proximity_zone_pct,
         # min_swing_points, etc. are applied consistently — same as _try_open in the virtual
@@ -628,6 +645,11 @@ async def run() -> None:
                     f"[{symbol}] Signal skipped — {side} loss streak cooldown (preset={preset_name})"
                 )
                 return 0.0
+            if preset_settings.zone_sl_max > 0 and _zone_sl_block.get(_sk, 0) >= candle_ts:
+                logger.info(
+                    f"[{symbol}] Signal skipped — {side} zone SL cooldown active (preset={preset_name})"
+                )
+                return 0.0
 
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
@@ -770,45 +792,71 @@ async def run() -> None:
         return 0.0
 
     def _update_loss_streak(c: dict, ts: int) -> None:
-        """Update per-preset directional loss streak state after an order closes."""
+        """Update per-preset directional loss streak and zone SL cooldown state after an order closes."""
         sym = c['symbol']
         pname = c.get('preset_name', 'default')
         side = c.get('side', '')
         overrides = all_presets.get(pname, {})
         sym_s = sym_settings.get(sym, first_settings)
         ps = dataclasses.replace(sym_s, **overrides)
-        if ps.loss_streak_max <= 0:
-            return
         tf_ms = _tf_to_ms(timeframe)
         sk = f"{sym}:{pname}:{side}"
-        other_sk = f"{sym}:{pname}:{'SELL' if side == 'BUY' else 'BUY'}"
-        is_loss = c.get('result') == 'loss' or (
-            c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0
-        )
-        if is_loss:
-            cnt = _loss_streak.get(sk, 0) + 1
-            _last_loss_ts[sk] = ts
-            if cnt >= ps.loss_streak_max:
-                _streak_blocked[sk] = ts + ps.loss_streak_cooldown_candles * tf_ms
-                _loss_streak[sk] = 0
-                logger.info(
-                    f"[{sym}] {side} loss streak {ps.loss_streak_max}/{ps.loss_streak_max} "
-                    f"(preset={pname}) — {side} blocked for {ps.loss_streak_cooldown_candles} candles"
-                )
-            else:
-                _loss_streak[sk] = cnt
-            if ps.global_pause_trigger_candles > 0:
-                other_ts = _last_loss_ts.get(other_sk, 0)
-                if other_ts > 0 and (ts - other_ts) <= ps.global_pause_trigger_candles * tf_ms:
-                    pk = f"{sym}:{pname}"
-                    _global_pause_until[pk] = ts + ps.global_pause_candles * tf_ms
+
+        # ── Loss streak cooldown ───────────────────────────────────────────
+        if ps.loss_streak_max > 0:
+            other_sk = f"{sym}:{pname}:{'SELL' if side == 'BUY' else 'BUY'}"
+            is_loss = c.get('result') == 'loss' or (
+                c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0
+            )
+            if is_loss:
+                cnt = _loss_streak.get(sk, 0) + 1
+                _last_loss_ts[sk] = ts
+                if cnt >= ps.loss_streak_max:
+                    _streak_blocked[sk] = ts + ps.loss_streak_cooldown_candles * tf_ms
+                    _loss_streak[sk] = 0
                     logger.info(
-                        f"[{sym}] Global pause triggered (preset={pname}) — "
-                        f"both sides lost within {ps.global_pause_trigger_candles} candles — "
-                        f"paused for {ps.global_pause_candles} candles"
+                        f"[{sym}] {side} loss streak {ps.loss_streak_max}/{ps.loss_streak_max} "
+                        f"(preset={pname}) — {side} blocked for {ps.loss_streak_cooldown_candles} candles"
                     )
-        else:
-            _loss_streak[sk] = 0
+                else:
+                    _loss_streak[sk] = cnt
+                if ps.global_pause_trigger_candles > 0:
+                    other_ts = _last_loss_ts.get(other_sk, 0)
+                    if other_ts > 0 and (ts - other_ts) <= ps.global_pause_trigger_candles * tf_ms:
+                        pk = f"{sym}:{pname}"
+                        _global_pause_until[pk] = ts + ps.global_pause_candles * tf_ms
+                        logger.info(
+                            f"[{sym}] Global pause triggered (preset={pname}) — "
+                            f"both sides lost within {ps.global_pause_trigger_candles} candles — "
+                            f"paused for {ps.global_pause_candles} candles"
+                        )
+            else:
+                _loss_streak[sk] = 0
+
+        # ── Zone SL cooldown (only on actual SL hits, not trail/partial) ──
+        if ps.zone_sl_max > 0 and c.get('result') == 'loss':
+            sl_price = c.get('sl', 0.0)
+            if sl_price > 0:
+                tol = ps.duplicate_skip_pct / 100.0
+                prev_level = _zone_sl_level.get(sk, 0.0)
+                same_zone = (
+                    prev_level > 0
+                    and abs(sl_price - prev_level) / max(prev_level, 1e-10) <= tol
+                )
+                if same_zone:
+                    _zone_sl_count[sk] = _zone_sl_count.get(sk, 0) + 1
+                else:
+                    _zone_sl_count[sk] = 1
+                    _zone_sl_level[sk] = sl_price
+                if _zone_sl_count[sk] >= ps.zone_sl_max:
+                    _zone_sl_block[sk] = ts + ps.zone_sl_cooldown_candles * tf_ms
+                    _zone_sl_count[sk] = 0
+                    _zone_sl_level[sk] = 0.0
+                    logger.info(
+                        f"[{sym}] {side} zone SL blocked after {ps.zone_sl_max} consecutive hits "
+                        f"at SL≈{sl_price:.4f} (preset={pname}) — "
+                        f"blocked for {ps.zone_sl_cooldown_candles} candles"
+                    )
 
     async def _refresh_klines_bg(symbol: str, count: int, stagger: float) -> None:
         if stagger > 0:

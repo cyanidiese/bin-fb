@@ -11,6 +11,8 @@ import LevelFilter from '@/components/LevelFilter'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import { useLocalStorage } from '@/lib/useLocalStorage'
 import { useSymbolContext } from '@/lib/SymbolContext'
+import TimeScrubber from '@/components/TimeScrubber'
+import type { ReplayResult } from '@/lib/types'
 
 function tsToDatetimeLocal(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
@@ -32,6 +34,10 @@ function PageContent({ symbol }: { symbol: string }) {
   // Raw snapshot loaded from /results_${symbol}.json (written by bot/exporter.py after each candle close)
   const [data, setData] = useState<BotResults | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const [scrubberIdx, setScrubberIdx] = useState<number | null>(null)
+  const [replayData,  setReplayData]  = useState<ReplayResult | null>(null)
+  const [isReplaying, setIsReplaying] = useState(false)
 
   // Which trend level the user has selected in the filter control.
   // Selecting L2 means: show L1 and L2 data only (hide L3 and above).
@@ -81,43 +87,74 @@ function PageContent({ symbol }: { symbol: string }) {
     return () => { cancelled = true; clearInterval(id) }
   }, [symbol])
 
+  useEffect(() => {
+    if (scrubberIdx === null) {
+      setReplayData(null)
+      setIsReplaying(false)
+      return
+    }
+    setIsReplaying(true)
+    const timer = setTimeout(() => {
+      fetch('/api/replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, candle_index: scrubberIdx }),
+      })
+        .then(r => r.json())
+        .then((d: Omit<ReplayResult, 'candle_index'>) => {
+          setReplayData({ ...d, candle_index: scrubberIdx })
+          setIsReplaying(false)
+        })
+        .catch(() => setIsReplaying(false))
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [scrubberIdx, symbol])
+
   // Derive filtered datasets whenever the raw data, selected level, or date range changes.
   const { filteredPoints, filteredKlines, filteredLevels, availableLevels } = useMemo(() => {
     if (!data || selectedLevel === null) {
       return { filteredPoints: [], filteredKlines: [], filteredLevels: [], availableLevels: [] }
     }
 
-    const availableLevels = data.trend_levels.map(t => t.level).sort((a, b) => a - b)
-    const filteredLevels  = data.trend_levels.filter(t => t.level <= selectedLevel)
+    // When replay is active and data has arrived, use historical sources.
+    // While loading (replayData not yet updated), fall back to live data so
+    // klines and overlays remain in sync (both stale-live, not mismatched).
+    const isReplay = scrubberIdx !== null && replayData !== null
+    const srcLevels = isReplay ? replayData.trend_levels : data.trend_levels
+    const srcPoints = isReplay ? replayData.all_points   : data.all_points
+    const srcKlines = isReplay
+      ? data.klines.slice(0, replayData.candle_index + 1)
+      : data.klines
 
-    // Convert picker strings to ms boundaries (0 / Infinity when not set)
+    const availableLevels = srcLevels.map(t => t.level).sort((a, b) => a - b)
+    const filteredLevels  = srcLevels.filter(t => t.level <= selectedLevel)
+
     const fromMs = fromDate ? new Date(fromDate).getTime() : 0
     const toMs   = toDate   ? new Date(toDate).getTime()   : Infinity
 
-    // Filter by level, then by date range
-    const levelPoints = data.all_points.filter(p => {
+    const levelPoints = srcPoints.filter(p => {
       if (p.level > selectedLevel) return false
       const ms = new Date(p.time).getTime()
       return ms >= fromMs && ms <= toMs
     })
 
-    // Drop inactive points that predate the earliest active point in this selection
     const activeMs = levelPoints.filter(p => p.active).map(p => new Date(p.time).getTime())
     const oldestActiveMs = activeMs.length > 0 ? Math.min(...activeMs) : 0
     const filteredPoints = levelPoints.filter(p => p.active || new Date(p.time).getTime() >= oldestActiveMs)
 
-    // When no fromDate is set, auto-clip klines to the oldest active swing point so
-    // the chart stays focused on the current structure. When fromDate IS explicitly
-    // set, honour it exactly — don't let the auto-clip override the user's choice.
     const effectiveFromMs = !fromDate && oldestActiveMs > 0 ? oldestActiveMs : fromMs
 
-    const filteredKlines = data.klines.filter(k => {
+    const filteredKlines = srcKlines.filter(k => {
       const ms = k.time * 1000
       return ms >= effectiveFromMs && ms <= toMs
     })
 
     return { filteredPoints, filteredKlines, filteredLevels, availableLevels }
-  }, [data, selectedLevel, fromDate, toDate])
+  }, [data, selectedLevel, fromDate, toDate, scrubberIdx, replayData])
+
+  const srcSignals = (scrubberIdx !== null && replayData !== null)
+    ? replayData.signals
+    : (data?.signals ?? [])
 
   if (error) {
     return (
@@ -154,43 +191,51 @@ function PageContent({ symbol }: { symbol: string }) {
       {/* Symbol, timeframe, mode badge, current price, and snapshot timestamp */}
       <Header data={data} />
 
-      {/* Toolbar: level filter + date range pickers + clear button */}
-      <div className="flex flex-wrap items-center gap-3 justify-end">
-        <LevelFilter
-          levels={availableLevels}
-          selected={selectedLevel}
-          onChange={setSelectedLevel}
+      {/* Toolbar: time scrubber (left) + level filter + date range pickers + clear button (right) */}
+      <div className="flex flex-wrap items-center gap-3 justify-between">
+        <TimeScrubber
+          klines={data.klines}
+          scrubberIdx={scrubberIdx}
+          isLoading={isReplaying}
+          onScrub={setScrubberIdx}
         />
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          <LevelFilter
+            levels={availableLevels}
+            selected={selectedLevel}
+            onChange={setSelectedLevel}
+          />
 
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span className="uppercase tracking-wider">From</span>
-          <input
-            type="datetime-local"
-            step={900}
-            value={fromDate}
-            min={klineMinDate}
-            max={klineMaxDate}
-            onChange={e => setFromDate(snapTo15Min(e.target.value))}
-            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
-          />
-          <span className="uppercase tracking-wider">To</span>
-          <input
-            type="datetime-local"
-            step={900}
-            value={toDate}
-            min={klineMinDate}
-            max={klineMaxDate}
-            onChange={e => setToDate(snapTo15Min(e.target.value))}
-            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
-          />
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="uppercase tracking-wider">From</span>
+            <input
+              type="datetime-local"
+              step={900}
+              value={fromDate}
+              min={klineMinDate}
+              max={klineMaxDate}
+              onChange={e => setFromDate(snapTo15Min(e.target.value))}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
+            />
+            <span className="uppercase tracking-wider">To</span>
+            <input
+              type="datetime-local"
+              step={900}
+              value={toDate}
+              min={klineMinDate}
+              max={klineMaxDate}
+              onChange={e => setToDate(snapTo15Min(e.target.value))}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <button
+            onClick={() => { setFromDate(''); setToDate('') }}
+            className="px-3 py-1.5 text-xs font-semibold rounded border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          >
+            Clear
+          </button>
         </div>
-
-        <button
-          onClick={() => { setFromDate(''); setToDate('') }}
-          className="px-3 py-1.5 text-xs font-semibold rounded border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-        >
-          Clear
-        </button>
       </div>
 
       <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
@@ -209,7 +254,7 @@ function PageContent({ symbol }: { symbol: string }) {
       </CollapsibleSection>
 
       <CollapsibleSection title="Signals" storageKey="db:strategy:s:signals">
-        <SignalsPanel signals={data.signals} />
+        <SignalsPanel signals={srcSignals} />
       </CollapsibleSection>
     </main>
   )

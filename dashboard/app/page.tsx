@@ -93,9 +93,11 @@ function PageContent({ symbol }: { symbol: string }) {
       setIsReplaying(false)
       return
     }
-    setIsReplaying(true)
-    setReplayData(null)
+    // Don't disable controls yet — let the user keep scrolling freely.
+    // isReplaying only becomes true when the debounce fires and the fetch starts.
+    // replayData is NOT cleared here so the previous overlay stays visible while dragging.
     const timer = setTimeout(() => {
+      setIsReplaying(true)
       fetch('/api/replay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -117,14 +119,14 @@ function PageContent({ symbol }: { symbol: string }) {
       return { filteredPoints: [], filteredKlines: [], filteredLevels: [], availableLevels: [] }
     }
 
-    // When replay is active and data has arrived, use historical sources.
-    // While loading (replayData not yet updated), fall back to live data so
-    // klines and overlays remain in sync (both stale-live, not mismatched).
-    const isReplay = scrubberIdx !== null && replayData !== null
-    const srcLevels = isReplay ? replayData.trend_levels : data.trend_levels
-    const srcPoints = isReplay ? replayData.all_points   : data.all_points
-    const srcKlines = isReplay
-      ? data.klines.slice(0, replayData.candle_index + 1)
+    // Klines clip immediately to scrubberIdx (client-side, instant visual feedback while dragging).
+    // Overlays (points, levels) only switch when a server response has arrived — stale replay
+    // data is intentionally kept visible during the debounce + loading window so there is no flash.
+    const isReplayOverlay = scrubberIdx !== null && replayData !== null
+    const srcLevels = isReplayOverlay ? replayData.trend_levels : data.trend_levels
+    const srcPoints = isReplayOverlay ? replayData.all_points   : data.all_points
+    const srcKlines = scrubberIdx !== null
+      ? data.klines.slice(0, scrubberIdx + 1)
       : data.klines
 
     const availableLevels = srcLevels.map(t => t.level).sort((a, b) => a - b)

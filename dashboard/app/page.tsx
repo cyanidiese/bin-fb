@@ -94,6 +94,7 @@ function PageContent({ symbol }: { symbol: string }) {
       return
     }
     setIsReplaying(true)
+    setReplayData(null)
     const timer = setTimeout(() => {
       fetch('/api/replay', {
         method: 'POST',

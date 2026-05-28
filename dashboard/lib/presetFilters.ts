@@ -23,6 +23,12 @@ export const SETTING_DEFAULTS: Record<string, number | boolean> = {
   max_losing_pct: 0.0,
   max_losing_amount_usdt: 0.0,
   max_losing_candles: 0,
+  trail_activation_pct: 0.0,
+  trail_min_distance_pct: 0.0,
+  min_precision_score: 0.0,
+  zone_sl_max: 0,
+  zone_sl_cooldown_candles: 16,
+  range_position_max: 1.0,
 }
 
 export type FilterSpec =
@@ -54,9 +60,15 @@ export const FILTER_SPECS: FilterEntry[] = [
   { key: 'global_pause_candles',        label: 'Global pause duration (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 30   } },
   { key: 'duplicate_skip_candles',      label: 'Duplicate skip window (candles)',spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 50   } },
   { key: 'duplicate_skip_pct',          label: 'Duplicate threshold (%)',        spec: { kind: 'number', step: 0.1, absMin: 0,   absMax: 10   } },
-  { key: 'max_losing_pct',              label: 'Early exit at SL% (%)',          spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 100  } },
-  { key: 'max_losing_amount_usdt',      label: 'Early exit amount (USDT)',       spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 10000} },
-  { key: 'max_losing_candles',          label: 'Max losing candles',             spec: { kind: 'number', step: 1,   absMin: 0,   absMax: 50   } },
+  { key: 'max_losing_pct',              label: 'Early exit at SL% (%)',          spec: { kind: 'number', step: 1,    absMin: 0,   absMax: 100  } },
+  { key: 'max_losing_amount_usdt',      label: 'Early exit amount (USDT)',       spec: { kind: 'number', step: 1,    absMin: 0,   absMax: 10000} },
+  { key: 'max_losing_candles',          label: 'Max losing candles',             spec: { kind: 'number', step: 1,    absMin: 0,   absMax: 50   } },
+  { key: 'trail_activation_pct',        label: 'Trail activation (%)',           spec: { kind: 'number', step: 0.1,  absMin: 0,   absMax: 20   } },
+  { key: 'trail_min_distance_pct',      label: 'Trail min distance (%)',         spec: { kind: 'number', step: 0.1,  absMin: 0,   absMax: 10   } },
+  { key: 'min_precision_score',         label: 'Min precision score',            spec: { kind: 'number', step: 0.01, absMin: 0,   absMax: 1.0  } },
+  { key: 'zone_sl_max',                 label: 'Zone SL limit',                  spec: { kind: 'number', step: 1,    absMin: 0,   absMax: 10   } },
+  { key: 'zone_sl_cooldown_candles',    label: 'Zone SL cooldown (candles)',     spec: { kind: 'number', step: 1,    absMin: 0,   absMax: 100  } },
+  { key: 'range_position_max',          label: 'Range position max',             spec: { kind: 'number', step: 0.05, absMin: 0,   absMax: 1.0  } },
 ]
 
 // ── Table filters (filter by result column values) ──────────────────────────

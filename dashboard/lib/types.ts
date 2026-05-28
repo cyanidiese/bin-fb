@@ -36,6 +36,14 @@ export interface Kline {
   close: number;
 }
 
+// Returned by /api/replay — historical trend state at a given candle index.
+export interface ReplayResult {
+  trend_levels: TrendLevel[]
+  all_points: SwingPoint[]
+  signals: Signal[]
+  candle_index: number  // echoed back so kline clip is always in sync with overlay data
+}
+
 // ── Backtest types ─────────────────────────────────────────────────────────
 
 export interface BacktestTrade {

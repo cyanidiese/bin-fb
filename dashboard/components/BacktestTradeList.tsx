@@ -1,6 +1,5 @@
 'use client'
 
-import { useRef, useEffect } from 'react'
 import type { BacktestTrade } from '@/lib/types'
 
 interface Props {
@@ -25,14 +24,6 @@ function tpReachColor(pct: number): string {
 }
 
 export default function BacktestTradeList({ presetName, trades, hoveredIdx = null, onHover = () => {} }: Props) {
-  const rowRefs = useRef<(HTMLTableRowElement | null)[]>([])
-
-  // Scroll hovered row into view when the chart drives the highlight.
-  useEffect(() => {
-    if (hoveredIdx === null) return
-    rowRefs.current[hoveredIdx]?.scrollIntoView({ block: 'nearest' })
-  }, [hoveredIdx])
-
   if (trades.length === 0) {
     return (
       <div className="text-gray-500 text-sm py-4 text-center">
@@ -70,7 +61,6 @@ export default function BacktestTradeList({ presetName, trades, hoveredIdx = nul
             return (
               <tr
                 key={idx}
-                ref={el => { rowRefs.current[idx] = el }}
                 onMouseEnter={() => onHover(idx)}
                 onMouseLeave={() => onHover(null)}
                 className={`border-b border-gray-800/50 transition-colors cursor-default ${

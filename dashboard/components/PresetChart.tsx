@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo, useRef, useEffect, useState } from 'react'
 import {
   Chart as ChartJS,
   LinearScale,
@@ -32,6 +32,71 @@ function fmtTick(unixSec: number): string {
   return `${mm}/${dd} ${hh}:${mi}`
 }
 
+const RESULT_BADGE: Record<string, string> = {
+  win:     'text-emerald-400 bg-emerald-950/60',
+  partial: 'text-amber-400  bg-amber-950/60',
+  trail:   'text-sky-400    bg-sky-950/60',
+  loss:    'text-red-400    bg-red-950/60',
+}
+
+function TradeTooltip({ trade: t, x, y, containerW }: {
+  trade: BacktestTrade; x: number; y: number; containerW: number
+}) {
+  const tipW = 196
+  const tipH = 158
+  let left = x + 14
+  let top = y - 90
+  if (left + tipW > containerW - 8) left = x - tipW - 6
+  top = Math.max(8, Math.min(top, 380 - tipH - 8))
+
+  const tpPct = (t.tp - t.entry) / t.entry * 100
+  const slPct = (t.sl - t.entry) / t.entry * 100
+  const pnlColor = t.profit_pct >= 0 ? 'text-emerald-400' : 'text-red-400'
+  const sideColor = t.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'
+  const duration = t.close_candle != null ? t.close_candle - t.open_candle : '—'
+
+  return (
+    <div
+      style={{ position: 'absolute', left, top, width: tipW, pointerEvents: 'none', zIndex: 50 }}
+      className="bg-gray-950/95 border border-gray-700 rounded-lg px-3 py-2 shadow-xl"
+    >
+      <div className="flex items-center justify-between mb-1.5">
+        <span className={`text-xs font-bold font-mono ${sideColor}`}>{t.side}</span>
+        <span className={`text-[10px] font-bold font-mono uppercase px-1.5 py-0.5 rounded ${RESULT_BADGE[t.result]}`}>
+          {t.result}
+        </span>
+      </div>
+      <div className="space-y-0.5 text-[11px] font-mono text-gray-400">
+        <div className="flex justify-between"><span>Entry</span><span className="text-gray-200">{t.entry.toFixed(2)}</span></div>
+        <div className="flex justify-between">
+          <span>TP</span>
+          <span>
+            <span className="text-gray-200">{t.tp.toFixed(2)}</span>
+            <span className="text-emerald-500 ml-1.5 text-[10px]">{tpPct >= 0 ? '+' : ''}{tpPct.toFixed(2)}%</span>
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>SL</span>
+          <span>
+            <span className="text-gray-200">{t.sl.toFixed(2)}</span>
+            <span className="text-red-500 ml-1.5 text-[10px]">{slPct >= 0 ? '+' : ''}{slPct.toFixed(2)}%</span>
+          </span>
+        </div>
+        <div className="flex justify-between"><span>Close</span><span className="text-gray-200">{t.close_price.toFixed(2)}</span></div>
+        <div className="flex justify-between border-t border-gray-700/50 pt-0.5 mt-0.5">
+          <span>P&L</span>
+          <span className={`font-semibold ${pnlColor}`}>
+            {t.profit_pct >= 0 ? '+' : ''}{t.profit_pct.toFixed(4)}%
+          </span>
+        </div>
+        <div className="flex justify-between text-gray-600">
+          <span>Candles</span><span>{duration}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function PresetChart({ klines, trades, originalIdxs, hoveredTradeIdx = null, onTradeHover = () => {} }: Props) {
   const tradesRef = useRef<BacktestTrade[]>(trades)
   tradesRef.current = trades
@@ -40,6 +105,16 @@ export default function PresetChart({ klines, trades, originalIdxs, hoveredTrade
   const effectiveOriginalIdxs = originalIdxs ?? trades.map((_, i) => i)
   const originalIdxsRef = useRef<number[]>(effectiveOriginalIdxs)
   originalIdxsRef.current = effectiveOriginalIdxs
+
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  const hoveredTrade = useMemo(() => {
+    if (hoveredTradeIdx === null) return null
+    if (!originalIdxs) return trades[hoveredTradeIdx] ?? null
+    const i = originalIdxs.findIndex(oi => oi === hoveredTradeIdx)
+    return i >= 0 ? trades[i] : null
+  }, [hoveredTradeIdx, trades, originalIdxs])
 
   // Source of truth for chart drawing — updated synchronously in afterEvent
   // so the chart.update('none') call that follows always reads the fresh value.
@@ -281,8 +356,24 @@ export default function PresetChart({ klines, trades, originalIdxs, hoveredTrade
   }
 
   return (
-    <div style={{ height: 380 }}>
+    <div
+      ref={wrapperRef}
+      style={{ height: 380, position: 'relative' }}
+      onMouseMove={e => {
+        const rect = wrapperRef.current?.getBoundingClientRect()
+        if (rect) setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+      }}
+      onMouseLeave={() => setMousePos(null)}
+    >
       <Line ref={chartRef} data={data} options={options} plugins={[plugin]} />
+      {hoveredTrade && mousePos && (
+        <TradeTooltip
+          trade={hoveredTrade}
+          x={mousePos.x}
+          y={mousePos.y}
+          containerW={wrapperRef.current?.offsetWidth ?? 600}
+        />
+      )}
     </div>
   )
 }

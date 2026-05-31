@@ -85,7 +85,7 @@
   "weights": {
     "SOLUSDT": 1,
     "THETAUSDT": 1,
-    "REZUSDT": 1,
+    "REZUSDT": 0,
     "DOGEUSDT": 1,
     "1000PEPEUSDT": 1,
     "WLDUSDT": 1,
@@ -97,6 +97,6 @@
     "1000SHIBUSDT": 1,
     "INJUSDT": 1,
     "JUPUSDT": 0,
-    "APTUSDT": 1
+    "APTUSDT": 0
   }
 }

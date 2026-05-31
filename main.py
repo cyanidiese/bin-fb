@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
-from config.settings import load_settings
+from config.settings import load_settings, Settings
 from bot.analyzer import Analyzer
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine

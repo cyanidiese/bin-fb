@@ -292,7 +292,11 @@ class VirtualOrderSimulator:
         if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
             return
         if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
-            return
+            if side == 'BUY':
+                sl = entry * (1.0 - preset_settings.min_sl_pct / 100.0)
+            else:
+                sl = entry * (1.0 + preset_settings.min_sl_pct / 1.5 / 100.0)
+            sl_dist_pct = preset_settings.min_sl_pct
         if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
             return
 

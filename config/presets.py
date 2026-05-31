@@ -600,6 +600,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'min_sl_pct': 0.50,
         'max_losing_pct': 70.0,
     },
     'hl_buy_prox15_trail15': {
@@ -608,10 +609,12 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'min_sl_pct': 0.50,
     },
     'pre_confirm_trail15': {
         'lower_high_sell': True, 'higher_low_buy': True,
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'min_sl_pct': 0.40,
         'max_losing_pct': 70.0,
     },
     'pre_confirm_prox15_trail15': {

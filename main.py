@@ -513,31 +513,34 @@ async def run() -> None:
             )
             return 0.0
 
-        # Global SL hard floor — rejects any signal whose SL is too close to entry
-        # regardless of which preset is active (catches micro-SL noise signals).
-        if _global_min_sl > 0 and sl_dist_pct < _global_min_sl:
+        # SL floor — widen rather than reject if SL is too close to entry.
+        # Effective minimum = max(global floor, preset min_sl_pct).
+        # Per-symbol overrides are already merged into preset_settings above via per_symbol_settings,
+        # so preset_settings.min_sl_pct already holds the per-symbol value when set.
+        _effective_min_sl = max(
+            preset_settings.min_sl_pct if preset_settings.min_sl_pct > 0 else 0.0,
+            _global_min_sl,
+        )
+        if _effective_min_sl > 0 and sl_dist_pct < _effective_min_sl:
+            _orig_sl = sl
+            _orig_sl_pct = sl_dist_pct
+            if side == 'BUY':
+                sl = entry * (1.0 - _effective_min_sl / 100.0)
+            else:
+                # sl_dist_pct applies ×1.5 for SELL — invert to get actual price distance
+                sl = entry * (1.0 + _effective_min_sl / 1.5 / 100.0)
+            sl_dist_pct = _effective_min_sl
             logger.info(
-                f"[{symbol}] Signal skipped — SL too tight: {sl_dist_pct:.3f}% < global_min={_global_min_sl}% (preset={preset_name})"
+                f"[{symbol}] SL floored: {_orig_sl_pct:.3f}% → {_effective_min_sl:.3f}%"
+                f" ({_orig_sl:.6g} → {sl:.6g}) preset={preset_name}"
             )
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
-                decision='skip_global_min_sl',
-                reason=f'sl_dist={sl_dist_pct:.3f}% < global_min={_global_min_sl}%',
+                decision='floor_sl_pct',
+                reason=f'sl_dist={_orig_sl_pct:.3f}% widened to min={_effective_min_sl:.3f}%',
                 balance=balance, leverage=0, efficiency_score=_eff_for_dl,
                 preset_name=preset_name, scenario=_active_scenario_name,
             )
-            return 0.0
-
-        # min_sl_pct filter (per-preset, can be stricter than the global floor)
-        if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
-            dl_record(
-                dl_path, candle_ts=candle_ts, symbol=symbol,
-                decision='skip_min_sl_pct',
-                reason=f'sl_dist={sl_dist_pct:.2f}% < min={preset_settings.min_sl_pct}%',
-                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
-                preset_name=preset_name, scenario=_active_scenario_name,
-            )
-            return 0.0
 
         # max_sl_pct filter
         if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:

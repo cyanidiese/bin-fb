@@ -84,6 +84,16 @@
       "reason": "manual",
       "disabled_at": "2026-06-02T00:00:00.000Z",
       "prev_weight": 1
+    },
+    "INJUSDT": {
+      "reason": "manual",
+      "disabled_at": "2026-06-02T00:00:00.000Z",
+      "prev_weight": 1
+    },
+    "1000SHIBUSDT": {
+      "reason": "manual",
+      "disabled_at": "2026-06-02T00:00:00.000Z",
+      "prev_weight": 1
     }
   },
   "disabled_ranks": {},
@@ -100,8 +110,8 @@
     "ETHFIUSDT": 0,
     "TIAUSDT": 1,
     "EIGENUSDT": 1,
-    "1000SHIBUSDT": 1,
-    "INJUSDT": 1,
+    "1000SHIBUSDT": 0,
+    "INJUSDT": 0,
     "JUPUSDT": 0,
     "APTUSDT": 0
   }

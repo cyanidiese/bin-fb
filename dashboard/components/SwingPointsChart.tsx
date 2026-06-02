@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 import {
   Chart as ChartJS,
   TimeScale, LinearScale, PointElement, LineElement,
@@ -21,8 +22,6 @@ ChartJS.register(
 interface Props {
   klines: Kline[]
   points: SwingPoint[]
-  candleView?: boolean
-  clampSpikes?: boolean
 }
 
 const fmt = (price: number) => formatPrice(price)
@@ -94,7 +93,9 @@ const SHARED_LEGEND = {
   },
 }
 
-export default function SwingPointsChart({ klines, points, candleView = false, clampSpikes = false }: Props) {
+export default function SwingPointsChart({ klines, points }: Props) {
+  const [candleView]  = useLocalStorage<boolean>('db:chart:candleView',  false)
+  const [clampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
   const chartData = useMemo(() => {
     const sorted = [...points].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()

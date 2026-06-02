@@ -7,8 +7,6 @@ interface Props {
   scrubberIdx: number | null   // null means live (at the most recent candle)
   isLoading: boolean
   onScrub: (idx: number | null) => void
-  candleView: boolean
-  onCandleViewChange: (v: boolean) => void
 }
 
 function fmtTime(unixSec: number): string {
@@ -17,7 +15,7 @@ function fmtTime(unixSec: number): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub, candleView, onCandleViewChange }: Props) {
+export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub }: Props) {
   if (klines.length === 0) return null
 
   const maxIdx    = klines.length - 1
@@ -80,15 +78,6 @@ export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub, 
         <span className="text-xs text-gray-600">updating…</span>
       )}
 
-      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none ml-2">
-        <input
-          type="checkbox"
-          checked={candleView}
-          onChange={e => onCandleViewChange(e.target.checked)}
-          className="accent-indigo-500"
-        />
-        Candles
-      </label>
     </div>
   )
 }

@@ -38,8 +38,6 @@ function PageContent({ symbol }: { symbol: string }) {
   const [scrubberIdx, setScrubberIdx] = useState<number | null>(null)
   const [replayData,  setReplayData]  = useState<ReplayResult | null>(null)
   const [isReplaying, setIsReplaying] = useState(false)
-  const [candleView,  setCandleView]  = useLocalStorage<boolean>('db:chart:candleView', false)
-  const [clampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
 
   // Which trend level the user has selected in the filter control.
   // Selecting L2 means: show L1 and L2 data only (hide L3 and above).
@@ -203,8 +201,6 @@ function PageContent({ symbol }: { symbol: string }) {
           scrubberIdx={scrubberIdx}
           isLoading={effectiveIsReplaying}
           onScrub={setScrubberIdx}
-          candleView={candleView}
-          onCandleViewChange={setCandleView}
         />
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <LevelFilter
@@ -246,7 +242,7 @@ function PageContent({ symbol }: { symbol: string }) {
       </div>
 
       <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
-        <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} candleView={candleView} clampSpikes={clampSpikes} />
+        <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} />
       </CollapsibleSection>
 
       <CollapsibleSection title="Trend Levels" storageKey="db:strategy:s:trendlevels">

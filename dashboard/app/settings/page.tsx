@@ -35,6 +35,7 @@ export default function SettingsPage() {
   const [registry, setRegistry] = useState<RegistryData | null>(null)
   const [botState, setBotState] = useState<BotState | null>(null)
   const [mode, setMode] = useState<string>('test')
+  const [candleView,  setCandleView]  = useLocalStorage<boolean>('db:chart:candleView',  false)
   const [clampSpikes, setClampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
 
   useEffect(() => {
@@ -107,7 +108,20 @@ export default function SettingsPage() {
             <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
               Strategy Chart
             </h2>
-            <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4 space-y-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={candleView}
+                  onChange={e => setCandleView(e.target.checked)}
+                  className="rounded accent-indigo-500"
+                />
+                <span className="text-sm text-gray-300">Candlestick chart view</span>
+              </label>
+              <p className="text-xs text-gray-600">
+                When enabled, charts display OHLC candlesticks instead of a close-price line.
+              </p>
+              <hr className="border-gray-800" />
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -115,10 +129,10 @@ export default function SettingsPage() {
                   onChange={e => setClampSpikes(e.target.checked)}
                   className="rounded accent-indigo-500"
                 />
-                <span className="text-sm text-gray-300">Clamp spike wicks on swing point chart</span>
+                <span className="text-sm text-gray-300">Clamp spike wicks</span>
               </label>
-              <p className="mt-2 text-xs text-gray-600">
-                When enabled, swing point dots on candles whose wick is &gt;5× the average wick of the previous 10 candles are repositioned to the clamped height. Candles themselves are unchanged.
+              <p className="text-xs text-gray-600">
+                Repositions swing point dots on spike candles (wick &gt;5× avg of previous 10) to the clamped height. Candles themselves are unchanged.
               </p>
             </div>
           </section>

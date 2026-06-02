@@ -10,6 +10,7 @@ import 'chartjs-adapter-date-fns' // required for type: 'time' scale to parse ti
 import { Line, Chart } from 'react-chartjs-2'
 import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial'
 import { SwingPoint, Kline } from '@/lib/types'
+import { formatPrice } from '@/lib/formatPrice'
 
 ChartJS.register(
   TimeScale, LinearScale, PointElement, LineElement,
@@ -21,11 +22,10 @@ interface Props {
   klines: Kline[]
   points: SwingPoint[]
   candleView?: boolean
+  clampSpikes?: boolean
 }
 
-function fmt(price: number) {
-  return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+const fmt = (price: number) => formatPrice(price)
 
 // Inactive dots (wiped by a Break of Structure) are shown as small gray marks
 // so the historical context is visible without competing with the active points.
@@ -40,6 +40,30 @@ function dotColor(p: SwingPoint): string {
 function dotRadius(p: SwingPoint): number {
   if (!p.active) return 3
   return p.level === 1 ? 5 : p.level === 2 ? 7 : 9
+}
+
+// If a candle's upper or lower wick is more than spikeRatio × the average wick of
+// the previous `lookback` candles, clamp the wick tip to bodyEdge + clampRatio × avgWick.
+// open/close (the body) are never modified — only high/low are adjusted for display.
+function applySpikeClamping(klines: Kline[], lookback = 10, spikeRatio = 5, clampRatio = 2): Kline[] {
+  return klines.map((k, i) => {
+    if (i < 3) return k
+
+    const prev = klines.slice(Math.max(0, i - lookback), i)
+    const avgUpperWick = prev.reduce((s, c) => s + (c.high - Math.max(c.open, c.close)), 0) / prev.length
+    const avgLowerWick = prev.reduce((s, c) => s + (Math.min(c.open, c.close) - c.low), 0) / prev.length
+
+    const bodyTop    = Math.max(k.open, k.close)
+    const bodyBottom = Math.min(k.open, k.close)
+
+    let high = k.high
+    let low  = k.low
+    if (avgUpperWick > 0 && (k.high - bodyTop)    > spikeRatio * avgUpperWick) high = bodyTop    + clampRatio * avgUpperWick
+    if (avgLowerWick > 0 && (bodyBottom - k.low)  > spikeRatio * avgLowerWick) low  = bodyBottom - clampRatio * avgLowerWick
+
+    if (high === k.high && low === k.low) return k
+    return { ...k, high, low }
+  })
 }
 
 const SHARED_SCALES = {
@@ -70,13 +94,14 @@ const SHARED_LEGEND = {
   },
 }
 
-export default function SwingPointsChart({ klines, points, candleView = false }: Props) {
+export default function SwingPointsChart({ klines, points, candleView = false, clampSpikes = false }: Props) {
   const chartData = useMemo(() => {
     const sorted = [...points].sort(
       (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
     )
     const activeSorted = sorted.filter(p => p.active)
 
+    // Raw klines — chart always shows unmodified candles
     const closes = klines.map(k => ({ x: k.time * 1000, y: k.close }))
     const opens  = klines.map(k => ({ x: k.time * 1000, y: k.open  }))
     const highs  = klines.map(k => ({ x: k.time * 1000, y: k.high  }))
@@ -84,13 +109,27 @@ export default function SwingPointsChart({ klines, points, candleView = false }:
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ohlc   = klines.map(k => ({ x: k.time * 1000, o: k.open, h: k.high, l: k.low, c: k.close } as any))
 
-    const dots      = sorted.map(p => ({ x: new Date(p.time).getTime(), y: p.price }))
-    const trendDots = activeSorted.map(p => ({ x: new Date(p.time).getTime(), y: p.price }))
+    // Clamped values used only for swing-point dot placement (when enabled)
+    const clampedByTime = clampSpikes
+      ? new Map(applySpikeClamping(klines).map(k => [k.time * 1000, k]))
+      : null
+
+    function swingY(p: SwingPoint): number {
+      if (!clampedByTime) return p.price
+      const c = clampedByTime.get(new Date(p.time).getTime())
+      if (!c) return p.price
+      if (p.type === 'high' && p.price > c.high) return c.high
+      if (p.type === 'low'  && p.price < c.low)  return c.low
+      return p.price
+    }
+
+    const dots      = sorted.map(p => ({ x: new Date(p.time).getTime(), y: swingY(p) }))
+    const trendDots = activeSorted.map(p => ({ x: new Date(p.time).getTime(), y: swingY(p) }))
     const colors    = sorted.map(dotColor)
     const radii     = sorted.map(dotRadius)
 
     return { closes, opens, highs, lows, ohlc, dots, trendDots, colors, radii }
-  }, [klines, points])
+  }, [klines, points, clampSpikes])
 
   if (chartData.closes.length === 0 && chartData.dots.length === 0) {
     return (

@@ -721,6 +721,19 @@ async def run() -> None:
             cap = trade_cap if trade_cap > 0 else margin
             trade_margin = max(min(balance, cap), margin)
 
+        # Hard cap: no single trade may exceed max_trade_pct% of the total deployable budget.
+        # Prevents one symbol from consuming all capital when its BGF fraction is temporarily 100%.
+        _max_trade_pct = float(risk_cfg.get("max_trade_pct", 0.0))
+        if _max_trade_pct > 0:
+            _deployable_total = risk_manager.get_deployable_budget()
+            _max_alloc = _deployable_total * _max_trade_pct / 100.0
+            if trade_margin > _max_alloc > margin:
+                logger.debug(
+                    f"[{symbol}] max_trade_pct cap: trade_margin {trade_margin:.2f} → {_max_alloc:.2f} "
+                    f"({_max_trade_pct:.0f}% of deployable {_deployable_total:.2f})"
+                )
+                trade_margin = _max_alloc
+
         allowed, reason = risk_manager.can_open_sync(symbol)
         if not allowed:
             decision = 'skip_hard_stop' if 'hard_stop' in reason else 'skip_profit_factor'

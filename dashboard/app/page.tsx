@@ -38,7 +38,8 @@ function PageContent({ symbol }: { symbol: string }) {
   const [scrubberIdx, setScrubberIdx] = useState<number | null>(null)
   const [replayData,  setReplayData]  = useState<ReplayResult | null>(null)
   const [isReplaying, setIsReplaying] = useState(false)
-  const [candleView,  setCandleView]  = useLocalStorage<boolean>(`db:strategy:${symbol}:candleView`, false)
+  const [candleView,  setCandleView]  = useLocalStorage<boolean>('db:chart:candleView', false)
+  const [clampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
 
   // Which trend level the user has selected in the filter control.
   // Selecting L2 means: show L1 and L2 data only (hide L3 and above).
@@ -55,7 +56,6 @@ function PageContent({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     let cancelled = false
-    setData(null)
 
     function load() {
       fetch(`/api/public-file?f=results_${symbol}.json`)
@@ -86,14 +86,10 @@ function PageContent({ symbol }: { symbol: string }) {
     load()
     const id = setInterval(load, POLL_MS)
     return () => { cancelled = true; clearInterval(id) }
-  }, [symbol])
+  }, [symbol, setSelectedLevel])
 
   useEffect(() => {
-    if (scrubberIdx === null) {
-      setReplayData(null)
-      setIsReplaying(false)
-      return
-    }
+    if (scrubberIdx === null) return
     // Don't disable controls yet — let the user keep scrolling freely.
     // isReplaying only becomes true when the debounce fires and the fetch starts.
     // replayData is NOT cleared here so the previous overlay stays visible while dragging.
@@ -114,6 +110,11 @@ function PageContent({ symbol }: { symbol: string }) {
     return () => clearTimeout(timer)
   }, [scrubberIdx, symbol])
 
+  // Derived values: replay state is only active when a specific candle is selected.
+  // This avoids synchronous setState calls inside effects to clear these values.
+  const effectiveReplayData  = scrubberIdx !== null ? replayData  : null
+  const effectiveIsReplaying = scrubberIdx !== null && isReplaying
+
   // Derive filtered datasets whenever the raw data, selected level, or date range changes.
   const { filteredPoints, filteredKlines, filteredLevels, availableLevels } = useMemo(() => {
     if (!data || selectedLevel === null) {
@@ -123,9 +124,9 @@ function PageContent({ symbol }: { symbol: string }) {
     // Klines clip immediately to scrubberIdx (client-side, instant visual feedback while dragging).
     // Overlays (points, levels) only switch when a server response has arrived — stale replay
     // data is intentionally kept visible during the debounce + loading window so there is no flash.
-    const isReplayOverlay = scrubberIdx !== null && replayData !== null
-    const srcLevels = isReplayOverlay ? replayData.trend_levels : data.trend_levels
-    const srcPoints = isReplayOverlay ? replayData.all_points   : data.all_points
+    const isReplayOverlay = scrubberIdx !== null && effectiveReplayData !== null
+    const srcLevels = isReplayOverlay ? effectiveReplayData!.trend_levels : data.trend_levels
+    const srcPoints = isReplayOverlay ? effectiveReplayData!.all_points   : data.all_points
     const srcKlines = scrubberIdx !== null
       ? data.klines.slice(0, scrubberIdx + 1)
       : data.klines
@@ -154,10 +155,10 @@ function PageContent({ symbol }: { symbol: string }) {
     })
 
     return { filteredPoints, filteredKlines, filteredLevels, availableLevels }
-  }, [data, selectedLevel, fromDate, toDate, scrubberIdx, replayData])
+  }, [data, selectedLevel, fromDate, toDate, scrubberIdx, effectiveReplayData])
 
-  const srcSignals = (scrubberIdx !== null && replayData !== null)
-    ? replayData.signals
+  const srcSignals = effectiveReplayData !== null
+    ? effectiveReplayData.signals
     : (data?.signals ?? [])
 
   if (error) {
@@ -200,7 +201,7 @@ function PageContent({ symbol }: { symbol: string }) {
         <TimeScrubber
           klines={data.klines}
           scrubberIdx={scrubberIdx}
-          isLoading={isReplaying}
+          isLoading={effectiveIsReplaying}
           onScrub={setScrubberIdx}
           candleView={candleView}
           onCandleViewChange={setCandleView}
@@ -245,7 +246,7 @@ function PageContent({ symbol }: { symbol: string }) {
       </div>
 
       <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
-        <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} candleView={candleView} />
+        <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} candleView={candleView} clampSpikes={clampSpikes} />
       </CollapsibleSection>
 
       <CollapsibleSection title="Trend Levels" storageKey="db:strategy:s:trendlevels">

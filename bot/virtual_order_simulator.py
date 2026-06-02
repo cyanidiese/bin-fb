@@ -356,10 +356,31 @@ class VirtualOrderSimulator:
             alloc = self._get_bgf_allocation(rank_bal, fraction)
         else:
             alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
-        quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
 
-        # Load risk config once — used for both notional cap and loss cap below.
+        # Load risk config once — used for trade cap, notional cap, and loss cap below.
         _risk_cfg = load_risk_config()
+
+        # Cap per-trade allocation to max_trade_pct% of the rank pool's deployable budget.
+        # Mirrors the same cap applied to real orders so virtual PnL stays comparable.
+        _max_trade_pct = float(_risk_cfg.get("max_trade_pct", 0.0))
+        if _max_trade_pct > 0:
+            _cfg_tiers = sorted(_risk_cfg.get("balance_tiers", []), key=lambda t: t["min_balance_usdt"])
+            _tier = _cfg_tiers[0] if _cfg_tiers else {"max_deploy_pct": 90, "max_leverage_ceiling": 15}
+            for _t in _cfg_tiers:
+                if rank_bal >= _t["min_balance_usdt"]:
+                    _tier = _t
+            _min_pct = _risk_cfg.get("min_balance_pct", 0.0)
+            _reserve = rank_bal * (_min_pct / 100.0) if _min_pct > 0 else 0.0
+            _deployable = max(0.0, rank_bal - _reserve) * _tier["max_deploy_pct"] / 100.0
+            _max_alloc = _deployable * _max_trade_pct / 100.0
+            if alloc > _max_alloc:
+                logger.debug(
+                    f"[{symbol}] Rank-{rank} max_trade_pct cap: "
+                    f"alloc {alloc:.2f} → {_max_alloc:.2f} ({_max_trade_pct:.0f}% of deployable {_deployable:.2f})"
+                )
+                alloc = _max_alloc
+
+        quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
 
         # Apply the same per-order notional cap as real orders so virtual PnL is
         # comparable to real PnL and does not distort the efficiency scoreboard.

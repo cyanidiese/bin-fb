@@ -2,16 +2,13 @@
 
 import { useState } from 'react'
 import { TrendLevel } from '@/lib/types'
+import { formatPrice } from '@/lib/formatPrice'
 
 interface Props {
   levels: TrendLevel[]
 }
 
-// Format a price for display, or show a dash if the value is missing
-function fmt(price: number | null) {
-  if (price === null) return '—'
-  return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+const fmt = (price: number | null) => formatPrice(price)
 
 // Format an ISO timestamp to a short readable form (e.g. "Apr 21, 14:30")
 function fmtTime(iso: string | null) {

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { SwingPoint } from '@/lib/types'
+import { formatPrice } from '@/lib/formatPrice'
 
 interface Props {
   points: SwingPoint[]
@@ -9,9 +10,7 @@ interface Props {
 
 type SortKey = 'time' | 'level' | 'type' | 'price'
 
-function fmt(price: number) {
-  return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+const fmt = (price: number) => formatPrice(price)
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleString('en-US', {

@@ -11,10 +11,16 @@ interface SymbolStatus {
   pid: number | null
 }
 
+interface DisabledEntry {
+  reason: string
+  disabled_at: string
+}
+
 interface RegistryData {
   symbols: string[]
   updated_at: string
   status: Record<string, SymbolStatus>
+  disabled?: Record<string, DisabledEntry>
 }
 
 interface Props {
@@ -45,6 +51,7 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
+  const [toggling, setToggling] = useState<string | null>(null)
   const [perfScores, setPerfScores] = useState<Record<string, number | null>>({})
   const [sortCol, setSortCol] = useState<SortCol>('profit')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -107,6 +114,28 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
       setAddError(String(e))
     } finally {
       setAdding(false)
+    }
+  }
+
+  async function handleToggleDisable(symbol: string) {
+    const isDisabled = !!registry?.disabled?.[symbol]
+    if (!isDisabled) {
+      if (!window.confirm(`Disable ${symbol}?\n\nThe bot will stop placing new orders for this symbol. Open positions are not affected.`)) return
+    }
+    setToggling(symbol)
+    try {
+      if (isDisabled) {
+        await fetch(`/api/symbols/${symbol}/enable`, { method: 'PATCH' })
+      } else {
+        await fetch(`/api/symbols/${symbol}/disable`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'manual' }),
+        })
+      }
+      onRefetch()
+    } finally {
+      setToggling(null)
     }
   }
 
@@ -181,9 +210,15 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
               {sortedSymbols.map(sym => {
                 const st = registry.status[sym] ?? { backtest: 'none', pid: null }
                 const score = perfScores[sym]
+                const isDisabled = !!registry.disabled?.[sym]
                 return (
-                  <tr key={sym} className="border-b border-gray-900 hover:bg-gray-900/40">
-                    <td className="px-4 py-2 text-indigo-300 font-semibold">{sym}</td>
+                  <tr key={sym} className={`border-b border-gray-900 ${isDisabled ? 'opacity-50' : 'hover:bg-gray-900/40'}`}>
+                    <td className="px-4 py-2 font-semibold">
+                      <span className={isDisabled ? 'text-gray-500' : 'text-indigo-300'}>{sym}</span>
+                      {isDisabled && (
+                        <span className="ml-1.5 text-[9px] text-red-400 font-semibold uppercase tracking-wide">off</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2">
                       <StatusBadge status={st.backtest} />
                     </td>
@@ -194,14 +229,27 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
                       }
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <button
-                        onClick={() => handleRemove(sym)}
-                        disabled={removing === sym}
-                        title={st.backtest === 'running' ? `Cancel backtest and remove ${sym}` : `Remove ${sym} from active symbols`}
-                        className="px-2 py-0.5 rounded border border-red-900/60 bg-red-950/30 text-red-400 text-[10px] font-semibold hover:bg-red-900/40 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {removing === sym ? 'Removing…' : 'Remove'}
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleToggleDisable(sym)}
+                          disabled={toggling === sym}
+                          title={isDisabled ? `Re-enable ${sym} for trading` : `Disable ${sym} — bot will stop placing new orders`}
+                          className={isDisabled
+                            ? 'px-2 py-0.5 rounded border border-emerald-900/60 bg-emerald-950/30 text-emerald-400 text-[10px] font-semibold hover:bg-emerald-900/40 hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+                            : 'px-2 py-0.5 rounded border border-yellow-900/60 bg-yellow-950/30 text-yellow-600 text-[10px] font-semibold hover:bg-yellow-900/40 hover:text-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+                          }
+                        >
+                          {toggling === sym ? '…' : isDisabled ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          onClick={() => handleRemove(sym)}
+                          disabled={removing === sym}
+                          title={st.backtest === 'running' ? `Cancel backtest and remove ${sym}` : `Remove ${sym} from active symbols`}
+                          className="px-2 py-0.5 rounded border border-red-900/60 bg-red-950/30 text-red-400 text-[10px] font-semibold hover:bg-red-900/40 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {removing === sym ? '…' : 'Remove'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )

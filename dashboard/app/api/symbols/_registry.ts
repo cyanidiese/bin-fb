@@ -18,6 +18,7 @@ export interface SymbolStatus {
 export interface DisabledEntry {
   reason: string
   disabled_at: string
+  prev_weight?: number
 }
 
 export interface RegistryFile {
@@ -26,6 +27,8 @@ export interface RegistryFile {
   status: Record<string, SymbolStatus>
   disabled?: Record<string, DisabledEntry>
   disabled_ranks?: Record<string, number[]>
+  weights?: Record<string, number>
+  paused?: Record<string, unknown>
 }
 
 export function readRegistry(): RegistryFile {

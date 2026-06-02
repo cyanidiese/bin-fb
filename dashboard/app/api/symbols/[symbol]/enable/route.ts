@@ -14,10 +14,14 @@ export async function PATCH(
     return NextResponse.json({ ok: true, symbol, was_disabled: false })
   }
 
+  const prevWeight = reg.disabled[symbol].prev_weight ?? 1
   delete reg.disabled[symbol]
   if (Object.keys(reg.disabled).length === 0) {
     delete reg.disabled
   }
+  if (!reg.weights) reg.weights = {}
+  reg.weights[symbol] = prevWeight
+
   writeRegistry(reg)
 
   return NextResponse.json({ ok: true, symbol, was_disabled: true })

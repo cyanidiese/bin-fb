@@ -48,6 +48,9 @@ class VirtualTracker:
         self._get_min_trades = get_min_trades
         self._efficiency: dict = self._load_efficiency()
         self._last_best: dict[str, str | None] = {}
+        # Maps symbol → minimum trade_count the current best must reach before it
+        # can be displaced (cooldown). In-memory only; resets on bot restart.
+        self._cooldown_threshold: dict[str, int] = {}
 
     def clear_session_data(self, symbols: list[str]) -> None:
         """Wipe in-memory and on-disk efficiency so the new session starts clean."""
@@ -100,10 +103,51 @@ class VirtualTracker:
         cfg = load_risk_config()
         min_t = self._get_min_trades(symbol)
         window_size = int(cfg.get("ranking_window_size", 10))
-        best = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t, window_size))
-        result = best if _score(symbol_data[best], min_t, window_size)[1] >= 0 else None
+        hysteresis_pct = float(cfg.get("preset_hysteresis_pct", 10.0)) / 100.0
+        cooldown_trades = int(cfg.get("preset_cooldown_trades", 5))
+
+        # Unconstrained best by score
+        best_name = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t, window_size))
+        candidate = best_name if _score(symbol_data[best_name], min_t, window_size)[1] >= 0 else None
 
         prev = self._last_best.get(symbol, _SENTINEL)
+
+        if prev is not _SENTINEL and prev != candidate and prev is not None and candidate is not None:
+            prev_stats = symbol_data.get(prev, {})
+            cand_stats = symbol_data.get(candidate, {})
+            prev_tuple = _score(prev_stats, min_t, window_size)
+            cand_tuple = _score(cand_stats, min_t, window_size)
+
+            if cand_tuple[0] == prev_tuple[0]:
+                # Same tier — apply hysteresis: candidate must beat prev by ≥ hysteresis_pct
+                prev_score = prev_tuple[1]
+                cand_score = cand_tuple[1]
+                min_improvement = max(abs(prev_score) * hysteresis_pct, 0.50)
+                if cand_score < prev_score + min_improvement:
+                    logger.debug(
+                        f"[{symbol}] Hysteresis blocked swap {prev!r}->{candidate!r}: "
+                        f"score {cand_score:.2f} needs >{prev_score + min_improvement:.2f}"
+                    )
+                    candidate = prev
+
+            # Cooldown check: prev must have enough trades since it became best
+            if candidate != prev:
+                threshold = self._cooldown_threshold.get(symbol, 0)
+                prev_count = prev_stats.get("trade_count", 0)
+                if prev_count < threshold:
+                    logger.debug(
+                        f"[{symbol}] Cooldown blocked swap {prev!r}->{candidate!r}: "
+                        f"trades {prev_count} < threshold {threshold}"
+                    )
+                    candidate = prev
+
+        # A swap is happening — set cooldown for the new best
+        if prev is not _SENTINEL and prev != candidate and candidate is not None:
+            new_count = symbol_data.get(candidate, {}).get("trade_count", 0)
+            self._cooldown_threshold[symbol] = new_count + cooldown_trades
+
+        result = candidate
+
         if prev is not _SENTINEL and prev != result:
             prev_stats = symbol_data.get(prev or '', {})
             new_stats = symbol_data.get(result or '', {})

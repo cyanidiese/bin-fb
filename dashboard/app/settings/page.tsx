@@ -7,6 +7,7 @@ import TradingMode from '@/components/settings/TradingMode'
 import SymbolRegistry from '@/components/settings/SymbolRegistry'
 import TelegramSettings from '@/components/settings/TelegramSettings'
 import UIPreview from '@/components/settings/UIPreview'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 interface SymbolStatus {
   backtest: 'none' | 'running' | 'complete' | 'error' | 'cancelled'
@@ -17,6 +18,7 @@ interface RegistryData {
   symbols: string[]
   updated_at: string
   status: Record<string, SymbolStatus>
+  disabled?: Record<string, { reason: string; disabled_at: string }>
 }
 
 interface BotState {
@@ -33,6 +35,7 @@ export default function SettingsPage() {
   const [registry, setRegistry] = useState<RegistryData | null>(null)
   const [botState, setBotState] = useState<BotState | null>(null)
   const [mode, setMode] = useState<string>('test')
+  const [clampSpikes, setClampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
 
   useEffect(() => {
     fetch('/api/mode').then(r => r.json()).then(d => setMode(d.mode)).catch(() => {})
@@ -79,16 +82,12 @@ export default function SettingsPage() {
       <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
 
         {/* Column 1: Symbol-related */}
-        <div>
+        <div className="space-y-6">
           <SymbolRegistry registry={registry} onRefetch={fetchRegistry} />
-        </div>
-
-        {/* Column 2: Symbol Discovery */}
-        <div>
           <SymbolDiscovery />
         </div>
 
-        {/* Column 3: Other */}
+        {/* Column 2: Bot */}
         <div className="space-y-6">
           <BotControl botState={botState} onAction={fetchRegistry} />
           <TradingMode
@@ -98,8 +97,31 @@ export default function SettingsPage() {
             registry={registry}
             onRefetch={fetchRegistry}
           />
+        </div>
+
+        {/* Column 3: UI & display */}
+        <div className="space-y-6">
           <TelegramSettings />
           <UIPreview />
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+              Strategy Chart
+            </h2>
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={clampSpikes}
+                  onChange={e => setClampSpikes(e.target.checked)}
+                  className="rounded accent-indigo-500"
+                />
+                <span className="text-sm text-gray-300">Clamp spike wicks on swing point chart</span>
+              </label>
+              <p className="mt-2 text-xs text-gray-600">
+                When enabled, swing point dots on candles whose wick is &gt;5× the average wick of the previous 10 candles are repositioned to the clamped height. Candles themselves are unchanged.
+              </p>
+            </div>
+          </section>
         </div>
 
       </div>

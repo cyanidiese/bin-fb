@@ -79,7 +79,13 @@
       "pid": null
     }
   },
-  "disabled": {},
+  "disabled": {
+    "WLDUSDT": {
+      "reason": "manual",
+      "disabled_at": "2026-06-02T00:00:00.000Z",
+      "prev_weight": 1
+    }
+  },
   "disabled_ranks": {},
   "paused": {},
   "weights": {
@@ -88,7 +94,7 @@
     "REZUSDT": 0,
     "DOGEUSDT": 1,
     "1000PEPEUSDT": 1,
-    "WLDUSDT": 1,
+    "WLDUSDT": 0,
     "MEMEUSDT": 1,
     "AVAXUSDT": 1,
     "ETHFIUSDT": 0,

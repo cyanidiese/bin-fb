@@ -153,7 +153,7 @@ export default function SwingPointsChart({ klines, points }: Props) {
   }
 
   const swingPointsDataset = {
-    type: 'scatter' as const,
+    type: 'line' as const,
     label: 'Swing Points',
     data: chartData.dots,
     borderColor: 'transparent',

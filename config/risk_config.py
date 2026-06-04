@@ -70,6 +70,12 @@ DEFAULT_CONFIG: dict = {
     "max_loss_tp_ratio": 0.0,
     # Symbol → preset name. When set, bypasses virtual tracker scoring for that symbol.
     "locked_presets": {},
+    # Backtest realism: scale seeded USD scores to match live leverage so Tier-0 rankings
+    # are comparable with live PnL. Set to actual mean leverage once code is deployed.
+    "backtest_seed_leverage_factor": 1.0,
+    # Backtest realism: adverse fill slippage % applied to entry price in backtester.
+    # 0.0 = exact fill (current behaviour). Set to 0.05 for typical liquid-pair fill cost.
+    "backtest_entry_slippage_pct": 0.0,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

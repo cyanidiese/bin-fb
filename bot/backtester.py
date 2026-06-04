@@ -183,6 +183,9 @@ class Backtester:
         max_loss_per_symbol: dict = {}
         max_loss_tp_ratio = 0.0
         max_notional = 500.0
+        _cfg: dict = {}
+        _global_min_sl_pct = 0.0
+        _slippage_pct = 0.0
         if self._initial_balance > 0 and self._risk_config_path is not None:
             from config.risk_config import load_risk_config
             _cfg = load_risk_config(self._risk_config_path)
@@ -191,6 +194,8 @@ class Backtester:
             max_loss_per_symbol = _cfg.get("max_loss_usdt_per_symbol", {})
             max_loss_tp_ratio = _cfg.get("max_loss_tp_ratio", 0.0)
             max_notional = _cfg.get("max_order_notional_usdt", 500.0)
+            _global_min_sl_pct = float(_cfg.get("global_min_sl_pct", 0.0))
+            _slippage_pct = float(_cfg.get("backtest_entry_slippage_pct", 0.0))
         result.balance_start = balance
         drawdown_triggered = False
 
@@ -309,6 +314,15 @@ class Backtester:
                     raw_tp = rec.getTarget()
                     sl = rec.getStop()
 
+                    # Adverse fill slippage: entry price moves against us (BUY fills higher,
+                    # SELL fills lower). Modelled after candle-close signal evaluation so
+                    # SL/TP distances use the realistic fill price, not the exact close.
+                    if _slippage_pct > 0:
+                        if side == 'BUY':
+                            entry_price = close_price * (1.0 + _slippage_pct / 100.0)
+                        else:
+                            entry_price = close_price * (1.0 - _slippage_pct / 100.0)
+
                     # Cooldown gate
                     if settings.loss_streak_max > 0:
                         if i < global_blocked_until or i < blocked_until.get(side, 0):
@@ -338,8 +352,18 @@ class Backtester:
 
                     if settings.max_profit_pct > 0 and profit_dist_pct > settings.max_profit_pct:
                         continue
-                    if settings.min_sl_pct > 0 and sl_dist_pct < settings.min_sl_pct:
-                        continue
+                    # SL floor: widen any SL below the effective floor (mirrors live bot).
+                    # The floor is the higher of the preset's own min_sl_pct and the global floor.
+                    _effective_min_sl = max(
+                        settings.min_sl_pct if settings.min_sl_pct > 0 else 0.0,
+                        _global_min_sl_pct,
+                    )
+                    if _effective_min_sl > 0 and sl_dist_pct < _effective_min_sl:
+                        if side == 'BUY':
+                            sl = entry_price * (1.0 - _effective_min_sl / 100.0)
+                        else:
+                            sl = entry_price * (1.0 + _effective_min_sl / 1.5 / 100.0)
+                        sl_dist_pct = _effective_min_sl
                     if settings.max_sl_pct > 0 and sl_dist_pct > settings.max_sl_pct:
                         continue
                     if settings.min_sl_atr_mult > 0 and settings.atr_lookback > 0:
@@ -361,7 +385,7 @@ class Backtester:
                             else:
                                 sl = entry_price + required_loss_dist
                                 new_sl_pct = required_loss_dist / entry_price * 100 * 1.5
-                            if settings.min_sl_pct > 0 and new_sl_pct < settings.min_sl_pct:
+                            if _effective_min_sl > 0 and new_sl_pct < _effective_min_sl:
                                 continue
                             loss_dist = required_loss_dist
                         else:

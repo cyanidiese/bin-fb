@@ -251,8 +251,19 @@ class VirtualOrderSimulator:
         min_notional: float,
         analyzer: 'Analyzer',
     ) -> None:
+        # Load config before any filter — global_min_sl_pct and per-trade caps must be
+        # available during signal evaluation, not only during sizing (original position was line ~361).
+        _risk_cfg = load_risk_config()
+
         try:
             preset_settings = dataclasses.replace(base_settings, **overrides)
+            # Mirror live _try_place_order: apply per_symbol_settings on top of preset overrides
+            # so virtual and real orders evaluate the same signal population.
+            _per_sym = _risk_cfg.get("per_symbol_settings", {}).get(symbol, {})
+            if _per_sym:
+                preset_settings = dataclasses.replace(preset_settings, **{
+                    k: v for k, v in _per_sym.items() if hasattr(preset_settings, k)
+                })
             engine = RecommendationEngine(preset_settings)
             rec = engine.generate(analyzer.get_trend(), analyzer.get_current_price())
         except Exception as exc:
@@ -291,12 +302,19 @@ class VirtualOrderSimulator:
 
         if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
             return
-        if preset_settings.min_sl_pct > 0 and sl_dist_pct < preset_settings.min_sl_pct:
+        # SL floor: widen to the higher of the preset's own floor and the global floor
+        # (mirrors _try_place_order so virtual and real orders evaluate the same signals).
+        _global_min_sl_pct = float(_risk_cfg.get("global_min_sl_pct", 0.0))
+        _effective_min_sl = max(
+            preset_settings.min_sl_pct if preset_settings.min_sl_pct > 0 else 0.0,
+            _global_min_sl_pct,
+        )
+        if _effective_min_sl > 0 and sl_dist_pct < _effective_min_sl:
             if side == 'BUY':
-                sl = entry * (1.0 - preset_settings.min_sl_pct / 100.0)
+                sl = entry * (1.0 - _effective_min_sl / 100.0)
             else:
-                sl = entry * (1.0 + preset_settings.min_sl_pct / 1.5 / 100.0)
-            sl_dist_pct = preset_settings.min_sl_pct
+                sl = entry * (1.0 + _effective_min_sl / 1.5 / 100.0)
+            sl_dist_pct = _effective_min_sl
         if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
             return
 
@@ -321,7 +339,7 @@ class VirtualOrderSimulator:
                 else:
                     sl = entry + _req_loss
                 _new_sl_pct = _req_loss / entry * 100 * (1.5 if side == 'SELL' else 1.0)
-                if preset_settings.min_sl_pct > 0 and _new_sl_pct < preset_settings.min_sl_pct:
+                if _effective_min_sl > 0 and _new_sl_pct < _effective_min_sl:
                     return
             else:
                 return
@@ -356,9 +374,6 @@ class VirtualOrderSimulator:
             alloc = self._get_bgf_allocation(rank_bal, fraction)
         else:
             alloc = self._get_allocation(symbol, rank_bal) if self._get_allocation else rank_bal * 0.05
-
-        # Load risk config once — used for trade cap, notional cap, and loss cap below.
-        _risk_cfg = load_risk_config()
 
         # Cap per-trade allocation to max_trade_pct% of the rank pool's deployable budget.
         # Mirrors the same cap applied to real orders so virtual PnL stays comparable.

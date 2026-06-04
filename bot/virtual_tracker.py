@@ -73,15 +73,18 @@ class VirtualTracker:
             return
         try:
             data = json.loads(backtest_path.read_text())
+            _leverage_factor = float(load_risk_config().get("backtest_seed_leverage_factor", 1.0))
             for name, preset_data in data.get("presets", {}).items():
                 balance_start = preset_data.get("balance_start", 1000.0)
                 # Use net total_profit_pct (matches Backtest page Profit% column).
                 # Falls back to summing all trade profits if preset-level field is absent.
+                # Scale by backtest_seed_leverage_factor so seeded USD is comparable to
+                # live PnL accumulated at actual leverage (default 1.0 = no change).
                 if "total_profit_pct" in preset_data:
-                    seeded = preset_data["total_profit_pct"] / 100.0 * balance_start
+                    seeded = preset_data["total_profit_pct"] / 100.0 * balance_start * _leverage_factor
                 else:
                     trades = preset_data.get("trades", [])
-                    seeded = sum(t.get("profit_pct", 0.0) / 100.0 * balance_start for t in trades)
+                    seeded = sum(t.get("profit_pct", 0.0) / 100.0 * balance_start for t in trades) * _leverage_factor
                 # Preserve live-accumulated data across restarts — only refresh the
                 # seeded fallback score so rankings improve as live trades accumulate.
                 existing = self._efficiency.setdefault(symbol, {}).get(name, {})

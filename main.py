@@ -419,6 +419,7 @@ async def run() -> None:
     async def _try_place_order(
         symbol: str, best, settings, balance: float, candle_ts: int,
         trade_cap: float = 0.0,
+        bypass_pct_cap: bool = False,
     ) -> float:
         # Prevent placing more than one real order per symbol per 15m candle batch.
         # Multiple symbols closing at the same timestamp trigger multiple loop runs;
@@ -723,8 +724,9 @@ async def run() -> None:
 
         # Hard cap: no single trade may exceed max_trade_pct% of the total deployable budget.
         # Prevents one symbol from consuming all capital when its BGF fraction is temporarily 100%.
+        # bypass_pct_cap=True skips this for TATS single-signal mode (full budget is intentional).
         _max_trade_pct = float(risk_cfg.get("max_trade_pct", 0.0))
-        if _max_trade_pct > 0:
+        if _max_trade_pct > 0 and not bypass_pct_cap:
             _deployable_total = risk_manager.get_deployable_budget()
             _max_alloc = _deployable_total * _max_trade_pct / 100.0
             if trade_margin > _max_alloc > margin:
@@ -980,6 +982,10 @@ async def run() -> None:
                 continue
             if order_executor.get_state(sym) != OrderState.IDLE:
                 continue
+            if _active_scenario_name == "tats":
+                _tats_locked = risk_cfg.get("locked_presets", {}).get(sym)
+                if not virtual_tracker.is_tats_eligible(sym, locked_preset=_tats_locked):
+                    continue
             best_sym = (
                 best_for_this if sym == symbol
                 else (analyzers[sym].get_best_recommendation() if sym in analyzers else None)
@@ -1005,6 +1011,40 @@ async def run() -> None:
                     break
                 used_w = await _try_place_order(sym, best, sym_s, risk_manager.get_balance(), candle_ts)
                 deployed_w += used_w
+        elif _active_scenario_name == "tats":
+            # TATS: single eligible signal → full deployable (max_trade_pct bypassed);
+            # multiple eligible signals → BGF proportional allocation.
+            deployable = risk_manager.get_deployable_budget()
+            n = len(candidates)
+            if n == 0:
+                virtual_order_simulator.set_candle_alloc_context(False, {})
+            elif n == 1:
+                sym, best, sym_s, _ = candidates[0]
+                virtual_order_simulator.set_candle_alloc_context(False, {sym: 1.0})
+                await _try_place_order(sym, best, sym_s, deployable, candle_ts,
+                                       trade_cap=deployable, bypass_pct_cap=True)
+            else:
+                total_score = sum(max(0.0, s) for _, _, _, s in candidates)
+                bgf_fractions = {
+                    sym: (max(0.0, s) / total_score if total_score > 0 else 1.0 / n)
+                    for sym, _, _, s in candidates
+                }
+                virtual_order_simulator.set_candle_alloc_context(False, bgf_fractions)
+                deployed = 0.0
+                for sym, best, sym_s, score in candidates:
+                    remaining = max(0.0, deployable - deployed)
+                    if remaining <= 0:
+                        break
+                    sym_cap = (
+                        deployable * max(0.0, score) / total_score
+                        if total_score > 0
+                        else deployable / n
+                    )
+                    if sym_cap <= 0:
+                        continue
+                    used = await _try_place_order(sym, best, sym_s, remaining, candle_ts,
+                                                  trade_cap=sym_cap)
+                    deployed += used
         else:
             # BestGetsFirst: proportional caps derived from efficiency scores (disabled already excluded)
             bgf_top_n = int(risk_cfg.get("bgf_top_n", 0))

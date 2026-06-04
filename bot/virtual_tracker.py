@@ -201,6 +201,55 @@ class VirtualTracker:
             recent_trades=recent_trades,
         )
 
+    def is_tats_eligible(self, symbol: str, locked_preset: str | None = None) -> bool:
+        """True if the symbol may place real orders under the TATS scenario.
+
+        Tier-0 (seed phase, trade_count < min_trades_for_ranking): always eligible — BGF fallback.
+        Tier-1: eligible only if recent-window score >= tats_min_profit_usdt (Part A) AND
+                the second half of the recent window has not dropped >tats_degradation_max_drop_pct%
+                relative to the first half (Part B).
+
+        For locked symbols, evaluates the locked preset's stats rather than the best-overall,
+        because only the locked preset actually trades.
+        """
+        cfg = load_risk_config()
+        min_trades = self._get_min_trades(symbol)
+        window_size = int(cfg.get("ranking_window_size", 10))
+        min_profit = float(cfg.get("tats_min_profit_usdt", 0.0))
+        max_drop_pct = float(cfg.get("tats_degradation_max_drop_pct", 50.0))
+
+        presets = self._efficiency.get(symbol, {})
+        if not presets:
+            return True  # no data → BGF fallback
+
+        if locked_preset and locked_preset in presets:
+            check_stats = presets[locked_preset]
+            tier, score = _score(check_stats, min_trades, window_size)
+        else:
+            best_name = max(presets, key=lambda n: _score(presets[n], min_trades, window_size))
+            check_stats = presets[best_name]
+            tier, score = _score(check_stats, min_trades, window_size)
+
+        if tier == 0:
+            return True  # seed phase → BGF fallback
+
+        # Part A: recent window sum must be profitable enough
+        if score < min_profit:
+            return False
+
+        # Part B: degradation check — second half must not drop >max_drop_pct% vs first half
+        if max_drop_pct > 0:
+            recent = check_stats.get("recent_trades", [])[-window_size:]
+            if len(recent) >= 4:
+                mid = len(recent) // 2
+                first_half = sum(recent[:mid])
+                second_half = sum(recent[mid:])
+                allowed_floor = first_half - abs(first_half) * max_drop_pct / 100.0
+                if second_half < allowed_floor:
+                    return False
+
+        return True
+
     def is_virtual_only(self, symbol: str) -> bool:
         """Return True if the symbol's best preset score is below virtual_only_floor.
         Only activates once the best preset has enough live trades (>= min_trades_for_ranking).

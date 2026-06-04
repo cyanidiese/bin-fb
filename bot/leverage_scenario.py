@@ -223,6 +223,42 @@ class BestGetsFirstScenario:
         return 0
 
 
+class TATSScenario:
+    """Took All The Shoes: profitable symbols only; single eligible signal gets full budget.
+
+    Profitability gate enforced in main.py via VirtualTracker.is_tats_eligible().
+    Single eligible signal at candle close → full deployable budget (max_trade_pct bypassed).
+    Multiple eligible signals → BGF-style proportional allocation.
+    Leverage formula: same as BestGetsFirst (score-derived).
+    """
+    name = "tats"
+    uses_weight_allocation = False
+
+    def get_leverage(
+        self, symbol: str, score: float, base: int, max_policy: int, bracket_max: int
+    ) -> int:
+        raw = base + math.floor(score * (max_policy - base))
+        return min(max(base, raw), max_policy, bracket_max)
+
+    def record_closed(self, symbol: str, leverage: int) -> None:
+        pass
+
+    def add_symbol(self, symbol: str) -> None:
+        pass
+
+    def remove_symbol(self, symbol: str) -> None:
+        pass
+
+    def reset_for_mode(self, new_mode: str, data_path: Path) -> None:
+        pass
+
+    def get_global_level(self) -> int:
+        return 0
+
+    def get_symbol_level(self, symbol: str) -> int:
+        return 0
+
+
 def create_scenario(
     name: str,
     mode: str,
@@ -237,6 +273,8 @@ def create_scenario(
         return FirstHasMostScenario()
     if name == "best_gets_first":
         return BestGetsFirstScenario()
+    if name == "tats":
+        return TATSScenario()
     if name != "default":
         logger.warning(f"Unknown scenario '{name}', falling back to 'default'")
     return DefaultScenario(mode, active_symbols, data_path, max_level)

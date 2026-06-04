@@ -76,6 +76,12 @@ DEFAULT_CONFIG: dict = {
     # Backtest realism: adverse fill slippage % applied to entry price in backtester.
     # 0.0 = exact fill (current behaviour). Set to 0.05 for typical liquid-pair fill cost.
     "backtest_entry_slippage_pct": 0.0,
+    # TATS scenario — profitability gate config.
+    # tats_min_profit_usdt: min recent-window sum a Tier-1 symbol must have to place real orders.
+    # tats_degradation_max_drop_pct: max % decline from first-half to second-half of recent window
+    #   before the symbol is treated as degrading. 0 disables the degradation check.
+    "tats_min_profit_usdt": 0.0,
+    "tats_degradation_max_drop_pct": 50.0,
 }
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"

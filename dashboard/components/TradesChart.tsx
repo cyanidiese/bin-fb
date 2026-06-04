@@ -14,6 +14,7 @@ import {
 } from 'chart.js'
 import 'chartjs-adapter-date-fns'
 import type { RealOrder, VirtualOrder } from '@/lib/types'
+import { formatPrice } from '@/lib/formatPrice'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend)
 
@@ -198,7 +199,7 @@ export default function TradesChart({ klines, realOrders, virtualOrders = [] }: 
             titleColor: '#f3f4f6',
             bodyColor: '#d1d5db',
             callbacks: {
-              label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              label: ctx => ` ${ctx.dataset.label}: ${formatPrice(ctx.parsed.y)}`,
             },
           },
         },

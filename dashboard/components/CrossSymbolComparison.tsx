@@ -45,7 +45,7 @@ function activeTier(config: RiskConfig, balance: number) {
   return sorted.reduce((active, t) => balance >= t.min_balance_usdt ? t : active, sorted[0])
 }
 
-type ScenarioId = 'default' | 'allocation' | 'first_has_most' | 'best_gets_first'
+type ScenarioId = 'default' | 'allocation' | 'first_has_most' | 'best_gets_first' | 'tats'
 
 function computeSizingDefault(
   symbol: string,
@@ -237,6 +237,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
             out[sym] = computeSizingFirstHasMost(sym, totalBalance, riskConfig, riskState, loadedSymbols)
             break
           case 'best_gets_first':
+          case 'tats':
             out[sym] = computeSizingBestGetsFirst(sym, totalBalance, riskConfig, riskState, loadedSymbols, riskConfig.bgf_top_n ?? 0)
             break
           default:
@@ -457,6 +458,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
             ['allocation',      'Allocation'],
             ['first_has_most',  'First Has Most'],
             ['best_gets_first', 'Best Gets First'],
+            ['tats',            'TATS'],
           ] as [ScenarioId, string][]).map(([id, label]) => (
             <button
               key={id}
@@ -488,7 +490,7 @@ export default function CrossSymbolComparison({ symbols, dataBySymbol, riskConfi
           {loadedSymbols.map(sym => {
             const { margin, lev } = sizingBySymbol[sym]
             const score = riskState?.per_symbol[sym]?.performance_score
-            const excluded = scenarioTab === 'best_gets_first' && margin === 0
+            const excluded = (scenarioTab === 'best_gets_first' || scenarioTab === 'tats') && margin === 0
             return (
               <span key={sym} title={score != null ? `Profit score: ${score.toFixed(2)}%` : 'No live score — using base leverage'}>
                 <span className={excluded ? 'text-gray-600' : 'text-indigo-400'}>{sym}</span>

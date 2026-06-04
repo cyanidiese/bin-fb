@@ -30,6 +30,7 @@ export default function ScenarioSection({ config, patchConfig }: Props) {
             <option value="allocation">Allocation — per-symbol independent, weight-based allocation</option>
             <option value="first_has_most">First Has the Most — score-based leverage, weight-based allocation</option>
             <option value="best_gets_first">Best Gets First — score-based leverage, priority allocation</option>
+            <option value="tats">TATS — profitability gate + single-signal full budget</option>
           </select>
         </div>
         <p className="text-[10px] text-gray-500 font-mono">
@@ -39,6 +40,8 @@ export default function ScenarioSection({ config, patchConfig }: Props) {
             ? 'Leverage: base + floor(score × (max − base)), instant. Allocation: weight-based split.'
             : scenario === 'best_gets_first'
             ? 'Leverage: base + floor(score × (max − base)), instant. Allocation: best-scoring symbol gets the full deployable budget; each next symbol gets the remainder.'
+            : scenario === 'tats'
+            ? 'Leverage: score-derived (same as BGF). Gate: only non-degrading profitable presets trade real. 1 eligible signal → full deployable budget; 2+ → BGF proportional.'
             : 'Leverage: all symbols must complete level N before any advances to N+1. Allocation: weight-based split.'}
         </p>
       </div>

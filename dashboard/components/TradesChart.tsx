@@ -198,7 +198,7 @@ export default function TradesChart({ klines, realOrders, virtualOrders = [] }: 
             titleColor: '#f3f4f6',
             bodyColor: '#d1d5db',
             callbacks: {
-              label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString()}`,
+              label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
             },
           },
         },

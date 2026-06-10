@@ -57,6 +57,10 @@ class PresetOverrides(TypedDict, total=False):
     trail_min_distance_pct: float
     # Range position gate for continuation signals (1.0 = disabled)
     range_position_max: float
+    # Minimum swing points (highs and lows each) for projection (default 3 = current behavior)
+    min_swing_points_projection: int
+    # When True: allow continuation signals even when parent trend opposes (default False)
+    ignore_parent_alignment: bool
 
 
 # ── Locked presets ─────────────────────────────────────────────────────────────
@@ -88,6 +92,8 @@ LOCKED_PRESETS: dict[str, PresetOverrides] = {
         'tp_multiplier': 0.95,
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
         'range_position_max': 0.65,
     },
     'trail_20_from_30_cooldown': {
@@ -109,6 +115,8 @@ PRESETS: dict[str, PresetOverrides] = {
     'default': {
         'max_losing_pct': 25.0,
         'range_position_max': 0.30,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Entry zone variants ───────────────────────────────────────────────────
@@ -118,12 +126,16 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_loss_ratio': 1.2,
         'max_losing_pct': 25.0,
         'range_position_max': 0.30,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'broad_zone': {
         'proximity_zone_pct': 30.0,
         'min_profit_loss_ratio': 1.5,
         'max_losing_pct': 25.0,
         'range_position_max': 0.30,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── RR variants ───────────────────────────────────────────────────────────
@@ -132,6 +144,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_pct': 0.3,
         'max_losing_pct': 25.0,
         'range_position_max': 0.30,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Structure sensitivity ─────────────────────────────────────────────────
@@ -142,22 +156,30 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_pct': 0.3,
         'max_losing_pct': 25.0,
         'range_position_max': 0.30,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Partial take — standalone ─────────────────────────────────────────────
     'partial_50': {
         'partial_take_pct': 0.50,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'partial_60': {
         'partial_take_pct': 0.60,
         'max_losing_pct': 70.0,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'partial_70': {
         'partial_take_pct': 0.70,
         'max_losing_pct': 70.0,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Partial take — combined presets ───────────────────────────────────────
@@ -167,18 +189,24 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_loss_ratio': 2.0,
         'max_losing_pct': 70.0,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'partial_high_rr': {
         'partial_take_pct': 0.60,
         'min_profit_loss_ratio': 2.5,
         'min_profit_pct': 1.0,
         'range_position_max': 0.65,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'partial_conservative': {
         'partial_take_pct': 0.50,
         'min_profit_loss_ratio': 2.0,
         'min_swing_points': 4,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Old bot arm threshold (15% of TP) ─────────────────────────────────────
@@ -188,15 +216,19 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 25.0,
         'max_losing_candles': 2,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_15': {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.15,
-        'duplicate_skip_candles': 3,
+        'duplicate_skip_candles': 4,
         'duplicate_skip_pct': 3.0,
         'max_losing_pct': 70.0,
         'max_losing_candles': 5,
         'range_position_max': 0.80,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     # Same as trail_15_from_15 but skip window reduced to 1 candle.
     # Used for symbols (e.g. DOGEUSDT) where the 3-candle skip blocks ~48% of signals.
@@ -208,12 +240,16 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 70.0,
         'max_losing_candles': 5,
         'range_position_max': 0.80,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_25_from_15': {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.25,
         'max_losing_pct': 40.0,
         'range_position_max': 0.80,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Old layer configs (from btcbt/db/trends.db) ───────────────────────────
@@ -223,6 +259,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.20,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'db_layer_1': {
         'min_profit_loss_ratio': 3.0,
@@ -231,6 +269,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'db_layer_3': {
         'min_profit_loss_ratio': 4.0,
@@ -240,6 +280,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 40.0,
         'max_losing_candles': 3,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── RR=4x standalone ─────────────────────────────────────────────────────
@@ -249,6 +291,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.20,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'rr_3x_trail_15': {
         'min_profit_loss_ratio': 3.0,
@@ -256,6 +300,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── SL distance filters ───────────────────────────────────────────────────
@@ -266,6 +312,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.20,
         'max_losing_pct': 40.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     'trail_20_from_30_sl_filter': {
@@ -274,6 +322,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_sl_pct': 0.05,
         'max_sl_pct': 1.50,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_20_from_30_full': {
         'partial_take_pct': 0.30,
@@ -283,6 +333,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_sl_pct': 0.05,
         'max_sl_pct': 1.50,
         'range_position_max': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_30': {
         'partial_take_pct': 0.30,
@@ -290,6 +342,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 25.0,
         'max_losing_candles': 5,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_20_from_30_cooldown': {
         'partial_take_pct': 0.30,
@@ -305,6 +359,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_30_cooldown': {
         'partial_take_pct': 0.30,
@@ -344,6 +400,10 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
     },
     # ── Full old-bot clone ────────────────────────────────────────────────────
     'db_full_clone': {
@@ -356,6 +416,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_sl_pct': 1.50,
         'max_losing_candles': 3,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── SL tightening to meet RR ──────────────────────────────────────────────
@@ -368,6 +430,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'duplicate_skip_pct': 3.0,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'sl_adjust_rr_tp95': {
         'sl_adjust_to_rr': True,
@@ -375,6 +439,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'tp_multiplier': 0.95,
         'partial_take_pct': 0.15,
         'trailing_stop_pct': 0.20,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
         'range_position_max': 0.65,
     },
 
@@ -384,6 +450,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 40.0,
         'max_losing_candles': 2,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'max_profit_2pct_trail': {
         'max_profit_pct': 2.0,
@@ -391,6 +459,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.20,
         'min_profit_loss_ratio': 4.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'max_profit_3pct_trail': {
         'max_profit_pct': 3.0,
@@ -399,6 +469,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'min_profit_loss_ratio': 4.0,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Round 5: systematic exploration on proven best base ───────────────────
@@ -524,11 +596,15 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
         'max_profit_pct': 3.0,
         'range_position_max': 0.80,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'r7_trail20_maxp3': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
         'max_profit_pct': 3.0,
         'range_position_max': 0.80,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'r7_full_clone_cooldown': {
         'min_profit_loss_ratio': 4.0, 'proximity_zone_pct': 20.0,
@@ -567,6 +643,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_profit_pct': 3.0,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'full_clone_sl_adjust': {
         'min_profit_loss_ratio': 4.0,
@@ -579,6 +657,8 @@ PRESETS: dict[str, PresetOverrides] = {
         'sl_adjust_to_rr': True,
         'max_losing_pct': 25.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── lower_high_sell: SELL at projected lower high before confirmation ─────
@@ -587,6 +667,11 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'min_sl_pct': 0.40,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'lh_sell_prox15_trail15': {
         'lower_high_sell': True,
@@ -594,6 +679,11 @@ PRESETS: dict[str, PresetOverrides] = {
         'partial_take_pct': 0.30,
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
+        'min_sl_pct': 0.40,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
     'hl_buy_trail15': {
         'higher_low_buy': True,
@@ -602,6 +692,10 @@ PRESETS: dict[str, PresetOverrides] = {
         'tp_multiplier': 0.95,
         'min_sl_pct': 0.50,
         'max_losing_pct': 70.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
     },
     'hl_buy_prox15_trail15': {
         'higher_low_buy': True,
@@ -610,17 +704,63 @@ PRESETS: dict[str, PresetOverrides] = {
         'trailing_stop_pct': 0.15,
         'tp_multiplier': 0.95,
         'min_sl_pct': 0.50,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
     },
     'pre_confirm_trail15': {
         'lower_high_sell': True, 'higher_low_buy': True,
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
         'min_sl_pct': 0.40,
         'max_losing_pct': 70.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
     },
     'pre_confirm_prox15_trail15': {
         'lower_high_sell': True, 'higher_low_buy': True,
         'proximity_zone_pct': 15.0,
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15, 'tp_multiplier': 0.95,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
+    },
+
+    # ── Oscillating-zone presets: designed for symbols that oscillate after a peak ──
+    # oscillating_zone unlocks all four blockers that silence signals in a post-peak
+    # descending L2 / pruned L1 state:
+    #   1. ignore_parent_alignment=True   — allows BUY continuations when L2 is DESCENDING
+    #   2. min_swing_points_projection=2  — allows projection with only 2 L1 swings per side
+    #   3. min_profit_pct=0.2             — accepts low-amplitude projections from pruned history
+    #   4. range_position_max=1.0         — disables the range gate (distorted by pruning)
+    # WARNING: min_profit_pct=0.2 is fee-sensitive at live trading; verify broker fees.
+    'oscillating_zone': {
+        'ignore_parent_alignment': True,
+        'min_swing_points_projection': 2,
+        'min_profit_pct': 0.2,
+        'range_position_max': 1.0,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+        'min_sl_pct': 0.40,
+        'duplicate_skip_candles': 2,
+        'duplicate_skip_pct': 3.0,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+    },
+    # Same as oscillating_zone but retains the 3-point projection minimum.
+    # Use when the symbol has enough L1 history but the parent gate needs removing.
+    'oscillating_no_parent_gate': {
+        'ignore_parent_alignment': True,
+        'range_position_max': 1.0,
+        'partial_take_pct': 0.30,
+        'trailing_stop_pct': 0.15,
+        'tp_multiplier': 0.95,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
     },
 
     # ── Round 8: targeted gap-fill additions ──────────────────────────────────
@@ -668,18 +808,21 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 25.0, 'max_losing_candles': 5,
         'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_30_act3_min1': {
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15,
         'max_losing_pct': 25.0, 'max_losing_candles': 5,
         'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_30_act5_min15': {
         'partial_take_pct': 0.30, 'trailing_stop_pct': 0.15,
         'max_losing_pct': 25.0, 'max_losing_candles': 5,
         'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
 
     # Base: trail_20_from_30_cooldown (arm=30%, trail=20%, cooldown 2/5/3/10)
@@ -712,6 +855,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 70.0, 'max_losing_candles': 5,
         'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_15_act3_min1': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
@@ -719,6 +863,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 70.0, 'max_losing_candles': 5,
         'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_15_from_15_act5_min15': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.15,
@@ -726,6 +871,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 70.0, 'max_losing_candles': 5,
         'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
 
     # Base: trail_20_from_15 (arm=15%, trail=20%, max_losing_pct=25, max_losing_candles=2)
@@ -734,18 +880,21 @@ PRESETS: dict[str, PresetOverrides] = {
         'max_losing_pct': 25.0, 'max_losing_candles': 2,
         'trail_activation_pct': 2.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_20_from_15_act3_min1': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
         'max_losing_pct': 25.0, 'max_losing_candles': 2,
         'trail_activation_pct': 3.0, 'trail_min_distance_pct': 1.0,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
     'trail_20_from_15_act5_min15': {
         'partial_take_pct': 0.15, 'trailing_stop_pct': 0.20,
         'max_losing_pct': 25.0, 'max_losing_candles': 2,
         'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
         'range_position_max': 0.10,
+        'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
     },
 }
 

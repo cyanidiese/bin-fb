@@ -392,8 +392,8 @@ async def run() -> None:
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
     _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
     # Loss-streak directional cooldown state (mirrors backtester implementation)
-    _loss_streak: dict[str, int] = {}        # "symbol:preset:side" → consecutive loss count
-    _streak_blocked: dict[str, int] = {}     # "symbol:preset:side" → candle_ts after which block expires
+    _loss_streak: dict[str, int] = {}        # "symbol:side" → consecutive loss count
+    _streak_blocked: dict[str, int] = {}     # "symbol:side" → candle_ts after which block expires
     _global_pause_until: dict[str, int] = {} # "symbol:preset" → candle_ts after which global pause expires
     _last_loss_ts: dict[str, int] = {}       # "symbol:preset:side" → candle_ts of last loss
     # Zone SL cooldown state — blocks re-entry after N consecutive SL hits at same level
@@ -434,9 +434,13 @@ async def run() -> None:
             logger.info(f"[{symbol}] Using manually locked preset: {preset_name}")
         else:
             preset_name = virtual_tracker.best_preset(symbol)
-            if virtual_tracker.is_virtual_only(symbol):
+            if _active_scenario_name != "tats" and virtual_tracker.is_virtual_only(symbol):
                 logger.info(f"[{symbol}] Virtual-only floor active — skipping real order")
                 return 0.0
+        _blocklist = risk_cfg.get("preset_blocklist", [])
+        if preset_name in _blocklist:
+            logger.info(f"[{symbol}] Preset '{preset_name}' is blocklisted — skipping real order")
+            return 0.0
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
@@ -635,18 +639,21 @@ async def run() -> None:
                         )
                         return 0.0
 
-        # Loss-streak gate — mirrors backtester directional cooldown (loss_streak_max=0 disables)
+        # Symbol-level directional streak block — always enforced regardless of current preset.
+        # Blocks are keyed by symbol:side so a preset switch never resets protection.
+        _sk = f"{symbol}:{side}"
+        if candle_ts > 0 and _streak_blocked.get(_sk, 0) >= candle_ts:
+            logger.info(
+                f"[{symbol}] Signal skipped — {side} loss streak cooldown (preset={preset_name})"
+            )
+            return 0.0
+
+        # Preset-specific guards (global pause and zone SL — only when preset opts in)
         if preset_settings.loss_streak_max > 0 and candle_ts > 0:
             _pk = f"{symbol}:{preset_name or 'default'}"
             if _global_pause_until.get(_pk, 0) >= candle_ts:
                 logger.info(
                     f"[{symbol}] Signal skipped — global pause active (preset={preset_name})"
-                )
-                return 0.0
-            _sk = f"{symbol}:{preset_name or 'default'}:{side}"
-            if _streak_blocked.get(_sk, 0) >= candle_ts:
-                logger.info(
-                    f"[{symbol}] Signal skipped — {side} loss streak cooldown (preset={preset_name})"
                 )
                 return 0.0
             if preset_settings.zone_sl_max > 0 and _zone_sl_block.get(_sk, 0) >= candle_ts:
@@ -809,8 +816,28 @@ async def run() -> None:
             return trade_margin
         return 0.0
 
+    _streak_state_path = _PROJECT_ROOT / "data" / f"streak_state_{current_mode}.json"
+
+    def _save_streak_state() -> None:
+        try:
+            tmp = _streak_state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"loss_streak": _loss_streak, "streak_blocked": _streak_blocked}))
+            tmp.replace(_streak_state_path)
+        except Exception as _e:
+            logger.warning(f"Failed to save streak state: {_e}")
+
+    def _load_streak_state() -> None:
+        try:
+            if _streak_state_path.exists():
+                data = json.loads(_streak_state_path.read_text())
+                _loss_streak.update(data.get("loss_streak", {}))
+                _streak_blocked.update(data.get("streak_blocked", {}))
+                logger.info(f"Streak state loaded: {len(_streak_blocked)} active blocks")
+        except Exception as _e:
+            logger.debug(f"Failed to load streak state: {_e}")
+
     def _update_loss_streak(c: dict, ts: int) -> None:
-        """Update per-preset directional loss streak and zone SL cooldown state after an order closes."""
+        """Update symbol-level directional loss streak and zone SL cooldown state after order closes."""
         sym = c['symbol']
         pname = c.get('preset_name', 'default')
         side = c.get('side', '')
@@ -818,38 +845,41 @@ async def run() -> None:
         sym_s = sym_settings.get(sym, first_settings)
         ps = dataclasses.replace(sym_s, **overrides)
         tf_ms = _tf_to_ms(timeframe)
-        sk = f"{sym}:{pname}:{side}"
+        # Symbol-level key — preset switch never resets the streak counter
+        sk = f"{sym}:{side}"
 
         # ── Loss streak cooldown ───────────────────────────────────────────
-        if ps.loss_streak_max > 0:
-            other_sk = f"{sym}:{pname}:{'SELL' if side == 'BUY' else 'BUY'}"
-            is_loss = c.get('result') == 'loss' or (
-                c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0
-            )
-            if is_loss:
-                cnt = _loss_streak.get(sk, 0) + 1
-                _last_loss_ts[sk] = ts
-                if cnt >= ps.loss_streak_max:
-                    _streak_blocked[sk] = ts + ps.loss_streak_cooldown_candles * tf_ms
-                    _loss_streak[sk] = 0
-                    logger.info(
-                        f"[{sym}] {side} loss streak {ps.loss_streak_max}/{ps.loss_streak_max} "
-                        f"(preset={pname}) — {side} blocked for {ps.loss_streak_cooldown_candles} candles"
-                    )
-                else:
-                    _loss_streak[sk] = cnt
-                if ps.global_pause_trigger_candles > 0:
-                    other_ts = _last_loss_ts.get(other_sk, 0)
-                    if other_ts > 0 and (ts - other_ts) <= ps.global_pause_trigger_candles * tf_ms:
-                        pk = f"{sym}:{pname}"
-                        _global_pause_until[pk] = ts + ps.global_pause_candles * tf_ms
-                        logger.info(
-                            f"[{sym}] Global pause triggered (preset={pname}) — "
-                            f"both sides lost within {ps.global_pause_trigger_candles} candles — "
-                            f"paused for {ps.global_pause_candles} candles"
-                        )
-            else:
+        # Count every real loss regardless of preset configuration so that
+        # switching presets mid-session never resets an accumulated streak.
+        # Blocking only fires when the active preset opts in via loss_streak_max.
+        other_sk = f"{sym}:{'SELL' if side == 'BUY' else 'BUY'}"
+        is_loss = c.get('result') == 'loss' or (
+            c.get('result') in ('trail', 'partial') and c.get('pnl_usdt', 0.0) < 0
+        )
+        if is_loss:
+            cnt = _loss_streak.get(sk, 0) + 1
+            _last_loss_ts[sk] = ts
+            _loss_streak[sk] = cnt
+            if ps.loss_streak_max > 0 and cnt >= ps.loss_streak_max:
+                _streak_blocked[sk] = ts + ps.loss_streak_cooldown_candles * tf_ms
                 _loss_streak[sk] = 0
+                logger.info(
+                    f"[{sym}] {side} loss streak {ps.loss_streak_max}/{ps.loss_streak_max} "
+                    f"(preset={pname}) — {side} blocked for {ps.loss_streak_cooldown_candles} candles"
+                )
+            if ps.global_pause_trigger_candles > 0:
+                other_ts = _last_loss_ts.get(other_sk, 0)
+                if other_ts > 0 and (ts - other_ts) <= ps.global_pause_trigger_candles * tf_ms:
+                    pk = f"{sym}:{pname}"
+                    _global_pause_until[pk] = ts + ps.global_pause_candles * tf_ms
+                    logger.info(
+                        f"[{sym}] Global pause triggered (preset={pname}) — "
+                        f"both sides lost within {ps.global_pause_trigger_candles} candles — "
+                        f"paused for {ps.global_pause_candles} candles"
+                    )
+        else:
+            _loss_streak[sk] = 0
+        _save_streak_state()
 
         # ── Zone SL cooldown (only on actual SL hits, not trail/partial) ──
         if ps.zone_sl_max > 0 and c.get('result') == 'loss':
@@ -900,6 +930,10 @@ async def run() -> None:
                 logger.info("Hard stop reset via dashboard signal")
             except Exception as _e:
                 logger.warning(f"Failed to process reset_hard_stop signal: {_e}")
+
+        # Sync registry from disk so dashboard changes (disable, weight edits)
+        # take effect within one candle without a bot restart.
+        symbol_registry.reload_from_disk()
 
         # Hot-reload config and switch scenario if changed
         risk_cfg = load_risk_config()
@@ -978,18 +1012,23 @@ async def run() -> None:
                 continue
             if symbol_registry.is_symbol_paused(sym):
                 continue
-            if symbol_registry.get_weight(sym) == 0.0:
+            if _active_scenario_name != "tats" and symbol_registry.get_weight(sym) == 0.0:
                 continue
             if order_executor.get_state(sym) != OrderState.IDLE:
                 continue
-            if _active_scenario_name == "tats":
-                _tats_locked = risk_cfg.get("locked_presets", {}).get(sym)
-                if not virtual_tracker.is_tats_eligible(sym, locked_preset=_tats_locked):
-                    continue
-            best_sym = (
-                best_for_this if sym == symbol
-                else (analyzers[sym].get_best_recommendation() if sym in analyzers else None)
-            )
+            # TATS: no automatic quality gates — explicit registry disable is the only control.
+            # is_tats_eligible() and is_virtual_only() are checked in non-TATS paths only.
+            _sym_az = analyzer if sym == symbol else analyzers.get(sym)
+            if _sym_az is None:
+                continue
+            best_sym = _sym_az.get_best_recommendation()
+            if best_sym is None:
+                # Base-settings engine lacks hl_buy/lh_sell flags — fall back to the symbol's
+                # best preset's own overrides so those signal types are not silently missed.
+                _bp = virtual_tracker.best_preset(sym)
+                _bp_ovr = all_presets.get(_bp or '', {})
+                if _bp_ovr:
+                    best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)
             if best_sym is None:
                 continue
             raw_score = virtual_tracker.get_efficiency_score(sym)
@@ -1020,7 +1059,7 @@ async def run() -> None:
                 virtual_order_simulator.set_candle_alloc_context(False, {})
             elif n == 1:
                 sym, best, sym_s, _ = candidates[0]
-                virtual_order_simulator.set_candle_alloc_context(False, {sym: 1.0})
+                virtual_order_simulator.set_candle_alloc_context(False, {sym: 1.0}, bypass_pct_cap=True)
                 await _try_place_order(sym, best, sym_s, deployable, candle_ts,
                                        trade_cap=deployable, bypass_pct_cap=True)
             else:
@@ -1259,6 +1298,8 @@ async def run() -> None:
     )
 
     # ── Task setup ─────────────────────────────────────────────────────── #
+
+    _load_streak_state()
 
     _poll_task = asyncio.create_task(
         mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)

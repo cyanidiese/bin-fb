@@ -58,6 +58,9 @@ DEFAULTS = {
     'range_position_max': 1.0,
     'min_swing_points_projection': 3,
     'ignore_parent_alignment': False,
+    'signal_direction': 'both',
+    'trend_regime_filter': False,
+    'trend_regime_lookback': 3,
 }
 
 
@@ -111,6 +114,9 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         range_position_max=float(p['range_position_max']),
         min_swing_points_projection=int(p['min_swing_points_projection']),
         ignore_parent_alignment=bool(p['ignore_parent_alignment']),
+        signal_direction=str(p['signal_direction']),
+        trend_regime_filter=bool(p['trend_regime_filter']),
+        trend_regime_lookback=int(p['trend_regime_lookback']),
     )
 
 

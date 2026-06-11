@@ -109,6 +109,20 @@ class Settings:
     # opposes the signal direction. The alignment penalty in precision scoring
     # still applies — this only disables the hard gate. Default False.
     ignore_parent_alignment: bool
+    # Direction gate: 'buy', 'sell', or 'both'. When set to 'buy'/'sell' the engine
+    # discards all recommendations for the opposite side before scoring. Lets the
+    # virtual tracker back-test direction-specific presets so it can auto-select
+    # the best one for the current market regime.
+    signal_direction: str
+    # When True: on every candle the engine checks whether the generating trend is
+    # in a confirmed directional regime (N consecutive lower-highs + lower-lows =
+    # 'descending'; higher-highs + higher-lows = 'ascending'). BUY signals are
+    # blocked in descending regimes; SELL signals are blocked in ascending regimes.
+    # Falls back to 'neutral' (both sides allowed) when data is insufficient.
+    trend_regime_filter: bool
+    # Number of consecutive swing highs (and lows) that must all be in the same
+    # direction before getTrendRegime() declares a regime. Default 3.
+    trend_regime_lookback: int
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -189,6 +203,9 @@ def load_settings(symbol: str | None = None) -> Settings:
         range_position_max=float(os.getenv('RANGE_POSITION_MAX', '1.0')),
         min_swing_points_projection=int(os.getenv('MIN_SWING_POINTS_PROJECTION', '3')),
         ignore_parent_alignment=os.getenv('IGNORE_PARENT_ALIGNMENT', 'false').lower() in ('1', 'true', 'yes'),
+        signal_direction=os.getenv('SIGNAL_DIRECTION', 'both').lower(),
+        trend_regime_filter=os.getenv('TREND_REGIME_FILTER', 'false').lower() in ('1', 'true', 'yes'),
+        trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
     )
 
     if symbol is not None:

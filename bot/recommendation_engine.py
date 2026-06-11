@@ -122,6 +122,23 @@ class RecommendationEngine:
             if rr < self._s.min_profit_loss_ratio:
                 continue
 
+            # Direction gate: discard signals that don't match the preset's allowed side.
+            if self._s.signal_direction != 'both':
+                allowed_side = 'BUY' if self._s.signal_direction == 'buy' else 'SELL'
+                if rec.getSide() != allowed_side:
+                    continue
+
+            # Trend regime filter: per-candle structural gate.
+            # Checks whether the generating trend shows N consecutive lower-highs +
+            # lower-lows (descending) or higher-highs + higher-lows (ascending).
+            # Blocks contra-trend signals in confirmed regimes; allows both in 'neutral'.
+            if self._s.trend_regime_filter:
+                regime = trend.getTrendRegime(self._s.trend_regime_lookback)
+                if regime == 'descending' and rec.getSide() == 'BUY':
+                    continue
+                if regime == 'ascending' and rec.getSide() == 'SELL':
+                    continue
+
             # Proposal 1: block continuation signals when parent trend explicitly opposes.
             # Reversal and structural types (e.g. RISING_ABOVE_SUPPOSED_HIGH) are exempt.
             # ignore_parent_alignment disables the hard gate (precision penalty still applies).

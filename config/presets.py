@@ -812,6 +812,103 @@ PRESETS: dict[str, PresetOverrides] = {
         'duplicate_skip_pct': 2.0,
     },
 
+    # ── Directional + regime-aware presets ────────────────────────────────────
+    #
+    # Problem: in a confirmed L2 downtrend (consecutive lower-highs + lower-lows),
+    # BUY signals at each L2 low fire and lose because the bounce to the projected
+    # lower-high is smaller than expected or price just keeps falling. Meanwhile
+    # SELL signals at each L2 high would profit. The current presets trade both
+    # sides equally, so losses cancel gains.
+    #
+    # Solution A — direction-specific presets (l2_trend_sell / l2_trend_buy):
+    #   The virtual tracker backtests both. In a downtrend it learns l2_trend_sell
+    #   outperforms and selects it. Direction filter is hard: only SELL (or only BUY)
+    #   signals ever reach scoring.
+    #
+    # Solution B — regime-aware preset (l2_regime_aware / l2_regime_aware_strict):
+    #   Each candle the engine checks if the generating trend has N consecutive
+    #   lower-highs AND lower-lows. If yes → blocks BUY signals that candle.
+    #   Same logic for ascending → blocks SELL. Falls back to both sides in neutral
+    #   markets (oscillating). This is the "pattern recognition + auto-switch" the
+    #   user requested.
+    #
+    # lower_high_sell=True / higher_low_buy=True: also capture pre-confirmation
+    # signals (DESCENDING_NEAR_LOWER_HIGH / ASCENDING_NEAR_HIGHER_LOW) that fire
+    # when price approaches the projected next swing point — earlier entry, same
+    # trend direction. Useful in fast-moving trend legs.
+
+    'l2_trend_sell': {
+        'signal_direction': 'sell',
+        'min_swing_points': 3,
+        'min_swing_points_projection': 2,
+        'ignore_parent_alignment': True,
+        'lower_high_sell': True,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.2,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+    'l2_trend_buy': {
+        'signal_direction': 'buy',
+        'min_swing_points': 3,
+        'min_swing_points_projection': 2,
+        'ignore_parent_alignment': True,
+        'higher_low_buy': True,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.2,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+    # Regime-aware: no hard direction lock — checks 3 consecutive L2 H/L structure
+    # each candle and dynamically blocks the contra-trend side.
+    # ignore_parent_alignment=True so it trades descending trends even when L3 was
+    # ascending before the regime shift (e.g. early stage of a new downtrend).
+    'l2_regime_aware': {
+        'trend_regime_filter': True,
+        'trend_regime_lookback': 3,
+        'min_swing_points': 3,
+        'min_swing_points_projection': 2,
+        'ignore_parent_alignment': True,
+        'lower_high_sell': True,
+        'higher_low_buy': True,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.2,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+    # Strict variant: requires L3 agreement in addition to regime filter.
+    # Fewer signals but higher expected precision — good for symbols with
+    # a stable macro trend (L3 stays aligned for long stretches).
+    'l2_regime_aware_strict': {
+        'trend_regime_filter': True,
+        'trend_regime_lookback': 3,
+        'min_swing_points': 3,
+        'min_swing_points_projection': 2,
+        'ignore_parent_alignment': False,
+        'lower_high_sell': True,
+        'higher_low_buy': True,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.5,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+
     # ── Round 8: targeted gap-fill additions ──────────────────────────────────
 
     # BTCUSDT: filter out micro-SL BUY entries (SL ≤ 0.3% keeps getting clipped).

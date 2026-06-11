@@ -391,6 +391,36 @@ class Trend:
     # Analysis helpers                                                     #
     # ------------------------------------------------------------------ #
 
+    def getTrendRegime(self, lookback: int = 3) -> str:
+        """
+        Returns 'ascending', 'descending', or 'neutral' based on the last
+        `lookback` confirmed swing highs and lows.
+
+        'descending' = all of the last `lookback` highs are lower than the
+                       preceding one AND all lows are lower than the preceding one.
+        'ascending'  = same logic but all higher.
+        'neutral'    = mixed pattern or insufficient data.
+
+        Requires at least `lookback` confirmed highs AND `lookback` lows; returns
+        'neutral' when data is insufficient so callers can safely open both sides.
+        """
+        if len(self._highs) < lookback or len(self._lows) < lookback:
+            return 'neutral'
+
+        recent_highs = [p.getHighValue() for p in self._highs[-lookback:]]
+        recent_lows = [p.getLowValue() for p in self._lows[-lookback:]]
+
+        highs_desc = all(recent_highs[i] > recent_highs[i + 1] for i in range(len(recent_highs) - 1))
+        lows_desc = all(recent_lows[i] > recent_lows[i + 1] for i in range(len(recent_lows) - 1))
+        highs_asc = all(recent_highs[i] < recent_highs[i + 1] for i in range(len(recent_highs) - 1))
+        lows_asc = all(recent_lows[i] < recent_lows[i + 1] for i in range(len(recent_lows) - 1))
+
+        if highs_desc and lows_desc:
+            return 'descending'
+        if highs_asc and lows_asc:
+            return 'ascending'
+        return 'neutral'
+
     def getPointsDifferences(self, points: List[Point], is_high: bool) -> List[float]:
         diffs = []
         for i in range(len(points) - 1):

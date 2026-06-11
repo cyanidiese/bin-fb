@@ -109,11 +109,23 @@ class VirtualTracker:
         hysteresis_pct = float(cfg.get("preset_hysteresis_pct", 10.0)) / 100.0
         cooldown_trades = int(cfg.get("preset_cooldown_trades", 5))
 
-        # Unconstrained best by score
-        best_name = max(symbol_data, key=lambda n: _score(symbol_data[n], min_t, window_size))
-        candidate = best_name if _score(symbol_data[best_name], min_t, window_size)[1] >= 0 else None
+        # Exclude blocklisted presets from selection so the best eligible preset
+        # is returned rather than leaving the symbol deadlocked on a blocked winner.
+        _blocklist = set(cfg.get("preset_blocklist", []))
+        eligible_data = {n: v for n, v in symbol_data.items() if n not in _blocklist}
+        if not eligible_data:
+            self._last_best[symbol] = None
+            return None
+
+        # Best by score among eligible presets
+        best_name = max(eligible_data, key=lambda n: _score(eligible_data[n], min_t, window_size))
+        candidate = best_name if _score(eligible_data[best_name], min_t, window_size)[1] >= 0 else None
 
         prev = self._last_best.get(symbol, _SENTINEL)
+        # If the previously-remembered best is now blocklisted, treat it as absent
+        # so hysteresis/cooldown don't lock us into an ineligible preset.
+        if prev is not _SENTINEL and prev is not None and prev in _blocklist:
+            prev = _SENTINEL
 
         if prev is not _SENTINEL and prev != candidate and prev is not None and candidate is not None:
             prev_stats = symbol_data.get(prev, {})

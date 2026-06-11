@@ -1040,6 +1040,8 @@ async def run() -> None:
             candidates.append((sym, best_sym, sym_settings.get(sym, settings), raw_score))
 
         candidates.sort(key=lambda x: x[3], reverse=True)
+        if _active_scenario_name == "tats":
+            candidates = [c for c in candidates if c[3] > 0.0]
         if scenario.uses_weight_allocation:
             virtual_order_simulator.set_candle_alloc_context(True, {})
             deployable = risk_manager.get_deployable_budget()

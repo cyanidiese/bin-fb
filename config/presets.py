@@ -763,6 +763,55 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
     },
 
+    # ── L2 Break-of-Structure entry presets ───────────────────────────────────
+    #
+    # Strategy: enter at the confirmed L2 swing low/high, not before it.
+    #
+    # How it works:
+    #   - When L1 price crosses the descending BoS level (confirming an L2 low),
+    #     `getRecommendation()` at L2 fires RISING_BELOW_LAST_HIGH with:
+    #       entry = current price (just above L1 BoS level)
+    #       TP    = last confirmed L2 high  (getSupposedNextPoints(min_pts=1) anchors to last_high)
+    #       SL    = L1 BoS level            (smaller_trend.getBreakOfStructure())
+    #   - min_swing_points=2 allows L2 with just 1 high + 1 low (≥2 total)
+    #   - min_swing_points_projection=1 anchors projection to last H/L (avg_diff=0)
+    #   - Same logic fires LOWERING_ABOVE_LAST_LOW for the SELL side (descending BoS)
+    #
+    # l2_bos_entry: ignore parent trend (L3) — trades any L2 BoS regardless of macro.
+    # l2_bos_trend: requires L3 to agree — conservative, higher quality but fewer signals.
+    'l2_bos_entry': {
+        'min_swing_points': 2,
+        'min_swing_points_projection': 1,
+        'ignore_parent_alignment': True,
+        'range_position_max': 1.0,
+        'tp_multiplier': 0.90,
+        'partial_take_pct': 0.25,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.2,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+    'l2_bos_trend': {
+        'min_swing_points': 2,
+        'min_swing_points_projection': 1,
+        'ignore_parent_alignment': False,
+        'range_position_max': 1.0,
+        'tp_multiplier': 0.90,
+        'partial_take_pct': 0.25,
+        'trailing_stop_pct': 0.15,
+        'trail_activation_pct': 2.0,
+        'trail_min_distance_pct': 1.0,
+        'min_profit_loss_ratio': 1.5,
+        'loss_streak_max': 2,
+        'loss_streak_cooldown_candles': 5,
+        'duplicate_skip_candles': 3,
+        'duplicate_skip_pct': 2.0,
+    },
+
     # ── Round 8: targeted gap-fill additions ──────────────────────────────────
 
     # BTCUSDT: filter out micro-SL BUY entries (SL ≤ 0.3% keeps getting clipped).

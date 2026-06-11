@@ -158,7 +158,7 @@ class Notifier:
 
         if not (self._token and self._chat_id):
             return
-        if not self._rate_limit_ok("trade"):
+        if not self._rate_limit_ok(f"trade:{symbol}"):
             return
         try:
             self._send_telegram(text)

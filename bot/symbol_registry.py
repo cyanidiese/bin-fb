@@ -166,6 +166,29 @@ class SymbolRegistry:
     def all_disabled(self) -> bool:
         return len(self._symbols) > 0 and all(self.is_disabled(s) for s in self._symbols)
 
+    def reload_from_disk(self) -> None:
+        """Re-read mutable external state from the registry file.
+
+        Called at the start of each candle so dashboard changes (disable, weight
+        edits) take effect within one candle without a bot restart.
+        The in-memory state the bot has written since startup is always reflected
+        in the file already (every mutating method calls _persist()), so a full
+        reload is safe and idempotent under normal operation.
+        """
+        if not self._path.exists():
+            return
+        try:
+            data = json.loads(self._path.read_text())
+        except Exception as exc:
+            logger.warning(f"SymbolRegistry.reload_from_disk: cannot read file ({exc}) — keeping current state")
+            return
+        with self._lock:
+            self._disabled = data.get('disabled', {})
+            self._weights = data.get('weights', self._weights)
+            self._paused = data.get('paused', {})
+            self._disabled_ranks = data.get('disabled_ranks', self._disabled_ranks)
+            self._leverage_overrides = {k: int(v) for k, v in data.get('leverage_overrides', {}).items()}
+
     # ── internal ────────────────────────────────────────────────────────
 
     def _load(self, seed: list[str]) -> None:

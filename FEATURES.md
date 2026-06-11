@@ -83,7 +83,7 @@ Hierarchical trend structure: L1 (finest detail, 1-3 swings) → L2 (coarser, im
 ### Recommendation Generation & Scoring
 Analyzes trend state at candle open and generates a single best trading signal (BUY or SELL) with entry, TP, SL, and a 0.0–1.0 precision score.
 
-**Files**: `bot/recommendation_engine.py`, `bot/recommendation.py`, `bot/trend.py`
+**Files**: `bot/recommendation_engine.py`, `bot/recommendation.py`, `bot/trend.py`, `bot/analyzer.py` (session 42 updates)
 **Key details**:
 
 **Signal types**:
@@ -108,6 +108,12 @@ Analyzes trend state at candle open and generates a single best trading signal (
 - `correction_weight`: bonus precision if signal follows a well-formed pullback/correction (0.0 = disabled)
 - `higher_low_buy` / `lower_high_sell`: enable pre-confirmation entry signals
 - `trailing_stop_pct`, `partial_take_pct`: order exit mechanics (see Order Execution)
+
+**Session 42 enhancement — preset-specific signal generation fallback**:
+- Base `RecommendationEngine` runs with base settings. Symbols whose best preset requires feature overrides (e.g., `higher_low_buy=True`) that differ from base may not generate signals from base engine.
+- New fallback logic: if base engine returns None and best_preset differs from base, call `get_recommendation_for_preset(preset_overrides)` to try the signal with full preset settings.
+- Only runs at candidates-gate time if base fails. `_try_place_order` re-runs the full engine with preset overrides anyway, so no double-counting.
+- Fixes: `hl_buy_trail15` and other hl_buy/lh_sell-dependent presets now generate signals live instead of being silently skipped at gate.
 
 ### Early Loss Exit (Session 29)
 Close trade early when adverse move becomes too large, reducing loss severity. Three independent thresholds. Implemented in backtester and live/virtual bot.
@@ -657,7 +663,7 @@ Bot handles SIGTERM signal (from `docker stop` or deployment scripts) by closing
 ### Notifier & Telegram Alerts
 Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencies to alert state file. Implements cooldown to avoid spam.
 
-**Files**: `bot/notifier.py`
+**Files**: `bot/notifier.py`, `bot/order_executor.py` (session 42 updates)
 **Key details**:
 - Alert levels: warning (yellow), emergency (red, re-alert every 30 min by default)
 - Logged to system log + alert state file + Telegram (if configured)
@@ -665,6 +671,9 @@ Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencie
 - Sample messages built-in for trade wins/losses/balance warnings
 - Never raises exceptions (silent failures logged)
 - Cooldowns: `emergency_repeat_interval_s`, `warning_repeat_interval_s` per config
+- **Session 42 fixes**:
+  - **Shutdown closes now notify** — `close_all_orders_at_market()` now calls `notify_trade_close()` after closing each position
+  - **Per-symbol rate limit** — Changed from shared `"trade"` key to per-symbol keys `f"trade:{symbol}"` so simultaneous closes on different symbols all send independent Telegram notifications (was: only first close notified, others suppressed by 120s cooldown)
 
 ### System Logging
 Rolling 100-entry JSON log. Atomic writes via tmp→rename. All events (orders, errors, alerts, leverage advances) logged with timestamp, level, title, body.
@@ -922,6 +931,34 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 - `bot/virtual_order_simulator.py`: tracks `_recent_sl_hit` on virtual loss close; checks in `_try_open` before entry
 - Matching logic: same side AND entry within ±pct AND sl within ±pct AND tp within ±pct AND within N candles = skip
 - **Decision visibility** (session 28): `skip_duplicate_sl` decision now logged to `bot.log` before being written to decision_log.json
+
+### TATS Scenario — "Took All The Shoes" (Sessions 41–42)
+Scenario-based capital allocation where only symbols with proven positive live performance are permitted to trade. Locked presets' efficiency scores are evaluated every candle close; symbols that fail the profitability gate are silently excluded from real order placement.
+
+**Files**: `config/risk_config.py`, `main.py` (_try_place_order), `bot/virtual_tracker.py`
+
+**Key details**:
+- **Config fields**:
+  - `scenario: string` (default "default"; "tats" enables gate)
+  - `tats_min_profit_usdt: float` (default 0.0) — locked preset score must exceed this threshold to be eligible
+  - `tats_degradation_max_drop_pct: float` (default 50.0) — max recent-loss percentage before excluding symbol
+- **Gate logic** (session 42 refined): In `_try_place_order`, before placing real order, check `is_tats_eligible(symbol)`:
+  - Explicit gates that remain active: `is_disabled()` (registry), `is_symbol_paused()`, `get_state() != IDLE`
+  - Gate removed from TATS path: weight=0 check, is_tats_eligible() performance quality gate, is_virtual_only() floor gate. These were unintended quality filters that contradicted TATS philosophy. Only explicit registry disable should exclude a symbol.
+  - If symbol has a locked preset: evaluate that preset's live efficiency score via is_tats_eligible()
+  - If score < `tats_min_profit_usdt`: skip (not eligible)
+  - If recent trades show > `tats_degradation_max_drop_pct` decline: skip (degrading)
+  - Otherwise: eligible, proceed with order
+- **Eligible vs excluded** (as of 2026-06-04):
+  - ELIGIBLE: DOGEUSDT, 1000PEPEUSDT, ETHFIUSDT, INJUSDT, TIAUSDT
+  - EXCLUDED: THETAUSDT, REZUSDT, MEMEUSDT, APTUSDT (degrading)
+- **Critical data source**: Gate evaluation uses LOCKED PRESET stats from `preset_efficiency_test.json`, not best-overall. When analyzing preset performance for lock decisions, always check server's live efficiency file, never dashboard JSON or virtual simulator rank data.
+
+**Key lesson from session 41**: Seeded scores (from backtests) and live scores (from actual trades) can diverge dramatically. Lock decisions require live data verification on the server, not hypothetical rankings from the dashboard. Analysis that uses wrong data source (virtual sim rank instead of live efficiency) leads to incorrect locks that later fail at gate time.
+
+**Session 42 refinement**: Removed three unintended quality gates from TATS path that were too strict. TATS philosophy: allow ALL enabled symbols to trade if deployable budget available. Symbols that perform poorly must be explicitly disabled in registry, not auto-excluded by performance filters.
+
+**Confirmed working**: TATS gate deployed 2026-06-04, DOGEUSDT placed order under TATS control on first eligible signal. Gates refined 2026-06-06 to remove over-filtering. Monitored daily as more trades accumulate.
 
 ---
 

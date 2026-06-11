@@ -72,6 +72,7 @@ class RecommendationEngine:
                     proximity_zone_pct=pct,
                     lower_high_sell=self._s.lower_high_sell,
                     higher_low_buy=self._s.higher_low_buy,
+                    min_swing_points_projection=self._s.min_swing_points_projection,
                 )
                 if rec is not None:
                     results.append((rec, current, correction_info))
@@ -123,7 +124,12 @@ class RecommendationEngine:
 
             # Proposal 1: block continuation signals when parent trend explicitly opposes.
             # Reversal and structural types (e.g. RISING_ABOVE_SUPPOSED_HIGH) are exempt.
-            if rec.getType() in _CONTINUATION_TYPES and self._parent_is_opposing(trend, rec.getSide()):
+            # ignore_parent_alignment disables the hard gate (precision penalty still applies).
+            if (
+                rec.getType() in _CONTINUATION_TYPES
+                and not self._s.ignore_parent_alignment
+                and self._parent_is_opposing(trend, rec.getSide())
+            ):
                 continue
 
             # Range position gate: block continuation signals where entry is too far into

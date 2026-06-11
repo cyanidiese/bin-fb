@@ -431,8 +431,8 @@ class Trend:
             return -1, pct_to_low
         return 0, 0.0
 
-    def getSupposedNextPoints(self) -> Tuple[Optional[float], Optional[float]]:
-        if len(self._highs) < 3 or len(self._lows) < 3:
+    def getSupposedNextPoints(self, min_pts: int = 3) -> Tuple[Optional[float], Optional[float]]:
+        if len(self._highs) < min_pts or len(self._lows) < min_pts:
             return None, None
 
         last_highs = self.getLastPoints(self._highs, 4)
@@ -476,6 +476,7 @@ class Trend:
         proximity_zone_pct: float = 10.0,
         lower_high_sell: bool = False,
         higher_low_buy: bool = False,
+        min_swing_points_projection: int = 3,
     ) -> Optional[Recommendation]:
         point = self.getCurrentPoint() if point is None else point
         if point is None:
@@ -487,7 +488,7 @@ class Trend:
         if self.shouldCrossBreakOfStructure(point):
             return None
 
-        supposed_next_high, supposed_next_low = self.getSupposedNextPoints()
+        supposed_next_high, supposed_next_low = self.getSupposedNextPoints(min_pts=min_swing_points_projection)
         if supposed_next_high is None or supposed_next_low is None:
             return None
 
@@ -629,6 +630,7 @@ class Trend:
         proximity_zone_pct: float = 10.0,
         lower_high_sell: bool = False,
         higher_low_buy: bool = False,
+        min_swing_points_projection: int = 3,
     ) -> List[Recommendation]:
         result = []
         rec = self.getRecommendation(
@@ -636,6 +638,7 @@ class Trend:
             proximity_zone_pct=proximity_zone_pct,
             lower_high_sell=lower_high_sell,
             higher_low_buy=higher_low_buy,
+            min_swing_points_projection=min_swing_points_projection,
         )
         if rec is not None:
             result.append(rec)
@@ -648,6 +651,7 @@ class Trend:
                 proximity_zone_pct=proximity_zone_pct,
                 lower_high_sell=lower_high_sell,
                 higher_low_buy=higher_low_buy,
+                min_swing_points_projection=min_swing_points_projection,
             ))
         return result
 

@@ -44,6 +44,11 @@ class SymbolError(Exception):
         self.reason = reason
 
 
+class MarketConditionError(Exception):
+    """Wraps transient exchange rejections due to market conditions (e.g. PERCENT_PRICE filter).
+    Does not count as a failure — signal will be retried next candle."""
+
+
 class BotHaltError(BaseException):
     """Raised when all symbols are disabled and the bot cannot continue."""
 
@@ -266,6 +271,10 @@ class OrderExecutor:
                 self._states[symbol] = OrderState.IDLE
                 logger.warning(f"[{symbol}] Order skipped — insufficient funds: {exc}")
                 return False
+            except MarketConditionError as exc:
+                self._states[symbol] = OrderState.IDLE
+                logger.warning(f"[{symbol}] Order skipped — market condition: {exc}")
+                return False
             except SymbolError as sym_exc:
                 self._states[symbol] = OrderState.IDLE
                 await self._auto_disable(sym_exc.symbol, sym_exc.reason)
@@ -471,6 +480,14 @@ class OrderExecutor:
                 close_price = await self._market_close(symbol, order)
                 pnl = self._calc_pnl(order, close_price)
                 self._record_real_order_close(symbol, order, close_price, 'market_close', pnl)
+                self._notifier.notify_trade_close(
+                    symbol=symbol,
+                    side=order.side,
+                    pnl_usdt=pnl,
+                    entry_price=order.entry_price,
+                    close_price=close_price,
+                    preset_name=order.preset_name,
+                )
                 results.append({
                     "symbol": symbol,
                     "side": order.side,
@@ -501,6 +518,14 @@ class OrderExecutor:
             close_price = await self._market_close(symbol, order)
             pnl = self._calc_pnl(order, close_price)
             self._record_real_order_close(symbol, order, close_price, 'market_close', pnl)
+            self._notifier.notify_trade_close(
+                symbol=symbol,
+                side=order.side,
+                pnl_usdt=pnl,
+                entry_price=order.entry_price,
+                close_price=close_price,
+                preset_name=order.preset_name,
+            )
             result = {
                 "symbol": symbol,
                 "side": order.side,
@@ -654,6 +679,10 @@ class OrderExecutor:
 
             if exc_code in (-2019, -1013):
                 raise FundsError(str(exc)) from exc
+
+            # -4131: PERCENT_PRICE filter — best market price too far from mark price (liquidity issue)
+            if exc_code == -4131:
+                raise MarketConditionError(str(exc)) from exc
 
             # -4005: MARKET_LOT_SIZE.maxQty exceeded — update cache and retry once with capped qty
             if exc_code == -4005:

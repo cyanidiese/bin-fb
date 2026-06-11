@@ -56,6 +56,8 @@ DEFAULTS = {
     'zone_sl_max': 0,
     'zone_sl_cooldown_candles': 16,
     'range_position_max': 1.0,
+    'min_swing_points_projection': 3,
+    'ignore_parent_alignment': False,
 }
 
 
@@ -107,6 +109,8 @@ def build_settings(overrides: dict, symbol: str | None = None) -> Settings:
         zone_sl_max=int(p['zone_sl_max']),
         zone_sl_cooldown_candles=int(p['zone_sl_cooldown_candles']),
         range_position_max=float(p['range_position_max']),
+        min_swing_points_projection=int(p['min_swing_points_projection']),
+        ignore_parent_alignment=bool(p['ignore_parent_alignment']),
     )
 
 

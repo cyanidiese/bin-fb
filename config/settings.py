@@ -100,6 +100,15 @@ class Settings:
     # BUY blocked if entry is above this fraction of the swing range (0 = low, 1 = high).
     # SELL blocked if entry is below (1 - value). 1.0 = disabled.
     range_position_max: float
+    # Minimum number of confirmed swing highs and lows (each) required before
+    # getSupposedNextPoints() computes a projection. Lowering to 2 allows
+    # projection from a single amplitude observation (less stable, naturally
+    # scored lower by _projection_reliability). Default 3 = current behavior.
+    min_swing_points_projection: int
+    # When True: allow continuation signals even when the parent trend explicitly
+    # opposes the signal direction. The alignment penalty in precision scoring
+    # still applies — this only disables the hard gate. Default False.
+    ignore_parent_alignment: bool
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -178,6 +187,8 @@ def load_settings(symbol: str | None = None) -> Settings:
         zone_sl_max=int(os.getenv('ZONE_SL_MAX', '0')),
         zone_sl_cooldown_candles=int(os.getenv('ZONE_SL_COOLDOWN_CANDLES', '16')),
         range_position_max=float(os.getenv('RANGE_POSITION_MAX', '1.0')),
+        min_swing_points_projection=int(os.getenv('MIN_SWING_POINTS_PROJECTION', '3')),
+        ignore_parent_alignment=os.getenv('IGNORE_PARENT_ALIGNMENT', 'false').lower() in ('1', 'true', 'yes'),
     )
 
     if symbol is not None:

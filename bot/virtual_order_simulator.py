@@ -77,6 +77,7 @@ class VirtualOrderSimulator:
         # Candle-level allocation context — set by main.py before each on_candle_close call
         self._uses_weight_alloc: bool = True
         self._bgf_fractions: dict[str, float] = {}
+        self._bypass_pct_cap: bool = False
 
         # rank -> symbol -> open order record
         self._rank_open: dict[int, dict[str, dict]] = {}
@@ -152,12 +153,14 @@ class VirtualOrderSimulator:
             logger.info(f"Rank-{rank} virtual balance synced to real account: {balance:.2f} USDT")
 
     def set_candle_alloc_context(
-        self, uses_weight_alloc: bool, bgf_fractions: dict[str, float]
+        self, uses_weight_alloc: bool, bgf_fractions: dict[str, float],
+        bypass_pct_cap: bool = False,
     ) -> None:
         """Set the allocation context for the current candle batch.
         Must be called by main.py before on_candle_close so _try_open uses the correct formula."""
         self._uses_weight_alloc = uses_weight_alloc
         self._bgf_fractions = bgf_fractions
+        self._bypass_pct_cap = bypass_pct_cap
 
     # ------------------------------------------------------------------ #
     # Candle close — open / evict rank positions                          #
@@ -377,8 +380,9 @@ class VirtualOrderSimulator:
 
         # Cap per-trade allocation to max_trade_pct% of the rank pool's deployable budget.
         # Mirrors the same cap applied to real orders so virtual PnL stays comparable.
+        # bypass_pct_cap mirrors the TATS single-signal bypass so virtual sizing matches real.
         _max_trade_pct = float(_risk_cfg.get("max_trade_pct", 0.0))
-        if _max_trade_pct > 0:
+        if _max_trade_pct > 0 and not self._bypass_pct_cap:
             _cfg_tiers = sorted(_risk_cfg.get("balance_tiers", []), key=lambda t: t["min_balance_usdt"])
             _tier = _cfg_tiers[0] if _cfg_tiers else {"max_deploy_pct": 90, "max_leverage_ceiling": 15}
             for _t in _cfg_tiers:

@@ -1,6 +1,150 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-05-28 (session 39 — Strategy Page Time Travel feature completed and deployed)
+## Last updated: 2026-06-11 (session 43 — Performance analysis, 5 symbols disabled, TATS n==1 zero-score bypass bug fixed, config rebalancing)
+
+---
+
+## ⟳ RESUME POINT — session 43 (2026-06-11) — Performance analysis + symbol disable + critical TATS bug fix
+
+**Session summary:**
+
+**Performance analysis completed (355 trades over 19 days, net -$159 USDT)**:
+- **Net result**: -$159 USDT across all symbols (despite SOLUSDT +$96, TIAUSDT +$51)
+- **Worst performers** (disabled): WLDUSDT 0-for-16 (-$82), ETHFIUSDT 13% WR (-$58), APTUSDT 8.7% WR (-$49), THETAUSDT 8% WR (-$46), REZUSDT 22% WR (-$31), AVAXUSDT 6.2% WR (-$1 but masked failure)
+- **Worst preset**: r5_arm15_cooldown -$94.62 on 75 trades, EV -$1.26/trade
+- **Best preset**: r8_sol_hlbuy_cooldown +$84.20 on 11 trades, EV +$7.65/trade (almost entirely SOLUSDT)
+- **Best symbol**: SOLUSDT +$96 net, 42.1% WR, 4.8x R:R (avg win $15.74 vs avg loss $3.25)
+
+**Critical bug fixed — TATS n==1 zero-score bypass**:
+- **Root cause**: In TATS mode, symbols with weight=0 in risk_config had their efficiency score zeroed. When that symbol was the SOLE candidate on a candle (n==1 path), it still traded because the n==1 logic ignores score entirely and just picks the first candidate. This bypassed the intentional weight-zero gate.
+- **Fix**: Added one line after sort in main.py (~line 1042): `candidates = [c for c in candidates if c[3] > 0.0]` to filter zero-score candidates before the n==1 check. Now zero-score symbols are never considered as candidates, even when they're the only option.
+- **Deployed**: Yes, live on server.
+
+**Config changes applied (hot-reload + deployed)**:
+- **symbol_registry.json** (immediate hot-reload): THETAUSDT, AVAXUSDT, REZUSDT, ETHFIUSDT, APTUSDT → DISABLED; INJUSDT → RE-ENABLED (had been wrongly disabled since June 2; now blocklisted r5_arm15_cooldown from risk_config)
+- **risk_config.json** (hot-reload to /tmp, deployed to server): preset_blocklist expanded (8 presets: db_clone_cooldown, pre_confirm_prox15_trail15, pre_confirm_trail15, trail_15_from_15_d1, sl_adjust_rr_tp95, r6_arm15_rr4, correction_w20_trail15_30, trail_15_from_15). 1000PEPEUSDT weight 22 → 10.
+- **Active trading universe post-changes**: 7 symbols (SOLUSDT 20, TIAUSDT 12, INJUSDT 10, 1000PEPEUSDT 10, MEMEUSDT 8, DOGEUSDT 3, EIGENUSDT 1). 7 disabled.
+
+**Monitoring plan (next session)**:
+- **P3 sizing issue**: Still pending approval — sizing uses virtual balance (~$2,875) not real balance (~$4,172).
+- **DOGEUSDT**: -$31.58 net, 40% WR. Monitoring at weight=3; may improve now that r5_arm15_cooldown blocklisted.
+- **PEPE**: Monitor if trail_15_from_15 now selected (db_clone_cooldown now blocklisted).
+- **Code audit bugs**: 2 critical / 5 important / 6 minor still unaddressed from 2026-05-20.
+
+**Documentation updated**: `docs/profit-analysis/quick-ref.md` with current symbol status and top performers.
+
+---
+
+## ⟳ RESUME POINT — session 42 (2026-06-06) — Telegram notification fixes, TATS scenario refinement, signal generation fallback
+
+**Session summary:**
+
+**Telegram notification fixes deployed (bot/notifier.py, bot/order_executor.py)**:
+1. **Shutdown closes never notified** — `close_all_orders_at_market()` never called `notify_trade_close()` after closing a position. Fix: added notification call after `_record_real_order_close`. Same fix applied to `close_order()` (manual dashboard closes).
+2. **Multi-symbol closes rate-limited together** — Shared `"trade"` key bucket (120s cooldown) meant simultaneous closes on different symbols only sent one Telegram alert. Fix: changed to per-symbol key `f"trade:{symbol}"` so each symbol's close notifies independently.
+
+**TATS scenario gate cleanup (main.py) — three unintended quality gates removed**:
+1. **Weight=0 check** (line 985): Now skipped for TATS. Weight only matters for proportional allocation (BGF fallback), not candidacy.
+2. **is_tats_eligible() function** (lines 989-992): Deleted from TATS path. It was a performance quality gate (recent-window drop check) that contradicts TATS design. Symbols must be explicitly disabled via registry, not auto-excluded.
+3. **is_virtual_only() in _try_place_order** (line 437): Now skipped for TATS. Under TATS, any non-disabled symbol may place real orders.
+What was kept: `is_disabled()`, `is_symbol_paused()`, `get_state() != IDLE` — all still gate entry as intended.
+
+**Signal generation fix for hl_buy / lh_sell presets (main.py)**:
+Root cause: Base `RecommendationEngine` runs with base settings (`higher_low_buy=False`). Symbols like MEMEUSDT whose best preset requires `higher_low_buy=True` (e.g., `hl_buy_trail15`) never got a recommendation → never entered candidates → zero live orders despite valid backtest signals.
+Fix: Added preset-fallback logic after `get_best_recommendation()` returns `None`. If base engine produces no signal, try `get_recommendation_for_preset(overrides)` with the symbol's best preset settings. This only runs at candidates gate time; `_try_place_order` re-runs the full engine anyway with preset settings, so no double-counting.
+Key: `get_recommendation_for_preset(overrides)` already existed in analyzer.py (line 140-146).
+
+**Design spec saved**: Full spec at `docs/superpowers/specs/2026-06-06-tats-fix-and-signal-generation-design.md`
+
+**Analysis findings (no code changes)**:
+- **WLDUSDT market regime break** — Pre-May-22: low-vol chop (-1.05% backtest). Post-May-22: parabolic pump (+138% from 6 BUY trades). 74 of 78 presets negative since May 22. Recommendation: disable in registry.
+- **Day analysis (June 5)** — 8 missed 1000PEPEUSDT SELL candles ($360-480 value), ETHFIUSDT blocked by old gate, MEMEUSDT zero orders (now fixed by signal generation fallback + Gate B removal), REZUSDT persistent zero-price signals (entry/target/stop all 0.00, cause unknown, needs investigation).
+
+**Pending/open items**:
+- REZUSDT zero-price signal anomaly — investigation needed
+- WLDUSDT — analyst recommends disabling; user action pending
+- Code audit bugs (2 critical / 5 important / 6 minor from 2026-05-20) — still unaddressed
+
+**Next steps**: Monitor signal generation fix; evaluate WLDUSDT disable decision; investigate REZUSDT anomaly.
+
+---
+
+## ⟳ RESUME POINT — session 41 (2026-06-04) — TATS scenario deployed, live efficiency lock corrected
+
+**Session summary:**
+
+**TATS ("Took All The Shoes") scenario deployed and confirmed working** — Bot is actively executing TATS on testnet. DOGEUSDT placed a SELL order on 2026-06-04 at 15:30 under TATS (preset=lh_sell_trail15), immediately closed with -$0.40 loss on next candle.
+
+**Critical lock mistake identified and fixed** — TIAUSDT was incorrectly locked to `pre_confirm_prox15_trail15` based on flawed analysis using virtual simulator rank data from dashboard. Root cause: analysis looked at backtest JSON scores, not the actual live efficiency file on server.
+
+**Live efficiency data revealed**:
+- `pre_confirm_prox15_trail15` (on TIAUSDT): 15 live trades, total = -$63.35 (all recent losses, sum = -$47.36) → TATS correctly excluded
+- True best performer for TIAUSDT: `db_layer_3` (score +49.13, 11 trades, not degrading, TATS eligible)
+- Fix: Removed TIAUSDT from `locked_presets` in risk_config.json, bot auto-selects `db_layer_3`
+
+**TATS gate status confirmed (as of 2026-06-04)**:
+- **ELIGIBLE** (pass profitability gate): DOGEUSDT (score=51.26), 1000PEPEUSDT (score=43.53), ETHFIUSDT (score=22.84), INJUSDT (Tier-0 BGF fallback, 7 trades), TIAUSDT (now via db_layer_3, score=49.13)
+- **EXCLUDED** (degrading Part B, fail gate): THETAUSDT, REZUSDT, MEMEUSDT, APTUSDT
+
+**Analysis lesson learned** — NEVER rely on virtual simulator rank data or dashboard backtest JSON to evaluate preset performance. ALWAYS check `preset_efficiency_test.json` on the server for actual live stats. Seeded scores (backtest) and live scores (real trades) can diverge dramatically. Lock decisions require live data, not hypothetical rankings.
+
+**Current risk_config.json state**:
+- `scenario: "tats"`
+- `tats_min_profit_usdt: 0.0`
+- `tats_degradation_max_drop_pct: 50.0`
+- `locked_presets: { "INJUSDT": "r6_arm15_rr4" }`
+
+**FEATURES.md update needed** — The TATS feature entry should note:
+1. Profitability gate uses LOCKED PRESET stats, not best-overall preset
+2. When analyzing preset performance for lock decisions, always check server's `preset_efficiency_test.json`, not dashboard JSON
+3. TATS confirmed working as of 2026-06-04, eligible set monitored daily
+
+**Next steps**:
+- Monitor TATS eligible set over next few days; adjust locks/config as more live trades accumulate
+- Investigate bot.log silent-skip on is_tats_eligible failure (no log entry when symbol excluded — makes debugging harder)
+
+---
+
+## ⟳ RESUME POINT — session 40 (2026-05-31) — Settings import bug fixed, risk_config optimized
+
+**Session summary:**
+
+**Critical bug found and fixed** — `NameError: name 'Settings' is not defined` in `main.py` line 447. Caused INJUSDT signals to abort the candidates loop on every candle close where INJUSDT had an active signal and was IDLE. Bug was intermittent (only fired when INJUSDT signal active + IDLE state) and started 07:00 UTC May 31 when INJUSDT's prior order cleared and a new signal appeared. Root cause: `from config.settings import load_settings` was missing the `Settings` class. Fixed by adding `Settings` to import statement. Deployed commit a79139a.
+
+**Performance analysis (May 28–31, 54 trades)**:
+- Net PnL: +$30.80 USDT. Win rate: 25.9% (14W/40L). Avg win: +$6.64, avg loss: -$1.55. EV per trade: +$0.57.
+- Best symbols: THETAUSDT +$20.04 (2W/0L, 100%), AVAXUSDT +$15.92 (1W/3L), 1000PEPEUSDT +$13.22 (6W/13L), TIAUSDT +$9.04 (1W/2L)
+- Worst symbols: REZUSDT -$9.57 (0W/4L, 0%), APTUSDT -$7.79 (0W/7L, 0%)
+- Worst preset: `trail_15_from_15` = 0W/5L (−$11.97) on REZUSDT
+
+**Config changes deployed to server**:
+1. **symbol_registry.json**: APTUSDT and REZUSDT weights set to 0 (stop-trading)
+2. **risk_config.json** (written directly to `/opt/bot/risk_config.json`):
+   - `base_leverage`: 2 → 4 (double starting leverage with proven performance)
+   - `max_leverage`: 10 → 15 (increase maximum available)
+   - `balance_tiers[0].max_leverage_ceiling`: 10 → 15 (support real $200 account)
+   - `symbol_weights.THETAUSDT`: 12 → 18 (100% win rate, reward it)
+   - `symbol_weights.APTUSDT`: 4 → 0 (stop trading, 0 wins / 7 losses)
+   - `symbol_weights.REZUSDT`: 6 → 0 (stop trading, 0 wins / 4 losses)
+   - `per_symbol_settings.INJUSDT.max_profit_pct`: 5 (unlocked capital, now working)
+   - `locked_presets`: {} (confirmed empty, no preset locks needed)
+3. **decision_log_test.json**: reset to `[]` (was at 5000-entry cap, all entries had None action type)
+
+**Infrastructure issue resolved**:
+- Server disk was full (11GB/15GB used) causing Docker builds to fail with "no space left on device"
+- Fixed: `docker system prune -af --volumes` freed 4.2GB (7.8GB free now)
+
+**Income projections at 15%/month**:
+- $200 start: ~$3K/month income in ~33 months
+- $1,200 start: ~20 months to first $3K/month
+- Adding $1K to $200 live account: ~$962/month after 12 months
+
+**Next steps**:
+- Monitor next candle closes for `Settings` NameError recurrence
+- Monitor INJUSDT signal flow now that per_symbol_settings is unblocked
+- Run backtest for REZUSDT and APTUSDT if re-enabling these symbols
+- Consider enabling WeightRebalancer after 1–2 weeks of stable operation
+- Watch for 2 critical / 5 important audit bugs still in backlog
 
 ---
 
@@ -510,6 +654,22 @@ During deploy, bot closed 3 orphan positions at startup: APTUSDT SELL (-64.86 US
 
 ---
 
+**Bugs fixed — session 43 (2026-06-11):**
+
+1. **TATS n==1 zero-score bypass** (`main.py` line ~1042)
+   - **Cause**: TATS mode zeros efficiency scores for weight=0 symbols. However, the n==1 path (single candidate) ignores score and just picks the first candidate, bypassing the weight-zero gate entirely.
+   - **Effect**: Symbols intentionally set to weight=0 were still traded under TATS if they became the sole candidate on any candle. This allowed disabled symbols to reach real order execution.
+   - **Fix**: Added `candidates = [c for c in candidates if c[3] > 0.0]` immediately after the sort, before the n==1 check. Now zero-score candidates are filtered out regardless of n value. All candidates must have positive efficiency score to be considered.
+   - **Deployed**: Yes, live on server 2026-06-11.
+
+**Bugs fixed — session 40 (2026-05-31):**
+
+1. **Settings class missing from import** (`main.py` line 16)
+   - **Cause**: `from config.settings import load_settings` was missing `Settings` class. Line 447 called `dataclasses.fields(Settings)` which raised NameError.
+   - **Effect**: Intermittent: INJUSDT signals would abort candidates loop when signal was active AND position was IDLE. Bug started May 31 07:00 UTC when INJUSDT's prior order cleared and new signal appeared. Only INJUSDT was affected because it was the only symbol in `per_symbol_settings` dict.
+   - **Fix**: Changed import to `from config.settings import load_settings, Settings`.
+   - **Deployed**: commit a79139a.
+
 **Bugs fixed — session 36 (2026-05-27):**
 
 1. **Trail/partial exits with negative PnL not counting as losses** (`main.py`)
@@ -958,6 +1118,9 @@ Design consequences — apply these in every session without being asked:
 | Tests (symbol_discovery — 10 tests) | **done** |
 | **Dynamic Weight Rebalancer** — full feature complete | **done** |
 | Tests (weight_rebalancer — 19 tests) | **done** |
+| **TATS Scenario (Took All The Shoes)** — deployed and debugged | **done** |
+| **Telegram notification fixes** — shutdown closes + per-symbol rate limit | **done** |
+| **Signal generation fallback for hl_buy/lh_sell presets** — base settings fallback | **done** |
 | Tests (other modules) | not started |
 | Deployment files | not started |
 
@@ -1008,6 +1171,13 @@ All price lines are clamped to start at the **earliest active** swing point visi
 ---
 
 ## Decisions made
+
+### Session 42 (2026-06-06)
+- **TATS gates must be minimal and explicit** — Original design had three unintended auto-exclusion gates (weight=0 check, is_tats_eligible() performance gate, is_virtual_only() floor gate). These contradicted TATS philosophy: if a symbol is enabled, it should be allowed to trade. Gates should be: explicit registry disable, symbol pause, and active position check only. Performance quality (whether locked preset is profitable) is evaluated at gate-time via is_tats_eligible(), not upfront. Registry disable is the only control for excluding underperformers.
+- **hl_buy/lh_sell signals need base-settings fallback** — When preset overrides enable features (higher_low_buy=True) not in base settings, base RecommendationEngine can't generate the signal. Solution: at candidates gate, if best_preset differs from base and best_preset has null signal, try the signal with preset's full settings. Only runs if base fails; _try_place_order re-runs anyway, so no double-counting.
+
+### Session 41 (2026-06-04)
+- **Live efficiency data source mandatory for lock decisions** — When evaluating preset performance to decide locks, always verify against server's `preset_efficiency_test.json` (actual live trades), never dashboard JSON or virtual simulator rankings. Seeded backtest scores and live scores diverge significantly; analysis based on wrong data source (virtual sim rank) leads to locks that fail at gate time. Lesson: trust only the live numbers.
 
 ### Session 38 (2026-05-28)
 - **Deep analysis required before metric assignment** — When a group of presets shows improved metrics by tuning a parameter, verify that the improvement is real (trade quality) not an artifact (trade suppression creating zero-loss impression). The 0.10 range_position_max group appeared questionable because trade counts near zero, but analysis confirmed MONOTONIC improvement across all 6 sweep values across all 15 symbols — evidence of genuine, consistent quality gain, not suppression artifact.

@@ -129,9 +129,13 @@ class RecommendationEngine:
             # and RR checks are consistent with what main.py will actually enforce.
             # Without this, a tiny structural SL gets clipped by max_rr then floored,
             # collapsing the effective RR below minimum.
+            # SELL SL check in main.py multiplies raw dist by 1.5 before comparing to the
+            # floor, so the actual minimum SELL SL distance is global_min_sl_pct / 1.5.
+            # Use the same value here so TP clipping matches what main.py will trade.
             eff_loss_dist = loss_dist
             if global_min_sl_pct > 0:
-                min_loss = entry * global_min_sl_pct / 100.0
+                _min_pct = global_min_sl_pct / 1.5 if rec.getSide() == 'SELL' else global_min_sl_pct
+                min_loss = entry * _min_pct / 100.0
                 if loss_dist < min_loss:
                     eff_loss_dist = min_loss
 

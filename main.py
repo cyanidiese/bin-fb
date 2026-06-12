@@ -1061,9 +1061,25 @@ async def run() -> None:
                 virtual_order_simulator.set_candle_alloc_context(False, {})
             elif n == 1:
                 sym, best, sym_s, _ = candidates[0]
-                virtual_order_simulator.set_candle_alloc_context(False, {sym: 1.0}, bypass_pct_cap=True)
-                await _try_place_order(sym, best, sym_s, deployable, candle_ts,
-                                       trade_cap=deployable, bypass_pct_cap=True)
+                # tats_min_weight: low-weight symbols in single-signal mode get a
+                # weight-proportional cap instead of the full deployable budget.
+                # Prevents w=1 symbols from accidentally consuming the whole account.
+                _tats_min_w = float(risk_cfg.get('tats_min_weight', 0.0))
+                _sym_w = symbol_registry.get_weight(sym)
+                if _tats_min_w > 0 and _sym_w < _tats_min_w:
+                    _active_ws = [
+                        s for s in symbol_registry.get_symbols()
+                        if not symbol_registry.is_disabled(s) and not symbol_registry.is_symbol_paused(s)
+                    ]
+                    _total_w = sum(symbol_registry.get_weight(s) for s in _active_ws)
+                    _sym_frac = (_sym_w / _total_w) if _total_w > 0 else 1.0
+                    sym_cap = deployable * _sym_frac
+                    virtual_order_simulator.set_candle_alloc_context(False, {sym: _sym_frac})
+                    await _try_place_order(sym, best, sym_s, sym_cap, candle_ts, trade_cap=sym_cap)
+                else:
+                    virtual_order_simulator.set_candle_alloc_context(False, {sym: 1.0}, bypass_pct_cap=True)
+                    await _try_place_order(sym, best, sym_s, deployable, candle_ts,
+                                           trade_cap=deployable, bypass_pct_cap=True)
             else:
                 total_score = sum(max(0.0, s) for _, _, _, s in candidates)
                 bgf_fractions = {

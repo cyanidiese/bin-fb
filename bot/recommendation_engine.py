@@ -94,6 +94,7 @@ class RecommendationEngine:
         cfg = load_risk_config()
         global_min_rr    = float(cfg.get('global_min_rr', 0.0))
         global_max_rr    = float(cfg.get('global_max_rr', 0.0))
+        global_min_sl_pct = float(cfg.get('global_min_sl_pct', 0.0))
         g_regime         = bool(cfg.get('global_trend_regime_filter', False))
         g_regime_lookback = int(cfg.get('global_trend_regime_lookback', 3))
 
@@ -124,26 +125,42 @@ class RecommendationEngine:
             if profit_pct < self._s.min_profit_pct:
                 continue
 
+            # Effective loss distance: respect the global SL floor so max_rr clipping
+            # and RR checks are consistent with what main.py will actually enforce.
+            # Without this, a tiny structural SL gets clipped by max_rr then floored,
+            # collapsing the effective RR below minimum.
+            eff_loss_dist = loss_dist
+            if global_min_sl_pct > 0:
+                min_loss = entry * global_min_sl_pct / 100.0
+                if loss_dist < min_loss:
+                    eff_loss_dist = min_loss
+
             # Minimum risk/reward ratio — preset-level floor, then global floor.
-            rr = profit_dist / loss_dist
+            rr = profit_dist / eff_loss_dist
             if rr < self._s.min_profit_loss_ratio:
                 continue
             if global_min_rr > 0 and rr < global_min_rr:
                 continue
 
-            # Global max RR: clip TP to entry ± (max_rr × loss_dist) so TP targets
+            # Global max RR: clip TP to entry ± (max_rr × eff_loss_dist) so TP targets
             # that are structurally valid but practically unreachable get moved closer.
-            # The entry and SL stay the same; only the TP is shortened.
+            # Uses floored SL distance so the clipped TP matches what main.py will trade.
+            # Never pushes TP beyond the original structural level.
             if global_max_rr > 0 and rr > global_max_rr:
-                clipped_tp = (
-                    entry + global_max_rr * loss_dist
+                raw_clipped = (
+                    entry + global_max_rr * eff_loss_dist
                     if rec.getSide() == 'BUY'
-                    else entry - global_max_rr * loss_dist
+                    else entry - global_max_rr * eff_loss_dist
                 )
+                # Don't overshoot the structural TP.
+                if rec.getSide() == 'BUY':
+                    clipped_tp = min(raw_clipped, tp)
+                else:
+                    clipped_tp = max(raw_clipped, tp)
                 rec.setTarget(clipped_tp)
                 tp = clipped_tp
                 profit_dist = abs(tp - entry)
-                rr = global_max_rr
+                rr = profit_dist / eff_loss_dist
 
             # Direction gate: discard signals that don't match the preset's allowed side.
             if self._s.signal_direction != 'both':

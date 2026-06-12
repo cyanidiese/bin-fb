@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 
 from bot.recommendation import Recommendation, RecommendationTypes
 from bot.trend import Trend
+from config.risk_config import load_risk_config
 from config.settings import Settings
 
 # Continuation signal types: fire when a trend is already established and we expect
@@ -90,6 +91,12 @@ class RecommendationEngine:
     ) -> List[Recommendation]:
         scored: List[Recommendation] = []
 
+        cfg = load_risk_config()
+        global_min_rr    = float(cfg.get('global_min_rr', 0.0))
+        global_max_rr    = float(cfg.get('global_max_rr', 0.0))
+        g_regime         = bool(cfg.get('global_trend_regime_filter', False))
+        g_regime_lookback = int(cfg.get('global_trend_regime_lookback', 3))
+
         for rec, trend, correction_info in candidates:
             entry = rec.getEntryPrice()
             tp = rec.getTarget()
@@ -117,10 +124,26 @@ class RecommendationEngine:
             if profit_pct < self._s.min_profit_pct:
                 continue
 
-            # Minimum risk/reward ratio.
+            # Minimum risk/reward ratio — preset-level floor, then global floor.
             rr = profit_dist / loss_dist
             if rr < self._s.min_profit_loss_ratio:
                 continue
+            if global_min_rr > 0 and rr < global_min_rr:
+                continue
+
+            # Global max RR: clip TP to entry ± (max_rr × loss_dist) so TP targets
+            # that are structurally valid but practically unreachable get moved closer.
+            # The entry and SL stay the same; only the TP is shortened.
+            if global_max_rr > 0 and rr > global_max_rr:
+                clipped_tp = (
+                    entry + global_max_rr * loss_dist
+                    if rec.getSide() == 'BUY'
+                    else entry - global_max_rr * loss_dist
+                )
+                rec.setTarget(clipped_tp)
+                tp = clipped_tp
+                profit_dist = abs(tp - entry)
+                rr = global_max_rr
 
             # Direction gate: discard signals that don't match the preset's allowed side.
             if self._s.signal_direction != 'both':
@@ -128,12 +151,13 @@ class RecommendationEngine:
                 if rec.getSide() != allowed_side:
                     continue
 
-            # Trend regime filter: per-candle structural gate.
-            # Checks whether the generating trend shows N consecutive lower-highs +
-            # lower-lows (descending) or higher-highs + higher-lows (ascending).
-            # Blocks contra-trend signals in confirmed regimes; allows both in 'neutral'.
-            if self._s.trend_regime_filter:
-                regime = trend.getTrendRegime(self._s.trend_regime_lookback)
+            # Trend regime filter — per-preset flag OR global override.
+            # Checks the generating trend for N consecutive lower-highs + lower-lows
+            # (descending) or higher-highs + higher-lows (ascending).
+            # Falls back to the parent trend when L1 history is too short after a prune.
+            if self._s.trend_regime_filter or g_regime:
+                lookback = g_regime_lookback if g_regime else self._s.trend_regime_lookback
+                regime = self._get_regime(trend, lookback)
                 if regime == 'descending' and rec.getSide() == 'BUY':
                     continue
                 if regime == 'ascending' and rec.getSide() == 'SELL':
@@ -309,3 +333,12 @@ class RecommendationEngine:
             depth_score = (80.0 - depth_pct) / 30.0
         depth_score = max(0.0, depth_score)
         return swing_score * depth_score
+
+    def _get_regime(self, trend: Trend, lookback: int) -> str:
+        """Check L1 regime; fall back to parent trend if L1 history is too short after a prune."""
+        regime = trend.getTrendRegime(lookback)
+        if regime == 'neutral' and trend.hasBiggerTrend():
+            parent_regime = trend.getBiggerTrend().getTrendRegime(lookback)
+            if parent_regime != 'neutral':
+                return parent_regime
+        return regime

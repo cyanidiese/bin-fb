@@ -73,6 +73,10 @@ class Recommendation:
         self._rr = rr
         return self
 
+    def setTarget(self, target: float) -> 'Recommendation':
+        self._target = target
+        return self
+
     # ------------------------------------------------------------------ #
     # Getters                                                              #
     # ------------------------------------------------------------------ #

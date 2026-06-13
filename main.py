@@ -1025,7 +1025,8 @@ async def run() -> None:
             if best_sym is None:
                 # Base-settings engine lacks hl_buy/lh_sell flags — fall back to the symbol's
                 # best preset's own overrides so those signal types are not silently missed.
-                _bp = virtual_tracker.best_preset(sym)
+                # locked_presets takes precedence over VirtualTracker selection.
+                _bp = risk_cfg.get("locked_presets", {}).get(sym) or virtual_tracker.best_preset(sym)
                 _bp_ovr = all_presets.get(_bp or '', {})
                 if _bp_ovr:
                     best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)

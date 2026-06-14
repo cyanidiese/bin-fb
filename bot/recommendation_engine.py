@@ -97,6 +97,8 @@ class RecommendationEngine:
         global_min_sl_pct = float(cfg.get('global_min_sl_pct', 0.0))
         g_regime         = bool(cfg.get('global_trend_regime_filter', False))
         g_regime_lookback = int(cfg.get('global_trend_regime_lookback', 3))
+        g_blocked_signals = set(cfg.get('global_blocked_signal_types', []))
+        g_max_level      = int(cfg.get('global_max_level', 0))
 
         for rec, trend, correction_info in candidates:
             entry = rec.getEntryPrice()
@@ -105,6 +107,14 @@ class RecommendationEngine:
 
             if sl is None or entry == 0:
                 continue
+
+            if g_blocked_signals and rec.getType().value in g_blocked_signals:
+                continue
+
+            if g_max_level > 0:
+                lv = rec.getLevel()
+                if lv is not None and lv > g_max_level:
+                    continue
 
             profit_dist = abs(tp - entry)
             loss_dist = abs(sl - entry)

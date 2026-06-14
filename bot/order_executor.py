@@ -509,6 +509,62 @@ class OrderExecutor:
                 self._states[symbol] = OrderState.IDLE
         return results
 
+    def save_open_positions(self, path: Path) -> int:
+        """Persist open positions to disk for recovery on next restart."""
+        if not self._open_orders:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return 0
+        import dataclasses as _dc
+        state = {}
+        for symbol, order in self._open_orders.items():
+            fake = self._fake_orders.get(symbol)
+            state[symbol] = {
+                'open_order': _dc.asdict(order),
+                'fake_order': fake.get_state() if fake else None,
+            }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(state))
+        tmp.replace(path)
+        logger.info(f"Saved {len(state)} open position(s) for restart recovery")
+        return len(state)
+
+    def restore_open_positions(self, path: Path) -> int:
+        """Re-register positions saved before a restart. Deletes path after restore."""
+        if not path.exists():
+            return 0
+        try:
+            state = json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning(f"Failed to load restart positions from {path}: {exc}")
+            return 0
+        restored = 0
+        for symbol, data in state.items():
+            try:
+                order = OpenOrder(**data['open_order'])
+                self._open_orders[symbol] = order
+                self._states[symbol] = OrderState.OPEN
+                fake_state = data.get('fake_order')
+                if fake_state:
+                    self._fake_orders[symbol] = FakeOrder.from_state(fake_state)
+                logger.info(
+                    f"[{symbol}] Restored open position: {order.side} entry={order.entry_price} "
+                    f"SL={order.sl_price} TP={order.tp_price} preset={order.preset_name}"
+                )
+                restored += 1
+            except Exception as exc:
+                logger.warning(f"[{symbol}] Failed to restore position: {exc}")
+        try:
+            path.unlink()
+        except Exception:
+            pass
+        if restored:
+            logger.info(f"Restored {restored} position(s) — resuming monitoring without forced close")
+        return restored
+
     async def close_order(self, symbol: str) -> dict | None:
         """Close a single open order at market. Returns result dict or None if not open."""
         order = self._open_orders.get(symbol)

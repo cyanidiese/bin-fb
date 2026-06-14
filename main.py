@@ -371,6 +371,10 @@ async def run() -> None:
         _tmp.write_text(json.dumps(payload))
         _tmp.replace(_path)
 
+    _restart_path = _PROJECT_ROOT / 'data' / f'restart_positions_{mode_manager.current_mode}.json'
+    _restored = order_executor.restore_open_positions(_restart_path)
+    if _restored:
+        logger.info(f"Startup: {_restored} position(s) restored from restart state")
     await order_executor.reconcile_with_exchange()
     _write_open_positions()  # overwrite any stale file from a crashed previous session
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
@@ -970,14 +974,29 @@ async def run() -> None:
                     logger.warning(f"Daily exchange-info refresh failed (will retry next cycle): {exc}")
                 await order_executor.sync_positions_with_exchange()
 
-        if symbol_registry.is_disabled(symbol):
-            return
+        _sym_disabled = symbol_registry.is_disabled(symbol)
 
         if symbol not in sym_settings or symbol not in analyzers:
             return
 
         settings = sym_settings[symbol]
         analyzer = analyzers[symbol]
+
+        if _sym_disabled:
+            # Keep analyzer current and run virtual simulation for disabled symbols so we
+            # collect preset performance data to inform future re-enablement decisions.
+            # Placement logic is skipped entirely.
+            recs = analyzer.add_candle(kline)
+            _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
+            await virtual_order_simulator.on_candle_close(
+                symbol=symbol,
+                analyzer=analyzer,
+                best_preset_name=virtual_tracker.best_preset(symbol),
+                base_settings=settings,
+                locked_preset=_locked_preset,
+                virtual_only=True,
+            )
+            return
 
         incoming_open_ms = int(kline[0])
         try:
@@ -1164,15 +1183,14 @@ async def run() -> None:
                 balance_after=fresh_bal,
             )
 
-        if symbol_registry.get_weight(symbol) > 0.0:
-            _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
-            await virtual_order_simulator.on_candle_close(
-                symbol=symbol,
-                analyzer=analyzer,
-                best_preset_name=virtual_tracker.best_preset(symbol),
-                base_settings=settings,
-                locked_preset=_locked_preset,
-            )
+        _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
+        await virtual_order_simulator.on_candle_close(
+            symbol=symbol,
+            analyzer=analyzer,
+            best_preset_name=virtual_tracker.best_preset(symbol),
+            base_settings=settings,
+            locked_preset=_locked_preset,
+        )
 
         weight_rebalancer.on_candle_close(candle_ts)
 
@@ -1295,11 +1313,17 @@ async def run() -> None:
 
     async def on_stop_bot() -> None:
         current_symbols = symbol_registry.get_symbols()
+        _restart_path = _PROJECT_ROOT / 'data' / f'restart_positions_{mode_manager.current_mode}.json'
+        _close_on_stop = bool(risk_cfg.get('close_positions_on_stop', False))
+        if not _close_on_stop:
+            saved = order_executor.save_open_positions(_restart_path)
+            if saved:
+                logger.info(f"close_positions_on_stop=false — {saved} position(s) saved, skipping market close")
         try:
             await asyncio.wait_for(
                 asyncio.gather(
                     virtual_order_simulator.close_all_open(current_symbols, feed),
-                    order_executor.close_all_orders_at_market(),
+                    order_executor.close_all_orders_at_market() if _close_on_stop else asyncio.sleep(0),
                 ),
                 timeout=45.0,
             )

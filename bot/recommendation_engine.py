@@ -140,10 +140,12 @@ class RecommendationEngine:
                     eff_loss_dist = min_loss
 
             # Minimum risk/reward ratio — preset-level floor, then global floor.
+            # Tiny epsilon (1e-9) avoids floating-point edge cases where SL floor
+            # arithmetic produces rr=3.9999999... instead of exactly 4.0.
             rr = profit_dist / eff_loss_dist
-            if rr < self._s.min_profit_loss_ratio:
+            if rr < self._s.min_profit_loss_ratio - 1e-9:
                 continue
-            if global_min_rr > 0 and rr < global_min_rr:
+            if global_min_rr > 0 and rr < global_min_rr - 1e-9:
                 continue
 
             # Global max RR: clip TP to entry ± (max_rr × eff_loss_dist) so TP targets

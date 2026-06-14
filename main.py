@@ -438,7 +438,7 @@ async def run() -> None:
                 logger.info(f"[{symbol}] Virtual-only floor active — skipping real order")
                 return 0.0
         _blocklist = risk_cfg.get("preset_blocklist", [])
-        if preset_name in _blocklist:
+        if not is_locked and preset_name in _blocklist:
             logger.info(f"[{symbol}] Preset '{preset_name}' is blocklisted — skipping real order")
             return 0.0
         overrides = all_presets.get(preset_name or 'default', {})

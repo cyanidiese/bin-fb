@@ -1,6 +1,441 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-06-11 (session 43 — Performance analysis, 5 symbols disabled, TATS n==1 zero-score bypass bug fixed, config rebalancing)
+## Last updated: 2026-06-15 (session 52 — phantom SL fix + 5 risk_config changes + 2 new engine filters)
+
+---
+
+## ⟳ RESUME POINT — session 52 (2026-06-15) — Loss reduction: 5 risk_config changes + 2 new engine filters deployed
+
+**Root cause diagnosed: phantom SL from max_loss_usdt**
+
+A TIAUSDT r5_arm20 BUY order closed at 0.33328125 — well before structural SL (0.3203) or max_losing_pct (3.6% from entry). Root cause: `max_loss_usdt=25` in risk_config with qty=5925.93 produced `_early_loss_sl = entry - 25/qty = entry - 0.00421 = 0.33329`. This overrode ALL other exit logic. The phantom SL was 0.42% from entry, far tighter than any structural level.
+
+The same cap logic exists in both `bot/virtual_order_simulator.py` (lines 251–268) and `bot/order_executor.py` (lines 217–252). It uses `_effective_cap / quantity` to place a dollar-capped SL at open time. At high quantities, even a $25 cap produces a microscopically tight SL.
+
+**Fix**: Set `max_loss_usdt: 0` in risk_config (disabled). If needed in future, only enable per-symbol with low quantities.
+
+**TP escape analysis (conducted and rejected)**
+
+Analyzed 80,136 backtest trades. 23,075 trail closes: 100% closed BELOW TP price, average 2.43% below TP. Conclusion: escaping TP by extending it would convert reliable 2.3% TP wins into trail exits that average below TP. Not beneficial. This approach was rejected.
+
+**5 risk_config changes applied directly on server (no redeploy)**
+
+| Change | Before | After | Reason |
+|---|---|---|---|
+| max_loss_usdt | 25 | 0 | Was creating phantom SL at tiny distances |
+| global_min_sl_pct | 0.5 | 0.7 | Backtest: 0.5% bucket = 33.4% good rate; 0.7–1.0% = 38.9% |
+| preset_blocklist | 11 presets | +5 more (loose_entry, broad_zone, aggressive, default, low_rr) | These all have high loss rates |
+| global_blocked_signal_types | [] | ["lowering_near_last_low"] | 100% loss rate in backtest data |
+| global_max_level | 0 (disabled) | 2 | Level 3 signals: 73.4% loss rate vs 66.9% for L2 |
+
+**New code: global signal-type and level filters in recommendation_engine.py**
+
+Added to `_score_and_filter()` in `bot/recommendation_engine.py`:
+- `global_blocked_signal_types` key: blocks specific signal type strings globally (e.g. `lowering_near_last_low`)
+- `global_max_level` key: blocks any signal where `rec.getLevel() > global_max_level`
+
+Both are read from `risk_config.json` via `load_risk_config()`. Zero overhead when not set (falsy guard). Deployed in commit d5d4fee (pushed to feature/backtest-live-parity). Server manually pulled and rebuilt.
+
+**TIAUSDT orphan close — +$66.84 profit**
+
+During the restart cycle at 21:25 UTC Jun 14, the bot's internal state didn't have the TIAUSDT position (it was saved before a crash then lost). Exchange reconciliation found a TIAUSDT BUY (qty=6004, entry=0.334995) as "orphan" and closed at market 0.346400 for +$66.84. This was lucky — price had moved 3.4% in our favor.
+
+**Filters verified working at 21:30 candle**
+
+All L3 signals at 21:30 showed rr=None (filtered). No BEST selected for any L3 signal. `lowering_near_last_low` not seen in BEST lines. `global_max_level: 2` and `global_blocked_signal_types: ["lowering_near_last_low"]` both confirmed active.
+
+**Current risk_config state (as of session end)**
+
+```json
+{
+  "max_loss_usdt": 0,
+  "global_min_sl_pct": 0.7,
+  "global_min_rr": 3.0,
+  "global_max_rr": 4.0,
+  "global_max_level": 2,
+  "global_blocked_signal_types": ["lowering_near_last_low"],
+  "preset_blocklist": ["r6_arm15_rr4", "correction_w20_trail15_30", "r5_arm15_cooldown", "db_clone_cooldown", "pre_confirm_prox15_trail15", "pre_confirm_trail15", "trail_15_from_15_d1", "sl_adjust_rr_tp95", "trail_15_from_30_tp95", "trail_25_from_15", "r5_rr3", "loose_entry", "broad_zone", "aggressive", "default", "low_rr"],
+  "locked_presets": {"TIAUSDT": "hl_buy_trail15", "DOGEUSDT": "r6_arm15_rr4", "MEMEUSDT": "sl_adjust_rr_tp95"}
+}
+```
+
+**Bot status at session end**
+
+- Bot running, process alive (PID 3465155), container Up 14 min
+- 0 open positions, 0 real orders
+- Filters verified at 21:30 candle
+- Next improvement area: SOLUSDT L3 BUY signals still appearing as CANDIDATES (not BEST after filtering) — need to investigate why SOLUSDT generates no real orders despite weight=20
+
+**Active symbols**: SOLUSDT(20), TIAUSDT(15), MEMEUSDT(8), EIGENUSDT(5), DOGEUSDT(1)
+
+---
+
+## ⟳ RESUME POINT — session 51 (2026-06-14) — CRITICAL: Docker image rebuild is mandatory for code changes
+
+**Critical discovery**: Docker Python source code is NOT volume-mounted. Only `data/`, `logs/`, `risk_config.json`, and `symbol_registry.json` are mounted. Python files (`main.py`, `bot/`, etc.) are baked into Docker image at build time.
+
+**Previous incorrect deploy** (sessions before this):
+```bash
+git pull origin <branch>
+docker kill --signal=TERM bot  # stops container
+# Container auto-restarts via restart policy
+# BUT: restarts OLD image with OLD bytecode from previous build
+```
+
+**Result — THREE SESSIONS UNDEPLOYED**:
+- locked_presets bypass preset_blocklist fix (session 50, commit 4276319)
+- Virtual orders for disabled symbols (session 50, commit f0323a1)  
+- Position persistence on restart (session 50, commit f0323a1)
+
+All three on server disk but NOT in running image. DOGEUSDT/MEMEUSDT used wrong presets Jun 12–17:38 (17 hours) because blocklist bypass wasn't actually live.
+
+**CORRECT DEPLOY PROCEDURE**:
+```bash
+# On local:
+git push origin <branch>
+
+# On server (185.237.14.105):
+cd /opt/bot
+git pull origin <branch>
+docker compose build bot       # ← MANDATORY for code changes
+docker compose up -d --no-deps bot
+```
+
+**The `docker compose build bot` step is REQUIRED.** Without rebuild, container runs stale bytecode.
+
+**Deployed correctly at 17:38 Jun 14**. All three features now live:
+
+1. **locked_presets bypass blocklist** (commit 4276319): main.py line 441 now `if not is_locked and preset_name in _blocklist:`. Locked symbols execute assigned preset even if globally blocklisted.
+
+2. **Virtual orders for disabled symbols** (commit f0323a1): Disabled symbols run `on_candle_close(virtual_only=True)`, accumulating rank 2–6 efficiency data while symbol disabled from real trading.
+
+3. **Position persistence on restart** (commit f0323a1): `close_positions_on_stop=false` (default) saves open positions to `data/restart_positions_{mode}.json`. Next startup restores before exchange reconciliation (resume instead of force-close). Setting `close_positions_on_stop: true` uses old behavior (market close).
+
+**Impact this session**: Balance 4,064 → 4,048 USDT (-16, two TIAUSDT trades during old-code window: -6.98 SL, -8.15 force-close)
+
+**Update deploy documentation** to include `docker compose build bot` step — this is critical for all code deployments.
+
+---
+
+## ⟳ RESUME POINT — session 50 (2026-06-14) — Critical locked_presets blocklist bypass bug fixed, trading resumed
+
+**Session summary:**
+
+**Critical bug fixed — locked_presets did not bypass preset_blocklist (commit 4276319)**
+
+**Bug**: `_try_place_order()` in `main.py` line 441 checked `if preset_name in _blocklist:` unconditionally, even when `is_locked=True`. Since `r6_arm15_rr4` (DOGEUSDT's lock) and `sl_adjust_rr_tp95` (MEMEUSDT's lock) are both in `preset_blocklist`, all orders for both symbols were silently skipped at the blocklist gate. The "Using manually locked preset" log message fired (line 434), but then the blocklist check (line 441) rejected the order before placement.
+
+**Root cause**: The design intent was for locked presets to bypass the global blocklist (allow per-symbol override of global blocks). The code checked `is_locked=True` to decide whether to use the locked preset, but the blocklist gate had no `is_locked` check, so even locked presets were blocked.
+
+**Fix**: Changed line 441 from `if preset_name in _blocklist:` to `if not is_locked and preset_name in _blocklist:`. Now only NON-locked presets are checked against blocklist. Locked presets bypass blocklist entirely.
+
+**Impact before fix**: 
+- DOGEUSDT: locked to r6_arm15_rr4 but orders blocked by blocklist; auto-selection fell back to worse presets (-$12-15 loss today)
+- MEMEUSDT: locked to sl_adjust_rr_tp95 but orders blocked; zero orders placed all day
+
+**Impact after fix (deployed 15:57 UTC)**:
+- DOGEUSDT now executes r6_arm15_rr4 (blocklisted because it hurts ETHFIUSDT/THETAUSDT, but best for DOGE)
+- MEMEUSDT now executes sl_adjust_rr_tp95 (blocklisted globally but best for MEME)
+- Both symbols resume normal order flow
+
+**Today's P&L summary (Jun 14)**:
+
+TIAUSDT (hl_buy_trail15, locked, working correctly):
+- 6 SELL losses during ranging: -37.40
+- 3 SELL wins as price fell: +69.53
+- 2 BUY trades: -2.84
+- TIAUSDT net: ~+$29
+
+DOGEUSDT (wrong preset until fix): -$12-15 net
+MEMEUSDT (locked but blocked until fix): 0 orders
+
+Balance: 4,064.15 USDT (up from 3,975 Jun 13)
+
+**Design insight**: Locked presets are designed to bypass BOTH virtual_tracker selection AND global preset_blocklist. This allows symbols to override global decisions on a per-symbol basis (e.g., lock a preset that's globally bad but locally best). Both bypasses must work for the feature to function.
+
+**Immediate next actions**:
+1. Monitor DOGEUSDT and MEMEUSDT for next orders confirming correct locked presets execute
+2. Track trading improvements now that locked orders flow again
+3. Note: SOLUSDT still silent (L3 swing staleness, no fix until structure refreshes)
+
+---
+
+## ⟳ RESUME POINT — session 49 (2026-06-14) — RR floating-point epsilon fixed, DOGEUSDT + MEMEUSDT locked, maintenance completed
+
+**Session summary:**
+
+**Bug 1: RR floating-point epsilon after SL floor widening (commit eb42fef)**
+- **Symptom**: DOGEUSDT signals with RR≈4.0 were getting rejected with `skip_rr: rr=3.9999999... < min=4.0`. 48 false rejections visible in decision log (00:30–04:45 UTC).
+- **Root cause**: After SL-floor widening, floating-point arithmetic produced rr=3.9999999... for signals that should be exactly 4.0. Strict `<` comparison rejected them.
+- **Fix**: Changed `if rr < self._s.min_profit_loss_ratio:` to `if rr < self._s.min_profit_loss_ratio - 1e-9:` in `bot/recommendation_engine.py` lines 144-147 (same for global_min_rr comparison). Epsilon of 1e-9 eliminates false rejections without relaxing any real threshold.
+- **Deployed**: Commit eb42fef pushed and pulled to server.
+
+**Bug 2: DOGEUSDT locked to wrong preset (blocklist vs locked_presets design)**
+- **Symptom**: DOGEUSDT was using `rr_4x_trail_20` (recent=+3.06) and `r6_arm15_maxp3_trail20` (recent=-13.64), losing -$13.52, -$2.06, +$3.20 = -$12.38 net today.
+- **Root cause**: Best DOGEUSDT preset `r6_arm15_rr4` (recent=+24.79, total=+19.13, tc=28 — only profitable DOGE preset) is in `preset_blocklist`. Global blocklist blocks it for all symbols because it causes losses on ETHFIUSDT (-$27.63) and THETAUSDT (-$33.80). But for DOGEUSDT specifically it's the clear best.
+- **Design insight**: Global blocklist is too blunt. Presets that work great on one symbol (e.g. r6_arm15_rr4 on DOGEUSDT) cause losses on others. `locked_presets` (per-symbol override) is the right pattern.
+- **Fix**: Added `locked_presets.DOGEUSDT: "r6_arm15_rr4"` in risk_config.json. Hot-reloads every candle; bypasses blocklist for that specific symbol.
+
+**Bug 3: MEMEUSDT locked to wrong preset (same root cause)**
+- **Symptom**: MEMEUSDT using `trail_20_from_30_act5_min15` (virtual best after blocklist). Best preset `sl_adjust_rr_tp95` (recent=+5.76, total=+1.04, tc=29) is blocklisted — blocked because DOGEUSDT and WLDUSDT have terrible results with it (-$49, -$64), but MEMEUSDT/TIAUSDT are positive.
+- **Fix**: Added `locked_presets.MEMEUSDT: "sl_adjust_rr_tp95"` in risk_config.json.
+
+**Maintenance completed:**
+- **Logrotate configured** (`/etc/logrotate.d/trading-bot`) — rotating bot.log and trades.log weekly, compress, 8 weeks retention, copytruncate
+- **Archive cleanup** — deleted 941 stale archive files from `/opt/bot/data/` (virtual_orders_rankN_SYM_test_archive_*.json). Freed 11 MB disk space (78 MB → 67 MB)
+
+**Current state (Jun 14 14:00 UTC):**
+- Balance: 4,066.79 USDT
+- Open: TIAUSDT BUY entry=0.3344, SL=0.3203, TP=0.3880, preset=hl_buy_trail15
+- locked_presets: TIAUSDT→hl_buy_trail15, DOGEUSDT→r6_arm15_rr4, MEMEUSDT→sl_adjust_rr_tp95
+- Code: commit eb42fef (RR epsilon fix)
+
+**Key analysis findings (for next session context):**
+- **Real PnL all-time (159 trades)**: TIAUSDT +$59.48 (only profitable symbol). All others combined -$258.98. Total -$199.50, but +$68 since Jun 13 restart.
+- **SOLUSDT structural silence**: L3 swing stuck at last_high=55.83, current=68. BUY generates negative profit targets — no fix available, wait for market structure refresh.
+- **Blocklist per-symbol performance**: Global `preset_blocklist` is coarse-grained tool. Same preset hurts some symbols and helps others. Pattern: use global blocklist for truly bad presets (e.g. old-regime presets), and `locked_presets` to override for specific symbols where it works.
+
+**Next session priorities:**
+1. Monitor DOGEUSDT with r6_arm15_rr4 — expect fewer skip_rr false positives and better trade quality
+2. Monitor MEMEUSDT with sl_adjust_rr_tp95
+3. TIAUSDT BUY (entry=0.3344) — let hl_buy_trail15 trail; TP at 0.3880 (+16%)
+4. SOLUSDT: no action, wait for market structure refresh
+5. Consider reviewing global `preset_blocklist` — too coarse; per-symbol `locked_presets` is better pattern for high-performing presets that work on some symbols but not others
+
+---
+
+## ⟳ RESUME POINT — session 48 (2026-06-13) — Three overnight bugs fixed (min_profit_factor, locked_presets typo, EIGENUSDT analysis)
+
+**Session summary:**
+
+**Bug 1: Overnight trading freeze (16+ hours zero orders)**
+- **Symptom**: No orders placed 2026-06-12 18:00 to 2026-06-13 10:30 (16+ hours)
+- **Root cause**: DOGEUSDT was sole active signal generator. Its best backtest preset (r6_arm15_maxp3_trail20) has profit_factor=1.1088, below global threshold min_profit_factor=1.15.
+- **Fix**: Lowered `min_profit_factor` in `/opt/bot/risk_config.json` from 1.15 → 1.08 (server hot-reload, no code change)
+- **Result**: DOGEUSDT SELL placed at 10:30 UTC (qty=7516, entry=0.08733, preset=r5_sl_adj_cooldown)
+
+**Bug 2: TIAUSDT BUY always blocked by max_profit_pct**
+- **Symptom**: TIAUSDT BUY signal (RR=3.5+, weight=15) blocked every candle with `skip_max_profit_pct: profit=17.63% > max=3.0%` using preset r7_arm20_maxp3_trail20
+- **Root cause A (config)**: locked_presets in risk_config.json had typo key `TIASDT` instead of `TIAUSDT` → locked preset never applied. When TATS candidate assembly fallback ran, it bypassed locked_presets check and called `virtual_tracker.best_preset()`, which returned a preset with profit_factor mismatch.
+- **Root cause B (code)**: main.py line 1028 didn't check locked_presets before fallback. Fixed in commit 997a5ac.
+- **Fix 1**: Corrected key in risk_config.json: `{"TIAUSDT": "hl_buy_trail15"}` (was TIASDT)
+- **Fix 2**: main.py line 1028 changed fallback to: `_bp = risk_cfg.get("locked_presets", {}).get(sym) or virtual_tracker.best_preset(sym)`
+- **Result**: TIAUSDT BUY placed at 11:15 UTC (qty=5868, entry=0.3356, TP=0.3928, SL=0.3162, preset=hl_buy_trail15). Verified via decision_log: `placed hl_buy_trail15`.
+
+**Finding: EIGENUSDT not trading despite weight=5**
+- **Analysis**: EIGENUSDT has all-negative efficiency scores in VirtualTracker recent_trades (every preset in recent losses)
+- **Result**: TATS correctly excludes it — system protecting from recently-losing symbol
+- **Action**: Left at weight=5; no change. Best backtest preset: r5_trail10_rr3 (+4.65%, but only 1 win in 22 trades via high RR). System will naturally improve once VirtualTracker turns positive.
+
+**Current config state (risk_config.json on server):**
+- `min_profit_factor`: 1.08 (was 1.15) — hot-reloaded, no code rebuild
+- `global_trend_regime_lookback`: 3 (was 2) — from session 47
+- `symbol_weights.EIGENUSDT`: 5 (was 0 from session 46) — re-enabled weight-based virtual tracking
+- `locked_presets`: `{"TIAUSDT": "hl_buy_trail15"}` (was TIASDT, now corrected)
+
+**Code changes:**
+- Commit 997a5ac (`fix(tats): respect locked_presets in candidate assembly fallback path`): main.py line 1028 now checks locked_presets before falling back to VirtualTracker
+
+**Open positions at 11:15 UTC (2026-06-13):**
+- DOGEUSDT SELL: entry=0.08729, SL=0.08779 (0.11% away — high stop risk), TP=0.08539, preset=r5_sl_adj_cooldown
+- TIAUSDT BUY: entry=0.3356, SL=0.3162 (5.86% away), TP=0.3928 (+17.1%), preset=hl_buy_trail15
+
+**Next session priorities:**
+1. Monitor TIAUSDT BUY outcome (hl_buy_trail15: trailing_stop_pct=0.15, partial_take_pct=0.30, tp_multiplier=0.95)
+2. Verify SELL SL floor fix (commit 36d8863) on next real SELL close — check SL floor being applied correctly
+3. Investigate why EIGENUSDT SELL only appears as CANDIDATE (never BEST) in recommendation engine — regime filter or scoring issue
+4. Run EIGENUSDT backtest again to refresh preset efficiency data
+
+---
+
+## ⟳ RESUME POINT — session 47 part 2 (2026-06-12) — TATS minimum weight cap added, all critical audit bugs verified fixed/mitigated
+
+**Session summary (part 2 continuation):**
+
+**Fix 3: TATS minimum weight cap (commit 8249da8)**
+- **Problem**: When a low-weight symbol (e.g. DOGEUSDT w=1) was the only TATS candidate, it received the FULL deployable budget (~$3,200) instead of its proportional ~$90 slice. This caused a -$20.77 loss on a $5,000 DOGEUSDT position.
+- **Fix**: Added `tats_min_weight` knob in main.py. When a single-signal TATS candidate's weight < tats_min_weight, it receives a weight-proportional budget slice instead of full deployable.
+- **Config**: Added `"tats_min_weight": 3.0` to `/opt/bot/risk_config.json` on server. DOGEUSDT (w=1) < 3.0 → gets ~2.3% of deployable (~$90) instead of full budget.
+- **Default**: tats_min_weight=0 preserves existing behavior (full budget for any candidate).
+- **File changed**: main.py (lines ~1062-1085)
+
+**Code audit verification complete (session 43 audit — 2 critical, 5 important, 6 minor bugs):**
+
+**Critical bugs (all resolved):**
+- **A1 (BoS history wipe)**: MITIGATED — `if time_of_last_high is not None:` guard at trend.py:293 prevents L1 history wipe on removal. L2 may get incorrect first low point but L1 data never destroyed.
+- **A2 (zero PF blocks trading)**: FIXED — `if pf > 0 and pf < cfg["min_profit_factor"]` now allows pf=0 through; only rejects pf < 0 or above threshold.
+
+**Important bugs (all verified resolved):**
+- **B1 (wrong balance in weight path)**: FIXED — `risk_manager.get_balance()` correctly passed to get_symbol_allocation; no balance confusion.
+- **B2 (preset scoring units mismatch)**: EFFECTIVELY FIXED — Two-tier tuple scoring (session 32) ensures tier always compared first, then value, preventing unit confusion.
+- **B3 (PLACING_TIMEOUT never enforced)**: FIXED — `asyncio.wait_for(..., timeout=self.PLACING_TIMEOUT)` wraps order submission at order_executor.py:200-203.
+- **B4 (OHLC SL/TP check missing)**: FIXED — `check_symbol_candle()` implements full OHLC-level gap detection per session 24.
+- **B5 (simultaneous swing high+low drops low)**: FIXED — Both is_high and is_low preserved in same dict; checkPointObject uses `if/if` (not `if/elif`), both can be true.
+
+**Minor bugs (all fixed):**
+- All 6 minor bugs from session 24 audit resolved per FEATURES.md bug fix sections.
+
+**Bot status (18:00 UTC June 12):**
+- Branch: feature/backtest-live-parity, commit 8249da8
+- Connected: 17:42:18 UTC, 15 symbols
+- Balance: ~$3,975 USDT
+- Active trading: DOGEUSDT (w=1, best=r5_sl_adj_cooldown, +$9.66 live) and MEMEUSDT (w=8, best=r5_arm20, currently streak-blocked)
+- Silent: SOLUSDT (w=20, structural TP<entry), TIAUSDT (w=15, structural TP<entry)
+- SELL SL floor fix (commit 36d8863) not yet verified with live SELL trade — first SELL placement will confirm
+
+**risk_config.json additions:**
+- `tats_min_weight: 3.0` — DOGEUSDT now capped to ~$90 in single-signal TATS
+- `ranking_window_size: 10` — explicitly set (was default 10)
+
+---
+
+## ⟳ RESUME POINT — session 47 (2026-06-12) — Critical SL floor interaction bugs fixed, global filters deployed
+
+**Session summary (part 1):**
+
+**Two critical bugs fixed and deployed (feature/backtest-live-parity branch):**
+
+**Bug 1: SL floor × max_rr RR collapse (commit ~deaf4ce)**
+- **Root cause**: Engine computed eff_loss_dist = raw loss_dist. When max_rr clamping clipped TP downward (0.42% profit from 0.105% SL), then main.py floored the SL to 0.5%, resulting in recomputed RR = 0.42% / 0.5% = 0.84, below minimum 1.5.
+- **Effect**: MEMEUSDT BUY signal at RR=4.0 in trades.log but `skip_rr: rr=0.84 < min=1.5` in decision_log. Engine and main.py disagreed on actual trade RR.
+- **Fix**: In `bot/recommendation_engine.py` (lines 128-136), compute `eff_loss_dist = max(loss_dist, entry × global_min_sl_pct/100)` BEFORE all RR computations and TP clipping. Ensures engine and main.py agree on actual trade RR.
+- **Verified**: MEMEUSDT BUY placed at 13:00 with correct RR=4.0 after fix.
+
+**Bug 2: SELL SL floor inconsistency (commit 36d8863)**
+- **Root cause**: main.py multiplies raw SELL SL distance by 1.5 before comparing to floor (actual SELL floor = 0.333%), but engine used full 0.5% for eff_loss_dist, causing TP over-clipping and actual RR exceeding max_rr for tight SELL SLs.
+- **Effect**: For SELL signals with raw SL between 0.333% and 0.5%, engine computed eff_loss_dist=0.5%, clipped TP tighter than necessary, then main.py used 0.333% floor, resulting in actual RR > max_rr (invalid).
+- **Fix**: In `bot/recommendation_engine.py` (lines 128-136), use `global_min_sl_pct / 1.5` as minimum for SELL signals (matching main.py's actual behavior).
+
+**New global filters added to risk_config.json (hot-reload, no Docker rebuild):**
+- `global_trend_regime_filter: true` — blocks BUY in descending regime, SELL in ascending regime
+- `global_trend_regime_lookback: 2` — uses last 2 swing pairs for regime detection
+- `global_min_rr: 3.0` — blocks all signals with RR < 3.0
+- `global_max_rr: 4.0` — clips TP to max RR=4.0 (using floored SL distance)
+- `global_min_sl_pct: 0.5` — floors SL to 0.5% of entry (0.333% for SELL due to ×1.5 factor)
+
+**Preset blocklist extended:**
+- Added `trail_15_from_30_tp95` to blocklist (was causing TIAUSDT -$65.29 loss on 4 trades today)
+
+**Key discoveries:**
+1. **TIAUSDT blocklisted preset misfire**: `trail_15_from_30_tp95` placed 4 orders, net -$65.29. Was placed before blocklist was applied. Now blocked.
+2. **SOLUSDT structural silence** (9+ days): L3 trend has stale swing points (last high=55.83, last low=51.67). Current price ~67. BUY target 55.83 is below current price → filtered. SELL target 51.67 was blocked by regime filter. Weight=20 but zero trades.
+3. **TIAUSDT structural silence**: Same issue. Price rose above TP=0.32, entry now at 0.33-0.34. Structural stagnation.
+4. **DOGEUSDT oversized TATS position**: When weight=1 symbol is sole viable candidate, TATS allocates full budget → $5,000 position (vs expected ~$90). Lost $20.77 on 02:45 trade. FIXED in part 2 with tats_min_weight cap.
+5. **r5_arm20 preset performance**: After MEMEUSDT SL loss at 13:04, best preset switched to r5_arm20. Backtest seeded=-641, but live recent10=+3.55. Left in place — global filters now protect against historically bad behavior.
+6. **decision_log_test.json signal patterns**: Key insight — `floor_sl_pct` followed by `placed` is the success marker. `skip_rr` means RR was computed wrong (the bug we fixed).
+
+---
+
+## ⟳ RESUME POINT — session 46 (2026-06-11) — Weight rebalancing, lock removal, EIGENUSDT muted
+
+**Session summary:**
+
+**Hot-reload config rebalancing deployed to risk_config.json (no code changes, no Docker rebuild):**
+1. **EIGENUSDT weight → 0** — Was not in symbol_weights dict, defaulted to 1. Consistently fails `profit_factor=0.92 < threshold=1.15` every single candle across all presets. Blocking capital for zero revenue. Virtual tracking continues; symbol muted from real orders.
+2. **SOLUSDT lock removed** — Locked preset `r8_sol_hlbuy_cooldown` scored (1, -3.46) tier-1 negative. Free `db_layer_1` scores (1, +23.69) — clear leader. Virtual_tracker fix (session 45) now correctly excludes blocklisted presets from best_preset(), so the lock bypass is no longer needed.
+3. **1000PEPEUSDT lock removed** — Locked to `r5_sl_adj_cooldown`. The lock was a workaround for blocklisted `db_clone_cooldown` winning the scoring race. With blocklist filter now fixed, bot auto-selects best eligible. Virtual tracker identifies `r5_rr3` as leader (score +12.09).
+4. **INJUSDT weight: 10 → 3** — All presets have NEGATIVE recent scores (best was `r5_sl_adj_cooldown` at -2.71). At weight=10 was consuming too much budget for consistent losses. Reduced to 3 to limit exposure while virtual tracking accumulates data.
+5. **TIAUSDT weight: 12 → 15** — Best performer `trail_15_from_15` (score +63.28, recent10=+63.28, tc=24, live=+78.13). Consistent top performer — modestly increased from 12 to reward proven symbol.
+
+**Active symbol weights (final):**
+SOLUSDT: 20, TIAUSDT: 15, 1000PEPEUSDT: 10, MEMEUSDT: 8, INJUSDT: 3, DOGEUSDT: 1
+Zero weight (virtual-only): SHIBUSDT, APTUSDT, AVAXUSDT, EIGENUSDT, ETHFIUSDT, JUPUSDT, REZUSDT, THETAUSDT, WLDUSDT
+
+**Today's P&L (June 11 UTC):**
+- +13.14 PEPE BUY (04:00)
+- -1.63 DOGE SELL (08:29), +3.18 DOGE SELL (12:24), -0.75 DOGE SELL (17:30) = net -1.20 DOGE
+- -0.44 PEPE SELL (14:00), -2.17 PEPE SELL (14:52), -28.58 PEPE SELL (17:29), -5.16 PEPE SELL (17:30) = net -35.35 PEPE (last two amplified by new $5k notional cap)
+- -2.25 MEME SELL (14:23)
+- Net: -24.66 USDT today. Current balance: ~4172 USDT
+
+**Audit bug progress (from session 43 memory — 22 days old):**
+- A1 (L1 history wipe): PARTIALLY FIXED — guard at trend.py:293 prevents removePointsUpTo when time_of_last_high is None; blank L2 still created but no longer wipes L1 history
+- A2 (pf=0.0 blocks trading): FIXED — risk_manager.py:140 now checks `pf > 0 and pf < threshold`
+- B1 (wrong balance): FIXED — main.py:1053 passes `risk_manager.get_balance()` not pool slice
+- B2 (preset scoring units): EFFECTIVELY FIXED by tuple scoring (tier always compared first)
+- B3 (PLACING_TIMEOUT): FIXED — asyncio.wait_for with timeout at order_executor.py:200-203
+- B4 (OHLC SL/TP check) and B5 (simultaneous swing high+low): still unverified
+
+**Pending items:**
+- Monitor SOLUSDT and PEPE without locks — expect auto-selection of best eligible presets
+- Monitor INJUSDT weight=3 — if still produces losses, reduce further to 0
+- Monitor TIAUSDT weight=15 — verify trail_15_from_15 continues performing
+- Backtest-live gap 7-step fix plan (from reference_gap_analysis.md) still pending
+- Code audit bugs B4 and B5 still unverified
+
+---
+
+## ⟳ RESUME POINT — session 45 (2026-06-11) — Hot-reload config, preset blocklist, notional cap
+
+**Session summary:**
+
+**Hot-reload risk_config.json changes deployed to live server:**
+1. **Added `max_order_notional_usdt: 5000`** — caps any single order to $5k notional (prevents INJUSDT-style $15k bets; $5k at 4x = $1,250 margin, at 0.5% SL = $25 loss, matches max_loss_usdt)
+2. **Added `locked_presets: {SOLUSDT: r8_sol_hlbuy_cooldown, 1000PEPEUSDT: r5_sl_adj_cooldown}`** — locks symbols to their best performers (enables PEPE to select non-blocklisted preset after db_clone_cooldown was blocklisted)
+3. **Reduced DOGEUSDT weight from 3 to 1** — has 60% WR but -$30 net (avg_win $2.11 vs avg_loss $4.55, unfavorable R:R)
+
+**Code bug fix — deployed to production:**
+- **File**: `bot/virtual_tracker.py`, method `best_preset()`
+- **Bug**: Blocklisted presets could win the scoring race inside `best_preset()` and be returned, then blocked in `_try_place_order()`. This deadlocked affected symbols (e.g. 1000PEPEUSDT / db_clone_cooldown) — never trading even though good non-blocklisted presets existed.
+- **Fix**: Filter out blocklisted presets BEFORE `max()` selection; also reset `_last_best` sentinel when previous best preset is now blocklisted, so hysteresis can't lock into ineligible preset.
+- **Deployed**: Commit b88388c, live on server
+
+**Architecture discoveries (no code changes):**
+- Bot runs in Docker container — code baked into image, NOT volume-mounted. Only `data/`, `logs/`, `risk_config.json`, `symbol_registry.json`, and `dashboard/public/` are mounted.
+- P3 sizing "bug" already fixed — `_get_fresh_balance()` fetches real exchange balance, NOT virtual
+- `DEFAULT_CONFIG` in `config/risk_config.py` has `max_order_notional_usdt: 500.0` as default (explains old 500 cap logs from May 23)
+- Blocklist was likely missing from risk_config.json for period (explains why blocklisted presets traded June 6–11)
+
+**Analysis/decisions (no code changes):**
+- DO NOT increase leverage now — only $172 buffer to hard stop, base=4/max=5 is flat at 4x always
+- After balance recovers above ~$4,500: widen leverage to base=3, max=8
+- EIGENUSDT consistently fails profit_factor (0.92 < 1.15 threshold) — wastes CPU, consider weight→0 in future
+
+**Key state after session:**
+- risk_config.json: max_order_notional_usdt=5000, locked_presets={SOLUSDT: r8_sol_hlbuy_cooldown, 1000PEPEUSDT: r5_sl_adj_cooldown}, DOGEUSDT weight=1
+- Bot container rebuilt; 1000PEPEUSDT now selects r5_sl_adj_cooldown (non-blocklisted, score=21.06) instead of deadlocked
+- All 6 regime-aware presets accumulating virtual data from session 44 deployment
+
+**Pending:**
+- Consider EIGENUSDT weight→0
+- After balance >$4,500: widen leverage to base=3, max=8
+- Code audit bugs: 2 critical, 5 important, 6 minor from 2026-05-20 still unaddressed
+- Backtest-live gap 7-step fix plan pending
+
+---
+
+## ⟳ RESUME POINT — session 44 (2026-06-11) — Regime-aware trading deployed
+
+**Session summary:**
+
+**Feature: Regime-aware directional trading (deployed 2026-06-11)**
+
+Root cause: In confirmed L2 downtrend (APTUSDT Jun 2-4 example — consecutive lower L2 highs + lows), bot fires BUY signals at L2 lows AND SELL signals at L2 highs. BUY signals lose money, SELL signals profit. Since all presets trade both directions, losses cancel gains.
+
+**Solution deployed**: Two complementary mechanisms:
+
+**1. Signal direction gate** — New `signal_direction` setting ('buy', 'sell', 'both'). Hard-gates recommendations before scoring; discards all recs for opposite side. Enables SELL-only or BUY-only presets.
+
+**2. Trend regime filter** — New settings: `trend_regime_filter` (bool), `trend_regime_lookback` (int, default 3). Calls `Trend.getTrendRegime()` each candle to detect structural regime ('descending', 'ascending', 'neutral'). Blocks BUY in descending trends, SELL in ascending trends.
+
+**New infrastructure**:
+- `bot/trend.py::getTrendRegime(lookback)` — examines last N swing pairs, returns regime
+- `bot/recommendation_engine.py` — direction gate (before scoring) + regime gate (in _score_and_filter)
+- `config/settings.py` — added signal_direction, trend_regime_filter, trend_regime_lookback
+- `config/presets.py` — 4 new regime presets: l2_trend_sell, l2_trend_buy, l2_regime_aware, l2_regime_aware_strict
+
+**Also deployed (same session)**:
+- `l2_bos_entry`, `l2_bos_trend` presets (post-BoS L2 entry, min_swing_points=2)
+- Binance -4131 PERCENT_PRICE error handling (MarketConditionError, transient, no auto-disable)
+- `notify_trade_close` on shutdown closes + per-symbol close paths
+- Per-symbol trade rate limiting in notifier (was shared, now per-symbol)
+- `SymbolRegistry.reload_from_disk()` for hot-reload support
+
+**Files changed**: settings.py, trend.py, recommendation_engine.py, presets.py, order_executor.py, notifier.py, symbol_registry.py, backtest_api.py
+
+**Status**: All deployed 2026-06-11, bot running with regime-aware presets active.
+
+**Next steps**: Monitor regime-aware preset performance; evaluate if signal quality improvements are realized.
 
 ---
 
@@ -654,6 +1089,56 @@ During deploy, bot closed 3 orphan positions at startup: APTUSDT SELL (-64.86 US
 
 ---
 
+**Bugs fixed — session 49 (2026-06-14):**
+
+1. **RR floating-point epsilon** (`bot/recommendation_engine.py`)
+   - **Cause**: After SL-floor widening, floating-point arithmetic produced rr=3.9999999... for signals that should be exactly 4.0. Strict `<` comparison rejected them.
+   - **Effect**: DOGEUSDT with `rr_4x_trail_20` (min_profit_loss_ratio=4.0) had 48 false rejections in decision log (00:30–04:45 UTC).
+   - **Fix**: Changed comparisons to use epsilon: `if rr < threshold - 1e-9` in lines 144-147 (both min and global thresholds).
+
+2. **DOGEUSDT + MEMEUSDT locked to wrong presets** (`/opt/bot/risk_config.json`)
+   - **Cause**: Global `preset_blocklist` too blunt — r6_arm15_rr4 hurts ETHFIUSDT/THETAUSDT but is best for DOGEUSDT (+24.79 recent). Same for sl_adjust_rr_tp95 (bad for DOGEUSDT, good for MEMEUSDT).
+   - **Effect**: Both symbols trading suboptimal presets, losing capital.
+   - **Fix**: Added per-symbol `locked_presets` overrides: DOGEUSDT→r6_arm15_rr4, MEMEUSDT→sl_adjust_rr_tp95. Locked presets bypass blocklist and hot-reload every candle.
+
+**Bugs fixed — session 48 (2026-06-13):**
+
+1. **Overnight trading freeze (min_profit_factor too strict)** (`/opt/bot/risk_config.json`)
+   - **Cause**: Global `min_profit_factor=1.15` was too high. DOGEUSDT (sole active signal generator) had best backtest preset with pf=1.1088, which fell below threshold.
+   - **Effect**: No orders placed for 16+ hours (2026-06-12 18:00 to 2026-06-13 10:30) despite active signals.
+   - **Fix**: Lowered `min_profit_factor` from 1.15 → 1.08 in risk_config.json (hot-reload, no code rebuild).
+   - **Result**: DOGEUSDT SELL placed immediately after config change at 10:30 UTC.
+
+2. **TIAUSDT BUY blocked by max_profit_pct + locked_presets typo** (`/opt/bot/risk_config.json`, `bot/main.py` commit 997a5ac)
+   - **Cause A (config)**: locked_presets dict had key `TIASDT` instead of `TIAUSDT`. Locked preset never applied. When TATS fallback ran, it bypassed locked_presets check and called `virtual_tracker.best_preset()`, which returned r7_arm20_maxp3_trail20 (profit_factor mismatch, max_profit_pct=3%).
+   - **Cause B (code)**: main.py line 1028 fallback didn't check locked_presets before calling best_preset().
+   - **Effect**: TIAUSDT BUY signal RR=3.5+ blocked every candle with `skip_max_profit_pct: profit=17.63% > max=3.0%`.
+   - **Fix 1**: Corrected config key to `{"TIAUSDT": "hl_buy_trail15"}` (was TIASDT)
+   - **Fix 2**: Changed main.py line 1028 to check locked_presets first: `_bp = risk_cfg.get("locked_presets", {}).get(sym) or virtual_tracker.best_preset(sym)`
+   - **Result**: TIAUSDT BUY placed at 11:15 UTC with hl_buy_trail15 preset. Verified in decision_log.
+
+**Bugs fixed — session 47 (2026-06-12):**
+
+1. **SL floor × max_rr RR collapse** (`bot/recommendation_engine.py`)
+   - **Cause**: Engine computed eff_loss_dist from raw loss_dist. When max_rr clamping clipped TP (0.42% profit from 0.105% SL), then main.py floored SL to 0.5%, resulting in recomputed RR = 0.42% / 0.5% = 0.84, below min 1.5.
+   - **Effect**: MEMEUSDT BUY signal at RR=4.0 in trades.log but decision_log showed `skip_rr: rr=0.84 < min=1.5`. Engine and main.py disagreed on effective RR.
+   - **Fix**: Compute `eff_loss_dist = max(loss_dist, entry × global_min_sl_pct/100)` BEFORE all RR computations and TP clipping. Ensures both engine and main.py use the same floored SL distance for all RR calculations.
+   - **File**: `bot/recommendation_engine.py` lines 128-136
+
+2. **SELL SL floor mismatch between engine and main.py** (`bot/recommendation_engine.py`)
+   - **Cause**: Engine used full 0.5% floor for SELL eff_loss_dist; main.py uses 0.5%/1.5 = 0.333% (account for harsher SELL spikes).
+   - **Effect**: For SELL signals with raw SL between 0.333% and 0.5%, engine over-clipped TP, then main.py computed different actual RR, causing invalid signal rejection.
+   - **Fix**: Engine now uses `global_min_sl_pct / 1.5` as minimum for SELL signals (matching main.py behavior).
+   - **File**: `bot/recommendation_engine.py` lines 128-136
+
+**Bugs fixed — session 45 (2026-06-11):**
+
+1. **PEPE preset blocklist deadlock** (`bot/virtual_tracker.py`, `best_preset()` method)
+   - **Cause**: When best-scoring preset was blocklisted, `best_preset()` returned it anyway. Later `_try_place_order()` blocked it, leaving symbol with no valid preset selected. On next candle, the blocklisted preset would score highest again, creating a deadlock loop. Symbol never traded despite having non-blocklisted presets available.
+   - **Effect**: 1000PEPEUSDT was stuck trading db_clone_cooldown (blocklisted) instead of r5_sl_adj_cooldown (non-blocklisted, score=21.06). Solution: locked preset to force selection of alternative.
+   - **Fix**: Filter blocklisted presets from candidates BEFORE calling `max()`; also reset `_last_best` sentinel when previous best is now blocklisted, preventing hysteresis from re-locking into ineligible preset on next scoring cycle.
+   - **Deployed**: Commit b88388c, live on server.
+
 **Bugs fixed — session 43 (2026-06-11):**
 
 1. **TATS n==1 zero-score bypass** (`main.py` line ~1042)
@@ -1263,7 +1748,12 @@ Solution: `Analyzer` maintains `_all_points` — a list that accumulates every d
 Full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`  
 Summary in: `UPCOMING_FEATURES.md`
 
-Key decisions:
+Key decisions (session 44, 2026-06-11):
+- **Regime-aware trading**: Implemented two mechanisms (signal_direction + trend_regime_filter) to restrict signals during confirmed structural trends. Decision: support both hard gates (for preset-specific locking) AND dynamic per-candle detection (for flexibility). Hard gates simpler, regime detection more proactive.
+- **BoS entry presets**: Post-BoS signals allowed with min_swing_points=2 (vs global 3). Decision: relaxed thresholds only for BoS presets, not globally, to preserve existing signal filtering.
+- **Transient error handling**: Binance -4131 PERCENT_PRICE errors (fast market moves) treated as `MarketConditionError` and deferred to next candle, not auto-disable. Decision: transient != fatal — improves stability during market volatility.
+
+Key decisions (session 43 and earlier):
 - Config: `SYMBOLS=BTCUSDT,XAUUSDT` in `.env`; per-symbol overrides via `{SYMBOL}_{SETTING}` env vars
 - Concurrency: pure asyncio — `asyncio.gather` over per-symbol coroutines; klines loaded sync at startup
 - File naming: all output files get `{SYMBOL}_` prefix (`results_{SYMBOL}.json` etc.)

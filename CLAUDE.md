@@ -40,6 +40,31 @@ The Librarian agent (`/librarian`) is responsible for writing and updating `FEAT
 
 ---
 
+## Proactive improvement mandate
+
+When the user says **"act like the wise owner"** (or any equivalent phrasing asking for proactive improvement), treat it as a standing mandate to:
+
+1. Pull the latest logs, backtest results, and trade data from the server.
+2. Identify the single highest-leverage improvement — the one that most directly reduces losses or increases USDT profit, backed by actual numbers.
+3. Propose it concisely with the data that justifies it.
+4. Implement only after explicit approval; never make speculative changes.
+
+Default priority order: fix a loss-producing bug → tighten a filter backed by data → adjust a risk param backed by data → add a new signal filter → add a new feature.
+
+**Never block real orders without data.** If blocking a preset or signal type, always show the win rate, trade count, and USDT impact before applying.
+
+---
+
+## Big-feature spec rule
+
+**If a feature discussion has consumed significant context (multiple back-and-forth exchanges, deep analysis, or design decisions), write a spec doc BEFORE writing any code.**
+
+Save to: `docs/specs/YYYY-MM-DD-<topic>.md`
+
+The spec must cover: what it does, why it's needed, the chosen approach and why, what was rejected and why, exact file/function touch points, and any risk flags. Do not start coding until the spec is committed to git. This prevents losing design decisions when context is compacted or the session ends.
+
+---
+
 ## How to work with me
 
 - **Read all files before suggesting anything.** Understand the full picture first.

@@ -45,6 +45,7 @@ Bot processes multiple symbols concurrently via asyncio. Symbol list stored in `
 - Per-symbol status tracking: backtest state, active/disabled
 - Subscriber callback system for registry changes
 - Per-rank symbol disable: can disable rank 2–6 positions per symbol without affecting rank 1 (real orders)
+- **Hot-reload**: `reload_from_disk()` method allows live re-reading symbol_registry.json without restarting bot (session 42 improvement)
 
 ---
 
@@ -80,6 +81,18 @@ Hierarchical trend structure: L1 (finest detail, 1-3 swings) → L2 (coarser, im
 - Exporter uses history; fallback to live-trend traversal if not provided
 - Enables post-run analysis: "Which points triggered the trend flip?"
 
+### Break-of-Structure (BoS) Entry Signals
+Post-BoS L2 entry signals using minimum swing point requirements. When BoS occurs, new trend begins with fewer initial swings. Presets allow entry immediately after BoS with relaxed `min_swing_points` settings (default 2 for BoS presets vs 3 global).
+
+**Files**: `bot/trend.py`, `config/settings.py`, `config/presets.py`, `bot/recommendation_engine.py`, `backtest_api.py`
+**Key settings**:
+- `min_swing_points_projection: int` (default 1) — minimum swing points in next BoS structure before entry allowed (usually 1, meaning enter on first swing of next level)
+- Settings propagated through `trend.py::getSupposedNextPoints(min_pts)` to feed recommendation_engine with low thresholds
+
+**New presets**:
+- `l2_bos_entry` — min_swing_points=2, min_swing_points_projection=1, ignore_parent_alignment=True. Post-BoS L2 entry with minimal data.
+- `l2_bos_trend` — same settings plus trend-aware filtering (ignore_parent_alignment=False).
+
 ### Recommendation Generation & Scoring
 Analyzes trend state at candle open and generates a single best trading signal (BUY or SELL) with entry, TP, SL, and a 0.0–1.0 precision score.
 
@@ -89,6 +102,7 @@ Analyzes trend state at candle open and generates a single best trading signal (
 **Signal types**:
 - `RISING_ABOVE_LAST_LOW` / `LOWERING_BELOW_LAST_HIGH` (primary entries after swing confirmation)
 - `ASCENDING_NEAR_HIGHER_LOW` / `DESCENDING_NEAR_LOWER_HIGH` (pre-confirmation entries, if enabled)
+- BoS-triggered entries (RISING_ABOVE_LAST_LOW / LOWERING_BELOW_LAST_HIGH on new trend post-structure break)
 
 **Filtering**:
 - Min swing points per level: `min_swing_points` (default 3, env: `MIN_SWING_POINTS`)
@@ -241,6 +255,11 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
 **Position sizing**:
 - Quantity = `margin / current_price` where `margin = min_notional / current_leverage`
 - `min_notional`: symbol-specific minimum notional from exchange (lot size cache fetched at startup)
+- **Max notional cap** (session 45):
+  - New config field: `max_order_notional_usdt` (default 500.0, upgraded to 5000.0 in session 45)
+  - Prevents single orders from exceeding specified notional value (e.g., $5k cap prevents $15k bets on high-leverage symbols)
+  - Caps order notional BEFORE placement (quantity adjusted downward if needed)
+  - Example: $5k cap at 4x leverage = $1,250 margin, at 0.5% SL = $25 max loss per trade
 - **Min notional safeguards** (session 22):
   - When balance < min_notional / leverage: auto-bump leverage up to needed level (capped at bracket_max)
   - If even bracket_max insufficient: skip order with `skip_min_notional` decision log entry
@@ -322,16 +341,55 @@ Sliding-window ranking system that elevates recent performance and prevents nega
 
 ## Risk Management
 
-### Lock Preset Per Symbol (Session 33)
-Allows manual override of automatic preset selection for a specific symbol. When locked, bot uses the designated preset for that symbol instead of calling `best_preset()` for efficiency ranking.
+### Preset Blocklist (Session 43)
+Prevents specific presets from being used for real order placement. Blocklisted presets are excluded from the scoring and selection process entirely. Useful for disabling presets that were historically successful but have degraded in recent conditions.
+
+**Files**: `config/risk_config.py`, `bot/virtual_tracker.py`, `main.py`
+**Key details**:
+- **Config field**: `preset_blocklist: list[str]` in risk_config.json (contains preset names to block)
+- **Bot behavior**: In `VirtualTracker.best_preset()` (session 45), blocklisted presets are filtered out BEFORE the `max()` scoring selection. Also resets `_last_best` sentinel when previous best preset is now blocklisted, preventing hysteresis from locking into an ineligible preset.
+- **Virtual tracking**: Blocklisted presets can still accumulate virtual trades (rank 2–6) for historical tracking, but do NOT participate in real order selection
+- **Difference from weight=0**: Weight=0 excludes entire symbol; blocklist excludes specific preset while other presets for that symbol remain available
+- **Session 45 discovery**: Blocklist had been missing from risk_config.json during June 6–11, explaining why blocklisted presets were trading. Adding it + fixing the filter logic resolved 1000PEPEUSDT deadlock (db_clone_cooldown was blocklisted but kept winning, blocking all other presets)
+- **Current blocklist** (session 43–45): db_clone_cooldown, pre_confirm_prox15_trail15, pre_confirm_trail15, trail_15_from_15_d1, sl_adjust_rr_tp95, r6_arm15_rr4, correction_w20_trail15_30, trail_15_from_15
+
+### Lock Preset Per Symbol (Session 33, fixed Session 50)
+Allows manual override of automatic preset selection for a specific symbol. When locked, bot uses the designated preset for that symbol instead of calling `best_preset()` for efficiency ranking. **Critical design**: Locked presets bypass BOTH the virtual_tracker selection AND the global preset_blocklist.
 
 **Files**: `dashboard/app/api/risk/lock-preset/route.ts` (NEW), `config/risk_config.py`, `dashboard/app/api/risk/route.ts`, `dashboard/lib/risk-types.ts`, `dashboard/app/trades/page.tsx`, `main.py` (~line 425 in `_try_place_order`)
 **Key details**:
 - **API endpoint** (`/api/risk/lock-preset`): POST `{symbol, preset}` to lock, POST `{symbol: "BTCUSDT", preset: null}` to unlock
 - **Config field**: `locked_presets: Record<string, string>` in risk_config.json (maps symbol → preset name)
 - **Bot behavior**: In `_try_place_order`, before calling `best_preset()`, checks `if symbol in locked_presets: use locked_presets[symbol]` directly; logs info-level message
+- **Blocklist bypass** (Session 50 fix, commit 4276319): Locked presets skip the blocklist check entirely. Main.py line 441 now: `if not is_locked and preset_name in _blocklist:` — blocklist only applies to non-locked presets. This allows locking a blocklisted preset to force its use despite poor global performance.
 - **Dashboard UI** (Trades page): 🔒/🔓 button appears per preset row; locked row highlighted in amber; button fetches locked preset state on symbol change
-- **Use case**: Manually pin a specific preset to a symbol when you want to override the auto-ranking (e.g., lock a conservative preset during high drawdown, or lock a winner you want to protect from demotion)
+- **Use case**: Manually pin a specific preset to a symbol when you want to override the auto-ranking AND global blocklist (e.g., lock r6_arm15_rr4 to DOGEUSDT when it's best for DOGE but blocklisted globally because it hurts ETHFIUSDT; lock a conservative preset during high drawdown)
+- **Current state** (session 51): DOGEUSDT locked to r6_arm15_rr4, MEMEUSDT locked to sl_adjust_rr_tp95 (both presets are globally blocklisted but best for their respective symbols). Locks are now working correctly after session 50 blocklist bypass fix and session 51 Docker rebuild.
+
+### Virtual Orders for Disabled Symbols (Session 50, deployed Session 51)
+Disabled symbols continue accumulating virtual order performance data (ranks 2–6) even though they are blocked from real order placement. Allows tracking preset efficiency on disabled symbols without placing real orders.
+
+**Files**: `main.py` (on_candle_close), `bot/virtual_order_simulator.py`
+**Key details**:
+- **Disabled symbol behavior**: `symbol_registry.is_disabled(symbol)` blocks real order placement, but virtual simulator still runs
+- **Virtual-only mode**: `on_candle_close(symbol, virtual_only=True)` called for disabled symbols; opens/closes virtual orders at ranks 2–6
+- **Efficiency accumulation**: Virtual order results recorded to `data/virtual_orders_rank{N}_{SYMBOL}_{MODE}.json`
+- **Use case**: Keep performance data current for symbols temporarily disabled (e.g., due to precision errors or market regime change), allowing quick re-enablement with fresh efficiency baseline
+- **Implementation** (commit f0323a1): Added check in main.py: `if symbol_registry.is_disabled(sym): virtual_order_simulator.on_candle_close(sym, virtual_only=True)`
+
+### Position Persistence on Restart (Session 50, deployed Session 51)
+Open positions are automatically restored on bot restart instead of being force-closed. Allows uninterrupted trading across bot restarts and deployments.
+
+**Files**: `main.py` (startup + shutdown), `bot/order_executor.py`, `bot/virtual_order_simulator.py`, `config/risk_config.py`
+**Key details**:
+- **Config**: `close_positions_on_stop: bool` in risk_config.json (default: false = persist; true = close on stop)
+- **On shutdown** (`on_stop_bot`): If `close_positions_on_stop=false`, save open position state to `data/restart_positions_{mode}.json` before closing (lists symbol, side, entry, qty, preset for each open order)
+- **On startup**: Call `restore_open_positions()` before `reconcile_with_exchange()` to reload saved positions into memory
+- **Exchange reconciliation**: After restoring, `reconcile_with_exchange()` verifies positions still exist on exchange; closes any that were liquidated/manually closed during downtime
+- **Default behavior** (false): Positions resume transparently; old trades continue with original entry/SL/TP
+- **Conservative mode** (true): Force-closes all positions at market price on stop (original behavior)
+- **Persistence format**: JSON file with per-symbol order state: `{ "symbol": "BTCUSDT", "side": "BUY", "entry_price": 0.12345, ... }`
+- **Not yet tested in production** (session 50/51): No position was open during first proper deploy (17:38 Jun 14); needs verification on next restart with open position
 
 ### Drag-and-Drop Symbol Weights (Session 33)
 Interactive reordering of symbol allocation weights via drag-and-drop in the Risk dashboard. Dragging a row reassigns weights 1..N based on drop position, then updates risk_config.json atomically.
@@ -502,7 +560,9 @@ Optional feature for distributing capital proportionally by symbol weight. Can b
 - `use_allocation_weighting` flag controls behavior (default false)
 - When enabled (session 36): deployable capital distributed as `symbol_allocation = total_deployable × symbol_weight / sum(weights)`. Capital flows proportionally to higher-weighted symbols.
 - When disabled: all symbols compete equally for available capital (ranking determines priority)
-- Current weights (session 36): TIAUSDT:20, 1000PEPEUSDT:18, SOLUSDT:16, INJUSDT:14, THETAUSDT:12, EIGENUSDT:11, DOGEUSDT:10, MEMEUSDT:8, REZUSDT:6, JUPUSDT:5, APTUSDT:4, 1000SHIBUSDT:3, WLDUSDT:2, AVAXUSDT:1, ETHFIUSDT:0
+- **Current weights (session 46)**:
+  - Active (real orders): SOLUSDT:20, TIAUSDT:15, 1000PEPEUSDT:10, MEMEUSDT:8, INJUSDT:3, DOGEUSDT:1
+  - Virtual-only: 1000SHIBUSDT:0, APTUSDT:0, AVAXUSDT:0, EIGENUSDT:0, ETHFIUSDT:0, JUPUSDT:0, REZUSDT:0, THETAUSDT:0, WLDUSDT:0
 
 ---
 
@@ -675,6 +735,16 @@ Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencie
   - **Shutdown closes now notify** — `close_all_orders_at_market()` now calls `notify_trade_close()` after closing each position
   - **Per-symbol rate limit** — Changed from shared `"trade"` key to per-symbol keys `f"trade:{symbol}"` so simultaneous closes on different symbols all send independent Telegram notifications (was: only first close notified, others suppressed by 120s cooldown)
 
+### Market Condition Error Handling
+Transient API errors (Binance -4131 PERCENT_PRICE filter violations) are caught as `MarketConditionError` and do not trigger order retry loops or auto-disable. Order is silently deferred and retried on next candle.
+
+**Files**: `bot/order_executor.py`, `main.py`
+**Key details**:
+- Error -4131: "Price is not good with respect to %PRICE filter" — occurs during fast market moves before order executes
+- Handled as transient: exception is not re-raised; bot continues to next candle
+- Candidate filtering skips price-checking logic to allow retry
+- No symbol auto-disable, no cascading failures
+
 ### System Logging
 Rolling 100-entry JSON log. Atomic writes via tmp→rename. All events (orders, errors, alerts, leverage advances) logged with timestamp, level, title, body.
 
@@ -790,6 +860,24 @@ All parameters loaded from `.env` and `config/settings.py`. Supports per-symbol 
 ---
 
 ## Deployment & Infrastructure
+
+### Critical Docker Build Requirement (Session 51)
+**IMPORTANT: Python source code is NOT volume-mounted. Code changes MUST rebuild the Docker image.**
+
+**Files**: `docker-compose.yml`, `Dockerfile`
+**Key details**:
+- Python source (`main.py`, `bot/`, `config/`, `backtest.py`, etc.) is baked into Docker image at build time
+- Only mounted volumes: `data/`, `logs/`, `risk_config.json`, `symbol_registry.json`, `dashboard/public/`
+- **Incorrect deploy** (runs stale bytecode): `git pull` + `docker stop bot` → auto-restart uses old image
+- **Correct deploy** (required for any code changes):
+  ```bash
+  cd /opt/bot
+  git pull origin <branch>
+  docker compose build bot       # ← MANDATORY
+  docker compose up -d --no-deps bot
+  ```
+- Without `docker compose build bot`, the container runs old compiled Python bytecode from the previous image build
+- **Impact if skipped**: Code changes on server disk are invisible to running container; bot executes old logic
 
 ### File-Based Command Channel
 Dashboard writes commands to `data/bot_command.json` (with UUID). Bot polls every 2s, executes, writes result to `data/bot_command_result.json` with matching UUID. Dashboard polls for result. Enables graceful mode switches, stop signals, telegram tests without signal handling complexity.
@@ -917,6 +1005,79 @@ Replay bot's trend analysis state at any historical candle index. Users can scru
 - **Live polling**: Continues in background during replay; returning slider to max position instantly resumes live view.
 - **Clear on load**: `replayData` cleared immediately on each scrub position so stale overlay data never persists during loading.
 
+### New feature: global_blocked_signal_types filter (Session 52)
+- **What**: Blocks specific signal type strings globally before any scoring. Set `global_blocked_signal_types: ["type_name"]` in risk_config.json.
+- **Files**: `bot/recommendation_engine.py` → `_score_and_filter()` reads `cfg.get('global_blocked_signal_types', [])`, checks `rec.getType().value in g_blocked_signals`
+- **Config**: `global_blocked_signal_types` key in risk_config.json (array of strings). Default: empty (disabled). Currently set to `["lowering_near_last_low"]`
+- **No redeploy needed** to change the blocked list — edit risk_config.json on server directly
+- **Deployed**: commit d5d4fee, 2026-06-14
+
+### New feature: global_max_level filter (Session 52)  
+- **What**: Blocks signals from trend levels deeper than N. Level = depth in trend chain (root trend = L1, its parent = L2, grandparent = L3). L3 signals have 73.4% historical loss rate.
+- **Files**: `bot/recommendation_engine.py` → `_score_and_filter()` reads `cfg.get('global_max_level', 0)`, checks `rec.getLevel() > g_max_level`
+- **Config**: `global_max_level` key in risk_config.json (integer). 0 = disabled. Currently set to `2` (blocks L3+)
+- **No redeploy needed** — edit risk_config.json on server
+- **Deployed**: commit d5d4fee, 2026-06-14
+
+### Updated feature: max_loss_usdt (phantom SL) (Session 52)
+- **What it does**: When non-zero, places a hard dollar-capped exit SL at `entry ± cap/quantity` at order open. At high quantities (e.g. TIAUSDT qty~5900), even $25 cap produces SL at 0.42% from entry — overrides all structural SLs.
+- **Current state**: Disabled (`max_loss_usdt: 0`). Only use if position quantities are well understood.
+- **Files**: `bot/virtual_order_simulator.py` lines 251–268, `bot/order_executor.py` lines 217–252
+- **Warning**: Never re-enable with a global cap without checking typical quantities per symbol first.
+
+### Global RR & SL Filters (Session 47)
+Hard global filters on all signals across all symbols and presets. Applied after signal generation but before scoring, ensuring no signal can bypass fundamental risk/reward constraints.
+
+**Files**: `bot/recommendation_engine.py`, `config/settings.py`, `config/risk_config.py`
+**Key settings**:
+- `global_min_rr: float` (default 0.0 = disabled) — blocks all signals with RR < threshold (e.g., 3.0 = minimum 3:1 risk/reward)
+- `global_max_rr: float` (default 0.0 = disabled) — clips TP to enforce max RR = threshold (e.g., 4.0 = cap at 4:1)
+- `global_min_sl_pct: float` (default 0.0 = disabled) — floors SL to N% of entry (e.g., 0.5 = minimum 0.5% stop)
+- `global_trend_regime_filter: bool` (default False) — blocks BUY in descending regime, SELL in ascending regime
+- `global_trend_regime_lookback: int` (default 3) — number of consecutive H/L pairs to check for regime confirmation
+
+**Implementation**:
+- In `recommendation_engine.py::_score_and_filter()`: after generating signal and RR, check all global gates BEFORE scoring
+- RR floor gate: skip if `rr < global_min_rr`
+- RR ceiling gate: if `rr > global_max_rr`, recompute TP to achieve exact max RR using `eff_loss_dist` (floored SL distance)
+- SL floor gate: computed with `eff_loss_dist = max(loss_dist, entry × global_min_sl_pct/100)` — ensures engine and main.py agree on effective SL
+- SELL adjustment: SELL SL floor uses `global_min_sl_pct / 1.5` as minimum (account for ×1.5 spike adjustment in main.py)
+- Regime gate: calls `getTrendRegime(lookback)`, skips BUY if descending, SELL if ascending
+
+**Session 47 critical fix**: SL floor was being computed AFTER max_rr clipping, causing RR mismatches. Now computed BEFORE all RR calculations. Also fixed SELL SL floor: engine was using 0.5% but main.py uses 0.333%, causing invalid signals. Engine now uses 0.5%/1.5 for SELL to match.
+
+### Signal Direction Gate (Hard Directional Filter)
+Restricts signal generation to buy-only, sell-only, or both directions via hard gate. When `signal_direction != 'both'`, all recommendations for the opposite side are discarded before scoring.
+
+**Files**: `config/settings.py`, `bot/recommendation_engine.py`, `config/presets.py`
+**Key setting**:
+- `signal_direction: str` (default 'both') — 'buy', 'sell', or 'both'
+
+**Implementation**:
+- In `recommendation_engine.py::_score_and_filter()`: after generating all recommendations, filter to only those matching `signal_direction` before scoring
+- Presets can hard-lock to directional trading (e.g., `l2_trend_sell` locks to SELL, `l2_trend_buy` locks to BUY)
+
+### Trend Regime Detection & Filter
+Dynamically detects structural market regime (ascending/descending/neutral) per candle and blocks contra-trend signals. When enabled, checks if the last N consecutive highs (or lows) form a series. Blocks BUY signals in confirmed downtrends and SELL signals in confirmed uptrends.
+
+**Files**: `config/settings.py`, `bot/trend.py`, `bot/recommendation_engine.py`, `config/presets.py`
+**Key settings**:
+- `trend_regime_filter: bool` (default False = disabled) — enable per-candle regime detection
+- `trend_regime_lookback: int` (default 3) — number of consecutive H/L pairs to check for regime confirmation
+
+**Implementation**:
+- `bot/trend.py::getTrendRegime(lookback: int) -> str`: Examines last `lookback` swing highs and lows. Returns:
+  - `'descending'` if all recent highs are lower AND all recent lows are lower
+  - `'ascending'` if all recent highs are higher AND all recent lows are higher
+  - `'neutral'` if mixed or insufficient data
+- In `recommendation_engine.py::_score_and_filter()`: if `trend_regime_filter=True`, check regime and skip BUY in descending, SELL in ascending
+
+**New presets (config/presets.py)**:
+- `l2_trend_sell` — signal_direction='sell', ignore_parent_alignment=True, lower_high_sell=True. Pure SELL entry when L2 trend is descending.
+- `l2_trend_buy` — signal_direction='buy', ignore_parent_alignment=True, higher_low_buy=True. Pure BUY entry when L2 trend is ascending.
+- `l2_regime_aware` — trend_regime_filter=True, ignore_parent_alignment=True, both higher_low_buy and lower_high_sell enabled. Per-candle regime detection blocks contra-trend signals automatically.
+- `l2_regime_aware_strict` — same as `l2_regime_aware` but ignore_parent_alignment=False (requires L3 agreement too, fewer/higher-quality signals)
+
 ### Duplicate-Signal Skip (Avoid Churning After SL-Hit)
 Prevents re-entry on similar signals shortly after stop loss. When enabled, skips new signal if it closely matches a recent SL-hit signal (same direction, entry/sl/tp within threshold %, within N candles). **Fully visible in logs** with dedicated logger.info() call.
 
@@ -932,7 +1093,7 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 - Matching logic: same side AND entry within ±pct AND sl within ±pct AND tp within ±pct AND within N candles = skip
 - **Decision visibility** (session 28): `skip_duplicate_sl` decision now logged to `bot.log` before being written to decision_log.json
 
-### TATS Scenario — "Took All The Shoes" (Sessions 41–42)
+### TATS Scenario — "Took All The Shoes" (Sessions 41–42–47)
 Scenario-based capital allocation where only symbols with proven positive live performance are permitted to trade. Locked presets' efficiency scores are evaluated every candle close; symbols that fail the profitability gate are silently excluded from real order placement.
 
 **Files**: `config/risk_config.py`, `main.py` (_try_place_order), `bot/virtual_tracker.py`
@@ -942,6 +1103,7 @@ Scenario-based capital allocation where only symbols with proven positive live p
   - `scenario: string` (default "default"; "tats" enables gate)
   - `tats_min_profit_usdt: float` (default 0.0) — locked preset score must exceed this threshold to be eligible
   - `tats_degradation_max_drop_pct: float` (default 50.0) — max recent-loss percentage before excluding symbol
+  - `tats_min_weight: float` (default 0.0, added session 47) — minimum weight threshold for single-candidate full allocation; candidates below this get proportional allocation instead
 - **Gate logic** (session 42 refined): In `_try_place_order`, before placing real order, check `is_tats_eligible(symbol)`:
   - Explicit gates that remain active: `is_disabled()` (registry), `is_symbol_paused()`, `get_state() != IDLE`
   - Gate removed from TATS path: weight=0 check, is_tats_eligible() performance quality gate, is_virtual_only() floor gate. These were unintended quality filters that contradicted TATS philosophy. Only explicit registry disable should exclude a symbol.
@@ -949,16 +1111,36 @@ Scenario-based capital allocation where only symbols with proven positive live p
   - If score < `tats_min_profit_usdt`: skip (not eligible)
   - If recent trades show > `tats_degradation_max_drop_pct` decline: skip (degrading)
   - Otherwise: eligible, proceed with order
-- **Eligible vs excluded** (as of 2026-06-04):
-  - ELIGIBLE: DOGEUSDT, 1000PEPEUSDT, ETHFIUSDT, INJUSDT, TIAUSDT
-  - EXCLUDED: THETAUSDT, REZUSDT, MEMEUSDT, APTUSDT (degrading)
+- **Single-candidate allocation** (session 47 addition): When TATS has only one eligible candidate:
+  - If candidate's weight >= `tats_min_weight`: allocate full deployable budget (original behavior)
+  - If candidate's weight < `tats_min_weight`: allocate proportional budget slice (`deployable × weight / sum(weights)`) instead of full budget
+  - Use case: DOGEUSDT (w=1) previously got $5,000 when sole candidate; now gets ~$90 (1% of 50-symbol weight total)
+- **Eligible vs excluded** (as of 2026-06-12):
+  - ELIGIBLE: DOGEUSDT (w=1, capped to ~$90), MEMEUSDT (w=8), 1000PEPEUSDT (w=10), SOLUSDT (w=20, silent), TIAUSDT (w=15, silent)
+  - EXCLUDED: THETAUSDT, REZUSDT, APTUSDT, AVAXUSDT, ETHFIUSDT, EIGENUSDT, JUPUSDT, WLDUSDT, SHIBUSDT (disabled or w=0)
 - **Critical data source**: Gate evaluation uses LOCKED PRESET stats from `preset_efficiency_test.json`, not best-overall. When analyzing preset performance for lock decisions, always check server's live efficiency file, never dashboard JSON or virtual simulator rank data.
 
 **Key lesson from session 41**: Seeded scores (from backtests) and live scores (from actual trades) can diverge dramatically. Lock decisions require live data verification on the server, not hypothetical rankings from the dashboard. Analysis that uses wrong data source (virtual sim rank instead of live efficiency) leads to incorrect locks that later fail at gate time.
 
 **Session 42 refinement**: Removed three unintended quality gates from TATS path that were too strict. TATS philosophy: allow ALL enabled symbols to trade if deployable budget available. Symbols that perform poorly must be explicitly disabled in registry, not auto-excluded by performance filters.
 
-**Confirmed working**: TATS gate deployed 2026-06-04, DOGEUSDT placed order under TATS control on first eligible signal. Gates refined 2026-06-06 to remove over-filtering. Monitored daily as more trades accumulate.
+**Session 47 refinement**: Added `tats_min_weight` knob (default 0.0) to cap oversized single-candidate allocations. Root cause: DOGEUSDT (w=1) was sole TATS candidate on 2026-06-12 02:45, received full ~$3,200 deployable instead of proportional ~$90, resulted in -$20.77 loss on $5,000 position. With tats_min_weight=3.0, DOGEUSDT now caps to proportional allocation when sole candidate.
+
+**Confirmed working**: TATS gate deployed 2026-06-04, DOGEUSDT placed order under TATS control on first eligible signal. Gates refined 2026-06-06 to remove over-filtering. Weight cap deployed 2026-06-12 (commit 8249da8). Monitored daily as more trades accumulate.
+
+### TATS Minimum Weight (Session 47)
+Caps single-candidate allocation in TATS mode when the candidate's weight is below a configured threshold. Prevents low-weight symbols from receiving full deployable budget when they are the only eligible candidate.
+
+**Files**: `main.py` (_try_place_order), `config/risk_config.py`
+**Key details**:
+- **Setting**: `tats_min_weight: float` in risk_config.json (default 0.0 = disabled, full allocation for any candidate)
+- **Logic**: In TATS mode, when single eligible candidate found:
+  - If `symbol_weight >= tats_min_weight`: allocate full deployable budget (original behavior)
+  - If `symbol_weight < tats_min_weight`: allocate proportional slice `= deployable × weight / sum(all_weights)` instead
+- **Use case**: DOGEUSDT weight=1 on 2026-06-12 02:45 was sole candidate, received $3,200 → $5,000 position (margin $1,250, SL hit for -$20.77). With tats_min_weight=3.0, DOGEUSDT now caps to ~$90 (1/50 of weight total).
+- **Default behavior**: tats_min_weight=0 preserves pre-session-47 behavior (any candidate gets full allocation).
+- **Current setting**: tats_min_weight=3.0 on server (session 47 deployment).
+- **First instance verified**: 2026-06-12 after 18:00 UTC, DOGEUSDT now receives proportional allocation when sole candidate.
 
 ---
 
@@ -1001,4 +1183,18 @@ Scenario-based capital allocation where only symbols with proven positive live p
 
 3. **INJUSDT 75 signals blocked by global cap** — Root cause: 75 profitable signals at 4.3–5.0% TP distance were blocked by global `max_profit_pct=3.0%` gate, unable to override. **Fix**: Per-symbol Settings overrides added; risk_config.json["per_symbol_settings"]["INJUSDT"]["max_profit_pct"] now unlocks those signals.
 
-**Last updated**: Session 37 (2026-05-28) — Signal quality: alignment gate, precision floor, zone SL cooldown, per-symbol overrides.
+---
+
+## Bugs fixed — session 47 (2026-06-12)
+
+1. **SL floor × max_rr RR collapse** (`bot/recommendation_engine.py`)
+   - **Cause**: Engine computed eff_loss_dist from raw loss_dist. When max_rr clamping clipped TP (0.42% profit from 0.105% SL), then main.py floored SL to 0.5%, resulting in recomputed RR = 0.42% / 0.5% = 0.84 (below min 1.5). Engine and main.py disagreed on actual effective RR.
+   - **Effect**: MEMEUSDT BUY at RR=4.0 in trades log but decision_log showed `skip_rr: rr=0.84 < min=1.5`. Structural disagreement between modules.
+   - **Fix**: Compute `eff_loss_dist = max(loss_dist, entry × global_min_sl_pct/100)` BEFORE all RR computations and TP clipping. Ensures both engine and main.py use same floored SL distance for all calculations.
+
+2. **SELL SL floor mismatch between engine and main.py** (`bot/recommendation_engine.py`)
+   - **Cause**: Engine used full 0.5% floor for SELL eff_loss_dist; main.py uses 0.5%/1.5 = 0.333% (account for harsher SELL spikes). This caused engine to compute different TP clipping than main.py's actual behavior.
+   - **Effect**: For SELL signals with raw SL between 0.333% and 0.5%, engine over-clipped TP, resulting in actual RR exceeding max_rr at execution time (invalid).
+   - **Fix**: Engine now uses `global_min_sl_pct / 1.5` as minimum for SELL signals, matching main.py's behavior exactly.
+
+**Last updated**: Session 47 (2026-06-12) — Critical RR/SL floor fixes, global filters deployed.

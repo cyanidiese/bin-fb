@@ -398,9 +398,103 @@ Design approved + implemented in session 14.
 - [x] Loss streak cooldown missing from live bot — FIXED in session 28 (full implementation in main.py)
 - [x] Decision log tmp file race condition — FIXED in session 28 (PID-qualified temp names)
 - [x] Duplicate skip decisions invisible in logs — FIXED in session 28 (added logger.info())
+- [x] SL floor × max_rr RR collapse — FIXED in session 47 (compute eff_loss_dist before RR calcs)
+- [x] SELL SL floor mismatch — FIXED in session 47 (engine now uses 0.5%/1.5 for SELL)
+- [ ] SOLUSDT/TIAUSDT structural silence (L3 swings stale, prices far from targets) — pending investigation
 - [ ] Hard stop still active after restart (balance recovery edge case) — pending user investigation
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
+
+## Session 52 — Loss Reduction: Risk Config Optimization (2026-06-15)
+
+- [x] **Diagnose phantom SL from max_loss_usdt** — Identified root cause: dollar cap at high quantities creates microscopic SL distance
+- [x] **Disable max_loss_usdt globally** — Set to 0 in risk_config.json (cap was overriding all structural exits)
+- [x] **Raise global_min_sl_pct** — Changed 0.5% → 0.7% (backtest data shows 38.9% good rate vs 33.4% at 0.5%)
+- [x] **Block Level 3 signals globally** — Added global_max_level=2 (L3 signals: 73.4% loss rate vs 66.9% for L2)
+- [x] **Implement global signal-type filter** — Added global_blocked_signal_types=["lowering_near_last_low"] (100% loss rate)
+- [x] **Expand preset_blocklist** — Added loose_entry, broad_zone, aggressive, default, low_rr (all high loss rates)
+- [x] **Deploy code filters to production** — Commit d5d4fee: global_blocked_signal_types + global_max_level in recommendation_engine.py
+- [ ] **Investigate SOLUSDT zero orders** — weight=20 but no real orders; check which presets rank and if all blocklisted
+- [ ] **Merge feature/backtest-live-parity → main** — Update push.sh to deploy from main instead of feature branch
+- [ ] **1000PEPEUSDT analysis** — -$4,508 virtual loss at 37.1% loss rate (zero weight but pollutes virtual ranking)
+- [ ] **Monitor: SL floor 0.7% enforcement** — Next real order should show SL floored to 0.7% minimum (global_min_sl_pct)
+- [ ] **Monitor: locked_presets still work** — DOGEUSDT→r6_arm15_rr4, MEMEUSDT→sl_adjust_rr_tp95 should bypass blocklist
+
+## Session 51 — Deploy Procedure Documentation (2026-06-14)
+
+- [x] **Discover Docker image code-not-mounted issue** — Python source baked in image, not volume-mounted
+- [x] **Document critical deploy procedure** — `docker compose build bot` is MANDATORY for code changes
+- [x] **Identify three undeployed sessions** — commits 4276319, f0323a1 were live on disk but not in running image (Jun 12-14 17:38)
+- [ ] **Update deploy script/documentation** — Add `docker compose build bot` step to official deploy process
+- [ ] **Monitor DOGEUSDT (r6_arm15_rr4)** — Should now place orders with correct locked preset (fix deployed 17:38)
+- [ ] **Monitor MEMEUSDT (sl_adjust_rr_tp95)** — Should now place orders (fix deployed 17:38)
+- [ ] **Monitor WLDUSDT/THETAUSDT/disabled symbols** — Virtual orders should accumulate at rank 2–6 after rebuild
+- [ ] **Test position persistence** — Verify `data/restart_positions_{mode}.json` created on next graceful shutdown with open position
+- [ ] **Verify SELL SL floor fix** — Commit 36d8863; confirm on next real SELL close
+
+## Session 50 — Locked presets blocklist bypass bug fix (2026-06-14)
+
+- [x] **Fix locked_presets blocklist bypass** — Line 441 main.py: changed `if preset_name in _blocklist:` to `if not is_locked and preset_name in _blocklist:` (commit 4276319). Locked presets now bypass global blocklist.
+- [x] **Verify DOGEUSDT and MEMEUSDT locked presets now execute** — Both were silently blocked before fix; orders should flow again after 15:57 UTC (but NOT deployed in image until session 51)
+
+## Session 49 — RR epsilon fix, per-symbol locked presets (2026-06-14)
+
+- [x] **Fix RR floating-point epsilon** — Changed comparison to use epsilon (1e-9) in recommendation_engine.py lines 144-147 (commit eb42fef)
+- [x] **Lock DOGEUSDT to r6_arm15_rr4** — Configured in risk_config.json (but orders blocked by blocklist bug — FIXED in session 50)
+- [x] **Lock MEMEUSDT to sl_adjust_rr_tp95** — Configured in risk_config.json (but orders blocked by blocklist bug — FIXED in session 50)
+- [x] **Configure logrotate** — `/etc/logrotate.d/trading-bot` weekly rotation, 8 weeks retention, copytruncate
+- [x] **Archive cleanup** — Deleted 941 stale virtual_orders_rankN_*.json files from /opt/bot/data/
+
+## Session 48 — Overnight trading freeze + TIAUSDT unblock + EIGENUSDT analysis (2026-06-13)
+
+- [x] **Fix min_profit_factor too strict** — Lowered from 1.15 → 1.08 in risk_config.json (hot-reload, no code change)
+- [x] **Fix TIAUSDT locked_presets typo** — Changed key from TIASDT → TIAUSDT in risk_config.json
+- [x] **Fix TIAUSDT TATS fallback bypass** — main.py line 1028 now checks locked_presets before falling back to best_preset (commit 997a5ac)
+- [x] **Analyze EIGENUSDT exclusion** — All-negative recent trades; TATS correctly excludes; system will self-heal when VirtualTracker turns positive
+- [x] **Re-enable EIGENUSDT weight** — Set weight back to 5 (was 0 from session 46)
+- [ ] **Monitor TIAUSDT BUY outcome** — hl_buy_trail15 placed at 11:15 UTC, entry=0.3356, TP=0.3928 (+17.1%)
+- [ ] **Monitor DOGEUSDT SELL** — placed at 10:30 UTC, entry=0.08729, high stop risk at 0.11%
+- [ ] **Verify SELL SL floor fix** — Next SELL close will confirm commit 36d8863 applied correctly
+- [ ] **Investigate EIGENUSDT SELL candidate/best discrepancy** — Why only candidate, never BEST (regime or scoring)
+- [ ] **Run EIGENUSDT backtest** — Refresh preset efficiency data after 1-2 trading sessions
+
+## Session 47 — Critical SL floor bugs fixed, global filters deployed, TATS weight cap added (2026-06-12)
+
+- [x] **Fix SL floor × max_rr RR collapse** — Engine used raw loss_dist for all RR computations; main.py floored SL separately, causing RR mismatch (commit ~deaf4ce)
+- [x] **Fix SELL SL floor inconsistency** — Engine used 0.5% for SELL, main.py uses 0.333%; now engine uses 0.5%/1.5 for SELL (commit 36d8863)
+- [x] **Add global trend regime filter** — Blocks BUY in descending, SELL in ascending regimes
+- [x] **Add global min/max RR filters** — min_rr=3.0, max_rr=4.0 global gates on all signals
+- [x] **Block trail_15_from_30_tp95** — TIAUSDT -$65.29 loss on 4 trades; add to preset blocklist
+- [x] **Deploy 3 commits to feature/backtest-live-parity** — All fixes live on server
+- [x] **Add TATS minimum weight cap** — tats_min_weight=3.0 prevents low-weight symbols from allocating full budget (commit 8249da8)
+- [x] **Verify all critical audit bugs fixed/mitigated** — A1, A2, B1-B5 all resolved per session 43 audit
+- [ ] **Monitor MEMEUSDT after RR fix** — Verify placements now have correct RR (was 4.0, decision_log showed 0.84)
+- [ ] **Investigate SOLUSDT/TIAUSDT structural silence** — L3 swings stale (prices moved far from TP targets)
+- [ ] **After balance >$4,500: widen leverage** — base=3, max=8
+- [ ] **Monitor for SELL trade** — First SELL placement after SELL SL floor fix will confirm fix is working
+- [ ] **Backtest-live gap 7-step fix** — From reference_gap_analysis.md, still pending
+
+## Session 46 — Weight rebalancing + Lock removal + EIGENUSDT mute (2026-06-11)
+
+- [x] **EIGENUSDT weight → 0** — Mute symbol from real trading (virtual-only); profit_factor=0.92 < 1.15 consistently blocks every candle
+- [x] **Remove SOLUSDT lock** — Virtual_tracker fix (session 45) now filters blocklisted presets correctly; lock workaround no longer needed
+- [x] **Remove 1000PEPEUSDT lock** — Same fix; bot now auto-selects best eligible preset without deadlock
+- [x] **INJUSDT weight 10→3** — All presets negative recently; reduce exposure while virtual tracking accumulates data
+- [x] **TIAUSDT weight 12→15** — Best performer (trail_15_from_15, score +63.28); reward with modest increase
+- [x] **Record session state** — Document symbol weights, P&L, balance, pending items
+- [ ] **Monitor SOLUSDT without lock** — Expect db_layer_1 to be selected automatically
+- [ ] **Monitor 1000PEPEUSDT without lock** — Expect r5_rr3 or db_layer_0 to be selected
+- [ ] **Monitor INJUSDT weight=3** — If still consistently losing, reduce to 0
+- [ ] **Monitor TIAUSDT weight=15** — Verify trail_15_from_15 continues performing at later candles
+
+## Session 45 — Hot-Reload Config + PEPE Preset Bug Fix + Notional Cap (2026-06-11)
+
+- [x] **Deploy max_order_notional_usdt: 5000** — hot-reload to risk_config.json
+- [x] **Fix PEPE preset blocklist deadlock** — Blocklisted preset winning score but then blocked at gate, leaving symbol idle (commit b88388c)
+- [x] **Lock SOLUSDT to r8_sol_hlbuy_cooldown** — Best performer (+$84.20 on 11 trades) — REMOVED in session 46
+- [x] **Lock 1000PEPEUSDT to r5_sl_adj_cooldown** — Alternative to blocklisted db_clone_cooldown — REMOVED in session 46
+- [x] **Reduce DOGEUSDT weight 3→1** — Has 60% WR but -$30 net (unfavorable R:R)
+- [x] **Discover architecture constraints** — Code baked in Docker image (not volume-mounted); P3 sizing already fixed; blocklist was missing from config during June 6–11 period
 
 ## Session 43 — Performance Analysis + Symbol Rebalancing + TATS Bug Fix (2026-06-11)
 
@@ -411,10 +505,6 @@ Design approved + implemented in session 14.
 - [x] **Blocklist 8 poor presets** — Added to risk_config preset_blocklist: db_clone_cooldown, pre_confirm_prox15_trail15, pre_confirm_trail15, trail_15_from_15_d1, sl_adjust_rr_tp95, r6_arm15_rr4, correction_w20_trail15_30, trail_15_from_15
 - [x] **Update active symbol weights** — 1000PEPEUSDT 22→10; active universe now 7 symbols
 - [x] **Deploy changes to server** — All changes live (symbol_registry hot-reload + risk_config deployed + code fix deployed)
-- [ ] **Monitor DOGEUSDT performance** — At weight=3, 40% WR; may improve now that r5_arm15_cooldown blocklisted
-- [ ] **Monitor PEPE preset selection** — Check if trail_15_from_15 now selected (db_clone_cooldown blocklisted)
-- [ ] **Address P3 sizing issue** — Virtual balance vs real balance discrepancy (~$2,875 vs ~$4,172) — structural fix pending approval
-- [ ] **Fix code audit bugs** — 2 critical / 5 important / 6 minor from 2026-05-20 still unaddressed
 
 ## Session 42 — Telegram Fixes + TATS Gate Cleanup + Signal Generation Fallback (2026-06-06)
 

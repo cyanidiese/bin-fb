@@ -431,6 +431,13 @@ async def run() -> None:
         if candle_ts > 0 and _placed_this_candle.get(symbol) == candle_ts:
             return 0.0
 
+        # Trading blackout hours (UTC): skip real orders during high-volatility windows.
+        # Virtual orders are unaffected — data collection continues normally.
+        _blackout = set(risk_cfg.get('trading_blackout_hours', []))
+        if _blackout and datetime.now(timezone.utc).hour in _blackout:
+            logger.info(f"[{symbol}] Skipping real order: trading blackout H{datetime.now(timezone.utc).hour:02d} UTC")
+            return 0.0
+
         _locked_presets = risk_cfg.get("locked_presets", {})
         is_locked = symbol in _locked_presets
         if is_locked:

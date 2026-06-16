@@ -92,13 +92,15 @@ class RecommendationEngine:
         scored: List[Recommendation] = []
 
         cfg = load_risk_config()
-        global_min_rr    = float(cfg.get('global_min_rr', 0.0))
-        global_max_rr    = float(cfg.get('global_max_rr', 0.0))
-        global_min_sl_pct = float(cfg.get('global_min_sl_pct', 0.0))
-        g_regime         = bool(cfg.get('global_trend_regime_filter', False))
-        g_regime_lookback = int(cfg.get('global_trend_regime_lookback', 3))
-        g_blocked_signals = set(cfg.get('global_blocked_signal_types', []))
-        g_max_level      = int(cfg.get('global_max_level', 0))
+        global_min_rr        = float(cfg.get('global_min_rr', 0.0))
+        global_max_rr        = float(cfg.get('global_max_rr', 0.0))
+        global_min_sl_pct    = float(cfg.get('global_min_sl_pct', 0.0))
+        g_regime             = bool(cfg.get('global_trend_regime_filter', False))
+        g_regime_lookback    = int(cfg.get('global_trend_regime_lookback', 3))
+        g_blocked_signals    = set(cfg.get('global_blocked_signal_types', []))
+        g_max_level          = int(cfg.get('global_max_level', 0))
+        g_entry_zone_max     = float(cfg.get('entry_zone_max_pct', 1.0))
+        g_correction_weight  = float(cfg.get('global_correction_weight', -1.0))
 
         for rec, trend, correction_info in candidates:
             entry = rec.getEntryPrice()
@@ -184,6 +186,13 @@ class RecommendationEngine:
                 if rec.getSide() != allowed_side:
                     continue
 
+            # Entry zone hard gate: reject entries too far from the boundary.
+            # how_close is % of the swing range; gate passes only the inner fraction of the zone.
+            if g_entry_zone_max < 1.0:
+                max_how_close = self._s.proximity_zone_pct * g_entry_zone_max
+                if rec.getHowClose() > max_how_close:
+                    continue
+
             # Trend regime filter — per-preset flag OR global override.
             # Checks the generating trend for N consecutive lower-highs + lower-lows
             # (descending) or higher-highs + higher-lows (ascending).
@@ -211,7 +220,7 @@ class RecommendationEngine:
             if rec.getType() in _CONTINUATION_TYPES and not self._passes_range_position(rec, trend):
                 continue
 
-            precision = self._precision(rec, trend, correction_info)
+            precision = self._precision(rec, trend, correction_info, g_correction_weight)
 
             # Proposal 2: skip candidates below the minimum precision floor.
             if self._s.min_precision_score > 0 and precision < self._s.min_precision_score:
@@ -245,11 +254,18 @@ class RecommendationEngine:
     # Precision scoring                                                    #
     # ------------------------------------------------------------------ #
 
-    def _precision(self, rec: Recommendation, trend: Trend, correction_info: Optional[dict] = None) -> float:
-        reliability = self._projection_reliability(trend) * 0.40
-        alignment = self._parent_alignment(trend, rec.getSide())   # already 0 / 0.175 / 0.35
-        entry_quality = self._entry_quality(rec.getHowClose()) * 0.25
-        correction_bonus = self._correction_quality(correction_info) * self._s.correction_weight
+    def _precision(
+        self,
+        rec: Recommendation,
+        trend: Trend,
+        correction_info: Optional[dict] = None,
+        correction_weight_override: float = -1.0,
+    ) -> float:
+        reliability    = self._projection_reliability(trend) * 0.25   # was 0.40; entry quality is stronger predictor
+        alignment      = self._parent_alignment(trend, rec.getSide())  # 0 / 0.175 / 0.35
+        entry_quality  = self._entry_quality(rec.getHowClose()) * 0.40  # was 0.25; Q1 wins 77% vs Q4 at 9%
+        cw = correction_weight_override if correction_weight_override >= 0.0 else self._s.correction_weight
+        correction_bonus = self._correction_quality(correction_info) * cw
         return round(reliability + alignment + entry_quality + correction_bonus, 4)
 
     def _projection_reliability(self, trend: Trend) -> float:

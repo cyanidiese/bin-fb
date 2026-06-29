@@ -313,6 +313,7 @@ function PageContent({ symbol }: { symbol: string }) {
 
       {learningSession.isActive && (
         <LearningRecommendationPanel
+          key={scrubberIdx ?? -1}
           signal={currentSignal}
           currentKlineClose={filteredKlines.length > 0 ? filteredKlines[filteredKlines.length - 1].close : 0}
           onAccept={learningSession.acceptSignal}
@@ -348,7 +349,7 @@ function PageContent({ symbol }: { symbol: string }) {
         onResume={() => setLearningModalOpen(false)}
         onDiscard={() => {
           learningSession.discardSession()
-          setLearningModalOpen(false)
+          // Keep modal open — it will now show the start form since existingSession is null
         }}
         onClose={() => setLearningModalOpen(false)}
       />

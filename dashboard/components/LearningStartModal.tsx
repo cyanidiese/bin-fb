@@ -1,7 +1,7 @@
 // dashboard/components/LearningStartModal.tsx
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { LearningSession } from '@/lib/learningTypes'
 
 interface Props {
@@ -26,6 +26,10 @@ export default function LearningStartModal({
   onClose,
 }: Props) {
   const [candleInput, setCandleInput] = useState(String(currentCandleIndex))
+
+  useEffect(() => {
+    setCandleInput(String(currentCandleIndex))
+  }, [currentCandleIndex])
 
   if (!isOpen) return null
 

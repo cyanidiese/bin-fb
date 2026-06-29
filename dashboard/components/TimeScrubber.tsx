@@ -1,12 +1,14 @@
+// dashboard/components/TimeScrubber.tsx
 'use client'
 
-const TICK = 1  // klines per step button press
+const TICK = 1
 
 interface Props {
   klines: { time: number }[]
-  scrubberIdx: number | null   // null means live (at the most recent candle)
+  scrubberIdx: number | null
   isLoading: boolean
   onScrub: (idx: number | null) => void
+  learningMode?: boolean
 }
 
 function fmtTime(unixSec: number): string {
@@ -15,11 +17,11 @@ function fmtTime(unixSec: number): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub }: Props) {
+export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub, learningMode }: Props) {
   if (klines.length === 0) return null
 
-  const maxIdx    = klines.length - 1
-  const isLive    = scrubberIdx === null
+  const maxIdx     = klines.length - 1
+  const isLive     = scrubberIdx === null
   const displayIdx = scrubberIdx ?? maxIdx
 
   function handleSlider(e: React.ChangeEvent<HTMLInputElement>) {
@@ -42,6 +44,20 @@ export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub }
   const btnCls =
     'px-2 py-1 text-xs rounded border border-gray-700 bg-gray-900 text-gray-400 ' +
     'hover:text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+
+  if (learningMode) {
+    return (
+      <div className="flex items-center gap-2">
+        <button onClick={stepForward} disabled={isLoading || isLive} className={btnCls}>
+          Next Candle ▶
+        </button>
+        <span className="text-xs font-mono text-amber-400 min-w-[120px]">
+          Candle {displayIdx} / {maxIdx}
+        </span>
+        {isLoading && <span className="text-xs text-gray-600">loading…</span>}
+      </div>
+    )
+  }
 
   return (
     <div className="flex items-center gap-2">
@@ -74,10 +90,7 @@ export default function TimeScrubber({ klines, scrubberIdx, isLoading, onScrub }
         )}
       </span>
 
-      {isLoading && (
-        <span className="text-xs text-gray-600">updating…</span>
-      )}
-
+      {isLoading && <span className="text-xs text-gray-600">updating…</span>}
     </div>
   )
 }

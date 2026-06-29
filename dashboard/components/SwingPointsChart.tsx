@@ -12,6 +12,8 @@ import { Line, Chart } from 'react-chartjs-2'
 import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial'
 import { SwingPoint, Kline } from '@/lib/types'
 import { formatPrice } from '@/lib/formatPrice'
+import type { LearningOrder } from '@/lib/learningTypes'
+import type { Plugin } from 'chart.js'
 
 ChartJS.register(
   TimeScale, LinearScale, PointElement, LineElement,
@@ -22,6 +24,7 @@ ChartJS.register(
 interface Props {
   klines: Kline[]
   points: SwingPoint[]
+  learningOrders?: LearningOrder[]
 }
 
 const fmt = (price: number) => formatPrice(price)
@@ -93,7 +96,67 @@ const SHARED_LEGEND = {
   },
 }
 
-export default function SwingPointsChart({ klines, points }: Props) {
+function makeLearningOrdersPlugin(klines: Kline[], orders: LearningOrder[]): Plugin<'line'> {
+  return {
+    id: 'learningOrders',
+    beforeDatasetsDraw(chart) {
+      if (!orders || orders.length === 0) return
+      const ctx = chart.ctx
+      const xs = chart.scales.x
+      const ys = chart.scales.y
+      if (!xs || !ys) return
+
+      ctx.save()
+
+      for (const order of orders) {
+        const openKline = klines[order.placedAtCandleIndex]
+        if (!openKline) continue
+        const closeKline = order.closedAtCandleIndex !== undefined
+          ? klines[order.closedAtCandleIndex]
+          : klines[klines.length - 1]
+        if (!closeKline) continue
+
+        const x1 = xs.getPixelForValue(openKline.time * 1000)
+        const x2 = xs.getPixelForValue(closeKline.time * 1000)
+        const w  = Math.max(Math.abs(x2 - x1), 3)
+
+        const isClosed = order.closedAtCandleIndex !== undefined
+        const alpha = isClosed ? 0.15 : 0.30
+
+        const ey = ys.getPixelForValue(order.entryPrice)
+        const ty = ys.getPixelForValue(order.tpPrice)
+        const sy = ys.getPixelForValue(order.slPrice)
+
+        // TP zone (green)
+        ctx.fillStyle = `rgba(52,211,153,${alpha})`
+        ctx.fillRect(x1, Math.min(ey, ty), w, Math.abs(ty - ey))
+        ctx.strokeStyle = `rgba(52,211,153,${alpha * 2.5})`
+        ctx.lineWidth = 1
+        ctx.strokeRect(x1, Math.min(ey, ty), w, Math.abs(ty - ey))
+
+        // SL zone (red)
+        ctx.fillStyle = `rgba(248,113,113,${alpha})`
+        ctx.fillRect(x1, Math.min(ey, sy), w, Math.abs(sy - ey))
+        ctx.strokeStyle = `rgba(248,113,113,${alpha * 2.5})`
+        ctx.lineWidth = 1
+        ctx.strokeRect(x1, Math.min(ey, sy), w, Math.abs(sy - ey))
+
+        // Entry line
+        ctx.strokeStyle = `rgba(209,213,219,0.7)`
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.moveTo(x1, ey)
+        ctx.lineTo(x2, ey)
+        ctx.stroke()
+      }
+
+      ctx.restore()
+    },
+  }
+}
+
+export default function SwingPointsChart({ klines, points, learningOrders }: Props) {
   const [candleView]  = useLocalStorage<boolean>('db:chart:candleView',  false)
   const [clampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
   const chartData = useMemo(() => {
@@ -131,6 +194,11 @@ export default function SwingPointsChart({ klines, points }: Props) {
 
     return { closes, opens, highs, lows, ohlc, dots, trendDots, colors, radii }
   }, [klines, points, clampSpikes])
+
+  const learningPlugin = useMemo(
+    () => makeLearningOrdersPlugin(klines, learningOrders ?? []),
+    [klines, learningOrders]
+  )
 
   if (chartData.closes.length === 0 && chartData.dots.length === 0) {
     return (
@@ -231,7 +299,7 @@ export default function SwingPointsChart({ klines, points }: Props) {
       <div className="rounded-lg border border-gray-800 bg-gray-900">
         <div className="h-72 p-4">
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          <Chart type={'candlestick' as any} data={candleData as any} options={candleOptions as any} />
+          <Chart type={'candlestick' as any} data={candleData as any} options={candleOptions as any} plugins={[learningPlugin]} />
         </div>
         {colorLegend}
       </div>
@@ -315,7 +383,7 @@ export default function SwingPointsChart({ klines, points }: Props) {
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900">
       <div className="h-72 p-4">
-        <Line data={lineData} options={lineOptions as Parameters<typeof Line>[0]['options']} />
+        <Line data={lineData} options={lineOptions as Parameters<typeof Line>[0]['options']} plugins={[learningPlugin]} />
       </div>
       {colorLegend}
     </div>

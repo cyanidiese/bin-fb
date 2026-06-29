@@ -13,6 +13,10 @@ import { useLocalStorage } from '@/lib/useLocalStorage'
 import { useSymbolContext } from '@/lib/SymbolContext'
 import TimeScrubber from '@/components/TimeScrubber'
 import type { ReplayResult } from '@/lib/types'
+import { useLearningSession } from '@/lib/useLearningSession'
+import LearningStartModal from '@/components/LearningStartModal'
+import LearningRecommendationPanel from '@/components/LearningRecommendationPanel'
+import LearningNoteOverlay from '@/components/LearningNoteOverlay'
 
 function tsToDatetimeLocal(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
@@ -46,6 +50,9 @@ function PageContent({ symbol }: { symbol: string }) {
   // datetime-local inputs use "YYYY-MM-DDTHH:mm" strings; empty string means no limit
   const [fromDate, setFromDate] = useLocalStorage<string>(`db:strategy:${symbol}:fromDate`, '')
   const [toDate,   setToDate]   = useLocalStorage<string>(`db:strategy:${symbol}:toDate`, '')
+
+  const learningSession = useLearningSession()
+  const [learningModalOpen, setLearningModalOpen] = useState(false)
 
   // Poll the bot snapshot every POLL_MS. On the first successful load, default
   // the level filter to the highest available level. Subsequent polls update the
@@ -102,11 +109,22 @@ function PageContent({ symbol }: { symbol: string }) {
         .then((d: Omit<ReplayResult, 'candle_index'>) => {
           setReplayData({ ...d, candle_index: scrubberIdx })
           setIsReplaying(false)
+          if (learningSession.isActive && data) {
+            const kline = data.klines[scrubberIdx]
+            if (kline) {
+              learningSession.onReplayResult(
+                scrubberIdx,
+                kline,
+                { trend_levels: d.trend_levels, all_points: d.all_points },
+              )
+            }
+          }
         })
         .catch(() => setIsReplaying(false))
     }, 300)
     return () => clearTimeout(timer)
-  }, [scrubberIdx, symbol])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubberIdx, symbol, learningSession.isActive, learningSession.onReplayResult, data])
 
   // Derived values: replay state is only active when a specific candle is selected.
   // This avoids synchronous setState calls inside effects to clear these values.
@@ -159,6 +177,10 @@ function PageContent({ symbol }: { symbol: string }) {
     ? effectiveReplayData.signals
     : (data?.signals ?? [])
 
+  const currentSignal = learningSession.isActive
+    ? (srcSignals.length > 0 ? srcSignals[0] : null)
+    : null
+
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen text-red-400">
@@ -201,6 +223,7 @@ function PageContent({ symbol }: { symbol: string }) {
           scrubberIdx={scrubberIdx}
           isLoading={effectiveIsReplaying}
           onScrub={setScrubberIdx}
+          learningMode={learningSession.isActive}
         />
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <LevelFilter
@@ -238,12 +261,60 @@ function PageContent({ symbol }: { symbol: string }) {
           >
             Clear
           </button>
+
+          {!learningSession.isActive ? (
+            <button
+              onClick={() => setLearningModalOpen(true)}
+              className="px-3 py-1.5 text-xs font-semibold rounded border border-amber-700 bg-amber-900/30 text-amber-400 hover:text-amber-300 hover:bg-amber-900/50 transition-colors"
+            >
+              Learning Mode
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-amber-400 animate-pulse">● LEARNING</span>
+              <button
+                onClick={() => {
+                  if (confirm(`Save session? (${learningSession.session?.events.length ?? 0} events recorded)`)) {
+                    learningSession.saveAndExit()
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded bg-amber-600 text-black hover:bg-amber-500 transition-colors"
+              >
+                Stop &amp; Save
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Discard this session? All events will be lost.')) {
+                    learningSession.discardSession()
+                  }
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded border border-red-800 text-red-400 hover:text-red-300 transition-colors"
+              >
+                Discard
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
-        <SwingPointsChart key={selectedLevel ?? 0} klines={filteredKlines} points={filteredPoints} />
+        <SwingPointsChart
+          key={selectedLevel ?? 0}
+          klines={filteredKlines}
+          points={filteredPoints}
+          learningOrders={learningSession.isActive ? learningSession.orders : undefined}
+        />
       </CollapsibleSection>
+
+      {learningSession.isActive && (
+        <LearningRecommendationPanel
+          signal={currentSignal}
+          currentKlineClose={filteredKlines.length > 0 ? filteredKlines[filteredKlines.length - 1].close : 0}
+          onAccept={learningSession.acceptSignal}
+          onReject={learningSession.rejectSignal}
+          onPlaceCustom={learningSession.placeCustomOrder}
+        />
+      )}
 
       <CollapsibleSection title="Trend Levels" storageKey="db:strategy:s:trendlevels">
         <TrendLevelsTable levels={filteredLevels} />
@@ -259,6 +330,27 @@ function PageContent({ symbol }: { symbol: string }) {
       <CollapsibleSection title="Signals" storageKey="db:strategy:s:signals">
         <SignalsPanel signals={srcSignals} />
       </CollapsibleSection>
+      <LearningStartModal
+        isOpen={learningModalOpen}
+        currentCandleIndex={scrubberIdx ?? (data.klines.length - 1)}
+        totalCandles={data.klines.length}
+        existingSession={learningSession.session}
+        onStart={(idx) => {
+          learningSession.startSession(symbol, idx)
+          setScrubberIdx(idx)
+          setLearningModalOpen(false)
+        }}
+        onResume={() => setLearningModalOpen(false)}
+        onDiscard={() => {
+          learningSession.discardSession()
+          setLearningModalOpen(false)
+        }}
+        onClose={() => setLearningModalOpen(false)}
+      />
+
+      {learningSession.isActive && (
+        <LearningNoteOverlay onAddNote={learningSession.addNote} />
+      )}
     </main>
   )
 }

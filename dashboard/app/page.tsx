@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BotResults } from '@/lib/types'
 import Header from '@/components/Header'
 import SwingPointsChart from '@/components/SwingPointsChart'
@@ -53,6 +53,12 @@ function PageContent({ symbol }: { symbol: string }) {
 
   const learningSession = useLearningSession()
   const [learningModalOpen, setLearningModalOpen] = useState(false)
+
+  const dataRef = useRef<BotResults | null>(null)
+  dataRef.current = data
+
+  const isLearningActiveRef = useRef(false)
+  isLearningActiveRef.current = learningSession.isActive
 
   // Poll the bot snapshot every POLL_MS. On the first successful load, default
   // the level filter to the highest available level. Subsequent polls update the
@@ -109,8 +115,8 @@ function PageContent({ symbol }: { symbol: string }) {
         .then((d: Omit<ReplayResult, 'candle_index'>) => {
           setReplayData({ ...d, candle_index: scrubberIdx })
           setIsReplaying(false)
-          if (learningSession.isActive && data) {
-            const kline = data.klines[scrubberIdx]
+          if (isLearningActiveRef.current && dataRef.current) {
+            const kline = dataRef.current.klines[scrubberIdx]
             if (kline) {
               learningSession.onReplayResult(
                 scrubberIdx,
@@ -123,8 +129,7 @@ function PageContent({ symbol }: { symbol: string }) {
         .catch(() => setIsReplaying(false))
     }, 300)
     return () => clearTimeout(timer)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrubberIdx, symbol, learningSession.isActive, learningSession.onReplayResult, data])
+  }, [scrubberIdx, symbol, learningSession.onReplayResult])
 
   // Derived values: replay state is only active when a specific candle is selected.
   // This avoids synchronous setState calls inside effects to clear these values.

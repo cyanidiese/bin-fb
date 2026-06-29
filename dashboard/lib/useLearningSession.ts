@@ -42,6 +42,11 @@ export function useLearningSession(): LearningSessionHandle {
   const ordersRef = useRef<LearningOrder[]>([])
   ordersRef.current = orders
 
+  // Ref mirrors session state so placeCustomOrder can read currentCandleIndex
+  // without nesting setOrders inside a setSession updater (which runs twice in Strict Mode)
+  const sessionRef = useRef<LearningSession | null>(null)
+  sessionRef.current = session
+
   const isActive = session !== null
 
   const startSession = useCallback((symbol: string, startCandleIndex: number) => {
@@ -60,10 +65,6 @@ export function useLearningSession(): LearningSessionHandle {
   const discardSession = useCallback(() => {
     setSession(null)
     setOrders([])
-  }, [])
-
-  const appendEvent = useCallback((event: LearningEvent) => {
-    setSession(prev => prev ? { ...prev, events: [...prev.events, event] } : prev)
   }, [])
 
   // Called from page.tsx after each successful replay API response in learning mode.
@@ -144,26 +145,25 @@ export function useLearningSession(): LearningSessionHandle {
   }, [])
 
   const placeCustomOrder = useCallback((side: 'BUY' | 'SELL', entry: number, tp: number, sl: number) => {
-    setSession(prev => {
-      if (!prev) return prev
-      const order: LearningOrder = {
-        id: uuid(),
-        placedAtCandleIndex: prev.currentCandleIndex,
-        side,
-        entryPrice: entry,
-        tpPrice: tp,
-        slPrice: sl,
-      }
-      setOrders(o => [...o, order])
-      ordersRef.current = [...ordersRef.current, order]
-      const event: LearningEvent = {
-        type: 'custom_order_placed',
-        candle_index: prev.currentCandleIndex,
-        order,
-        timestamp: new Date().toISOString(),
-      }
-      return { ...prev, events: [...prev.events, event] }
-    })
+    const prev = sessionRef.current
+    if (!prev) return
+    const order: LearningOrder = {
+      id: uuid(),
+      placedAtCandleIndex: prev.currentCandleIndex,
+      side,
+      entryPrice: entry,
+      tpPrice: tp,
+      slPrice: sl,
+    }
+    const event: LearningEvent = {
+      type: 'custom_order_placed',
+      candle_index: prev.currentCandleIndex,
+      order,
+      timestamp: new Date().toISOString(),
+    }
+    setOrders(o => [...o, order])
+    ordersRef.current = [...ordersRef.current, order]
+    setSession(s => s ? { ...s, events: [...s.events, event] } : s)
   }, [])
 
   const addNote = useCallback((text: string) => {
@@ -194,7 +194,7 @@ export function useLearningSession(): LearningSessionHandle {
     a.href = url
     a.download = `learning-${session.symbol}-${dateStr}-${idPrefix}.json`
     a.click()
-    URL.revokeObjectURL(url)
+    setTimeout(() => URL.revokeObjectURL(url), 100)
     setSession(null)
     setOrders([])
   }, [session])

@@ -89,7 +89,7 @@ Closed orders remain visible on the chart with a faded fill (0.15 alpha vs 0.3 f
 
 ### Notes
 
-A sticky "Add Note" button (bottom-right) opens a textarea. Notes are free-text and fire a `note_added` event. No mandatory structure. The user can note anything: "Price is in compression, signal feels premature" or "Wish there was a volume filter here."
+A sticky "Add Note" button (bottom-right) is always visible throughout the entire Learning Mode session — it is never hidden or disabled regardless of what other UI is open (recommendation panel, custom order form, candle advance in progress). Clicking it opens a floating textarea overlay. Submitting fires a `note_added` event. Notes are free-text with no mandatory structure. The user can note anything at any point: "Price is in compression, signal feels premature", "Wish there was a volume filter here", or observations about a candle they just advanced past.
 
 ---
 

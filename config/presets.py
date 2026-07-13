@@ -794,6 +794,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
     'l2_bos_trend': {
         'min_swing_points': 2,
@@ -810,6 +811,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
 
     # ── Directional + regime-aware presets ────────────────────────────────────
@@ -851,6 +853,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
     'l2_trend_buy': {
         'signal_direction': 'buy',
@@ -866,11 +869,16 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
     # Regime-aware: no hard direction lock — checks 3 consecutive L2 H/L structure
     # each candle and dynamically blocks the contra-trend side.
     # ignore_parent_alignment=True so it trades descending trends even when L3 was
     # ascending before the regime shift (e.g. early stage of a new downtrend).
+    # max_losing_candles=96 (24h @ 15m): safety net added 2026-07-13 after a real
+    # TIAUSDT SELL sat open 13 days with a TP ~32% away and no cap. Real trade
+    # history for this preset family shows every winner closed within 16.3h and
+    # every loss within 3.4h, so 24h can only stop a genuinely stuck position.
     'l2_regime_aware': {
         'trend_regime_filter': True,
         'trend_regime_lookback': 3,
@@ -887,6 +895,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
     # Strict variant: requires L3 agreement in addition to regime filter.
     # Fewer signals but higher expected precision — good for symbols with
@@ -907,6 +916,7 @@ PRESETS: dict[str, PresetOverrides] = {
         'loss_streak_cooldown_candles': 5,
         'duplicate_skip_candles': 3,
         'duplicate_skip_pct': 2.0,
+        'max_losing_candles': 96,
     },
 
     # ── Round 8: targeted gap-fill additions ──────────────────────────────────

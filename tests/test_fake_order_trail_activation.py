@@ -282,3 +282,51 @@ def test_trail_only_without_activation_stays_dead():
     assert order.check(150.0, 100.5, 1) is None   # huge favorable move, no arm
     assert order._partial_armed is False
     assert order.check(200.0, 150.0, 2) == 'win'  # TP still works
+
+
+def test_far_partial_arm_capped_by_activation_price():
+    """Preset with partial AND trail AND activation: when the partial arm point
+    (fraction of a far TP) sits beyond the activation price, arming happens at
+    the activation price. Regression for the wide-TP presets (l2_bos_*) whose
+    +4% favorable moves never armed because arm sat at 25% of a 20-35% TP."""
+    order = FakeOrder(
+        side='BUY', entry_price=100.0, tp=200.0, sl=80.0,
+        level=1, signal_type='test', candle_index=0,
+        partial_take_pct=0.60,        # raw arm would be 100 + 0.6*100 = 160
+        trailing_stop_pct=0.15,
+        trail_activation_pct=2.0,     # activation price 102 — closer, wins
+    )
+    assert order._partial_price == pytest.approx(102.0)
+
+    assert order.check(102.0, 100.5, 1) is None    # arms at +2%
+    assert order._partial_armed is True
+
+    assert order.check(110.0, 109.0, 2) is None    # runs, trail = 108.5
+    assert order.check(109.0, 108.0, 3) == 'trail'
+    assert order.close_price == pytest.approx(108.5)
+
+
+def test_near_partial_arm_unchanged_when_closer_than_activation():
+    """When the partial arm point is CLOSER than the activation price, the
+    original partial-price arming is preserved (no behavior change)."""
+    order = FakeOrder(
+        side='SELL', entry_price=100.0, tp=90.0, sl=120.0,
+        level=1, signal_type='test', candle_index=0,
+        partial_take_pct=0.10,        # arm at 100 - 0.1*10 = 99 (1% away)
+        trailing_stop_pct=0.15,
+        trail_activation_pct=2.0,     # activation price 98 — farther, ignored
+    )
+    assert order._partial_price == pytest.approx(99.0)
+
+
+def test_partial_without_trail_unchanged():
+    """Pure partial-take preset (no trail): arm price must stay the classic
+    partial fraction — the activation cap only applies when a trail exists."""
+    order = FakeOrder(
+        side='BUY', entry_price=100.0, tp=200.0, sl=80.0,
+        level=1, signal_type='test', candle_index=0,
+        partial_take_pct=0.60,
+        trailing_stop_pct=0.0,
+        trail_activation_pct=2.0,
+    )
+    assert order._partial_price == pytest.approx(160.0)

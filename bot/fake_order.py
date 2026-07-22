@@ -89,9 +89,22 @@ class FakeOrder:
 
         if partial_take_pct > 0:
             if side == 'BUY':
-                self._partial_price: Optional[float] = entry_price + partial_take_pct * (tp - entry_price)
+                arm: float = entry_price + partial_take_pct * (tp - entry_price)
             else:
-                self._partial_price = entry_price - partial_take_pct * (entry_price - tp)
+                arm = entry_price - partial_take_pct * (entry_price - tp)
+            if trailing_stop_pct > 0 and trail_activation_pct > 0:
+                # With a trail active the partial price is purely the arm
+                # threshold (the trail replaces the partial exit). A far TP
+                # pushes it far beyond the trail's own activation gate, so
+                # profit protection never arms on trades that only run a few
+                # percent. Arm at whichever threshold price reaches first.
+                act = (
+                    entry_price * (1 + trail_activation_pct / 100.0)
+                    if side == 'BUY'
+                    else entry_price * (1 - trail_activation_pct / 100.0)
+                )
+                arm = min(arm, act) if side == 'BUY' else max(arm, act)
+            self._partial_price: Optional[float] = arm
             # _max_favorable starts at the arm threshold; only updated while armed
             self._max_favorable = self._partial_price
         elif trailing_stop_pct > 0 and trail_activation_pct > 0:

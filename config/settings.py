@@ -123,6 +123,15 @@ class Settings:
     # Number of consecutive swing highs (and lows) that must all be in the same
     # direction before getTrendRegime() declares a regime. Default 3.
     trend_regime_lookback: int
+    # When True: re-enable the opposing-parent hard reject for continuation signals
+    # EVEN IF ignore_parent_alignment is True. This decouples the two behaviours that
+    # ignore_parent_alignment used to bundle — escaping post-BoS droughts (keep) vs
+    # disabling the opposing-parent block (drop). _parent_is_opposing only fires on a
+    # DEFINED, explicitly-opposing bigger trend, so undetermined/thin parents still
+    # pass (no drought regression). Evidence: l2_bos_trend (alignment enforced) is
+    # +$137.71/47%WR vs sibling l2_bos_entry (alignment ignored) −$100.91/17%WR.
+    # Default False. Can also be forced globally via risk_config global_enforce_parent_alignment.
+    enforce_parent_alignment_hard: bool = False
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -206,6 +215,7 @@ def load_settings(symbol: str | None = None) -> Settings:
         signal_direction=os.getenv('SIGNAL_DIRECTION', 'both').lower(),
         trend_regime_filter=os.getenv('TREND_REGIME_FILTER', 'false').lower() in ('1', 'true', 'yes'),
         trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
+        enforce_parent_alignment_hard=os.getenv('ENFORCE_PARENT_ALIGNMENT_HARD', 'false').lower() in ('1', 'true', 'yes'),
     )
 
     if symbol is not None:

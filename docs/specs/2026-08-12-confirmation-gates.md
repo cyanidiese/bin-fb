@@ -43,7 +43,20 @@ All gates are **swept per-preset knobs** (default off), never hard-coded constan
 in the live engine AND mirrored in the backtester + virtual simulator, or preset-efficiency scores drift
 from live reality (the parity trap that produced the `ignore_parent_alignment` workarounds).
 
-### Gate 1 — Parent-alignment hard gate (cheapest, proven, no new data)
+> **⚠️ VALIDATION RESULT (2026-08-12): Gate 1 does NOT pass — do not enable.**
+> The mechanism was implemented (Settings field `enforce_parent_alignment_hard`, engine gate,
+> hot-reloadable `global_enforce_parent_alignment`, 7 unit tests) and validated end-to-end with the
+> real backtester (flag OFF vs ON, isolated on the same preset, 5 active symbols, ~8k candles):
+> `l2_bos_entry` −10.99%→−47.20%, `l2_regime_aware` −14.32%→−46.81%, `l2_trend_buy` −64.43%→−62.42%.
+> It is net-**negative** — mainly by cutting profitable MEMEUSDT continuation trades, plus strong
+> path-dependence (blocking an early signal frees the engine to take many later ones).
+> The original "natural experiment" (l2_bos_trend +$138 vs l2_bos_entry −$101) was **confounded** —
+> those presets differ in several params, not just alignment. The mechanism is kept **dormant**
+> (default off, set on no preset) as a tested, hot-reloadable lever should a future regime/evidence
+> justify it. Lesson: the realized-trade counterfactual join and the full-kline backtester disagree
+> because the join only sees post-gating placed trades; **backtest-validate every gate before enabling.**
+
+### Gate 1 — Parent-alignment hard gate (cheapest, proven, no new data) — REJECTED BY VALIDATION
 - **What:** when a preset has `ignore_parent_alignment=True`, still reject a signal whose bigger-trend
   parent explicitly opposes it. Reuse the existing `_parent_is_opposing(trend, side)` helper
   (`recommendation_engine.py:307`).

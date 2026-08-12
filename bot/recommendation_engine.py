@@ -101,6 +101,7 @@ class RecommendationEngine:
         g_max_level          = int(cfg.get('global_max_level', 0))
         g_entry_zone_max     = float(cfg.get('entry_zone_max_pct', 1.0))
         g_correction_weight  = float(cfg.get('global_correction_weight', -1.0))
+        g_enforce_parent     = bool(cfg.get('global_enforce_parent_alignment', False))
 
         for rec, trend, correction_info in candidates:
             entry = rec.getEntryPrice()
@@ -207,10 +208,19 @@ class RecommendationEngine:
 
             # Proposal 1: block continuation signals when parent trend explicitly opposes.
             # Reversal and structural types (e.g. RISING_ABOVE_SUPPOSED_HIGH) are exempt.
-            # ignore_parent_alignment disables the hard gate (precision penalty still applies).
+            # ignore_parent_alignment normally disables this hard gate, BUT the enforce
+            # flag (per-preset enforce_parent_alignment_hard or global override) re-enables
+            # it regardless — decoupling drought-escape from alignment enforcement.
+            # _parent_is_opposing only fires on a DEFINED opposing parent, so thin/undetermined
+            # parents (the post-BoS drought case) still pass either way.
+            _enforce_parent = (
+                not self._s.ignore_parent_alignment
+                or self._s.enforce_parent_alignment_hard
+                or g_enforce_parent
+            )
             if (
                 rec.getType() in _CONTINUATION_TYPES
-                and not self._s.ignore_parent_alignment
+                and _enforce_parent
                 and self._parent_is_opposing(trend, rec.getSide())
             ):
                 continue

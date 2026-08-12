@@ -371,3 +371,42 @@ Every data gate depends on **A1 (shared MarketContext)** — the enabler that ma
 
 ## 4. Single highest-leverage next action
 **Hot-reload the P1 preset blocklist now** (zero code, zero deploy, ~$380 of avoided loss, fully reversible) **and in the same session ship the Trader-R1 BUY-side parent-opposing hard gate** — the durable fix for the identical -$436/11%WR counter-trend-long leak, using the `_parent_is_opposing` helper that already exists. The blocklist buys time; R1 removes the leak mechanically without touching the roughly-flat, profitable short flow.
+
+---
+
+## Addendum 2026-08-12 — Backtest-live parity: RESOLVED (backtester is trustworthy on costs)
+
+Earlier turns distrusted the backtester after a `FakeOrder` replay of real trades gave +$37 vs
+actual −$785. That distrust was **wrong** — the cause was found and it is not the backtester.
+
+**Diagnosis (trade-matched replay of real entries through the real FakeOrder engine):**
+
+| Era | n | actual | resim (no fees) | resim (WITH 0.04%/side fees) |
+|---|---|---|---|---|
+| pre-fix (< Jul 16) | 240 | −$481 | +$227 | −$11 |
+| **post-fix (≥ Jul 16)** | 71 | −$304 | −$185 | **−$276 (gap −$0.40/trade)** |
+
+Two causes, both understood:
+1. **Historical dead-trail bug** (fixed session 58, commit 82ca600): pre-fix, live trails never armed
+   so positions took full SL losses, while the current-code model arms them → the model looked
+   optimistic. This is why pre-fix diverges and post-fix does not.
+2. **Fees**: my `/tmp` resim harness omitted trading fees; the **real backtester already applies them**
+   (`backtester.py:49`, `fake_order.py:448`, `fee_rate=0.0004`) plus `backtest_entry_slippage_pct`.
+   Adding fees closes the post-fix gap to −$0.40/trade (noise). Fees+funding (~$103) explained ~86%
+   of the residual gap; the rest is noise.
+
+**Conclusion:**
+- The `FakeOrder` exit model **with fees is faithful for current code** (post-fix gap −$0.40/trade).
+  The backtester IS a trustworthy oracle for **exit-mechanics** evaluation. This session's
+  trail-widening change is therefore validated on sound methodology (fee-included: payoff 0.97→1.25,
+  avg win $29→$36 on the l2 family).
+- The full-kline backtester's **preset-ranking** divergence (e.g. MEMEUSDT l2_bos_entry +44% backtest
+  vs live loss) is NOT a cost-model error — it is the **irreducible regime/selection gap**: the
+  backtester replays every candle over ~83 days and takes every signal, while live trades a
+  heavily-gated subset (profit_factor, RR/SL floors, blackout, one-position, weight selection) over a
+  short forward window. Reducible (apply more live gates in the backtester; regime-weight the window)
+  but never fully closable — it is the nature of forward trading.
+
+**Practical rule going forward:** trust the backtester for exit/mechanics and same-regime relative
+comparisons; discount it for cross-regime absolute preset ranking. Do NOT re-investigate this gap as
+if it were a bug — it is characterised and (for costs) resolved.

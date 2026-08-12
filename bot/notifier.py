@@ -136,6 +136,7 @@ class Notifier:
         close_price: float,
         preset_name: str,
         balance_after: float = 0.0,
+        fee_usdt: float = 0.0,
     ) -> None:
         win = pnl_usdt >= 0
         emoji = "✅" if win else "❌"
@@ -143,7 +144,8 @@ class Notifier:
         sign = "+" if pnl_usdt >= 0 else ""
         text = (
             f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b> <i>[Real]</i>\n"
-            f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b>\n"
+            f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b> <i>(net of fee)</i>\n"
+            f"Fee: {fee_usdt:.4f} USDT\n"
             f"Balance: {balance_after:,.2f} USDT\n"
             f"Entry: {self._fmt_price(entry_price)} → Close: {self._fmt_price(close_price)}\n"
             f"Preset: {html.escape(preset_name)}"

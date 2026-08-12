@@ -337,6 +337,7 @@ class OrderExecutor:
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
                 "close_price": actual_close_price,
+                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
                 "leverage": open_order.leverage,
             })
             del self._open_orders[symbol]
@@ -396,6 +397,7 @@ class OrderExecutor:
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
                 "close_price": actual_close_price,
+                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
                 "leverage": open_order.leverage,
             }]
         finally:
@@ -455,6 +457,7 @@ class OrderExecutor:
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
                 "close_price": actual_close_price,
+                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
                 "leverage": open_order.leverage,
             }
             del self._open_orders[symbol]
@@ -487,6 +490,7 @@ class OrderExecutor:
                     entry_price=order.entry_price,
                     close_price=close_price,
                     preset_name=order.preset_name,
+                    fee_usdt=self._order_fee(order.quantity, order.entry_price, close_price),
                 )
                 results.append({
                     "symbol": symbol,
@@ -635,6 +639,7 @@ class OrderExecutor:
             'open_time': order.open_time,
             'close_time': datetime.now(timezone.utc).isoformat(),
             'pnl_usdt': pnl_usdt,
+            'fee_usdt': self._order_fee(order.quantity, order.entry_price, close_price),
             'result': result,
             'balance_at_open': order.balance_at_open,
             'signal_level': order.signal_level,
@@ -1164,6 +1169,13 @@ class OrderExecutor:
     # Binance Futures taker fee rate (both sides). 0.04% = 0.0004.
     # Applied to entry notional (open) and close notional (close).
     _TAKER_FEE_RATE: float = 0.0004
+
+    @classmethod
+    def _order_fee(cls, quantity: float, entry_price: float, close_price: float) -> float:
+        """Total Binance taker fee paid for this order (entry + exit legs).
+        Both legs are MARKET orders (taker), so this equals the actual commission
+        and matches the fee already deducted inside _calc_pnl."""
+        return (entry_price + close_price) * quantity * cls._TAKER_FEE_RATE
 
     @staticmethod
     def _fill_price_from_trades(trades: list) -> float:

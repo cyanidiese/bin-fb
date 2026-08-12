@@ -1188,6 +1188,7 @@ async def run() -> None:
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
                 balance_after=fresh_bal,
+                fee_usdt=c.get('fee_usdt', 0.0),
             )
 
         _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
@@ -1252,6 +1253,7 @@ async def run() -> None:
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
                 balance_after=fresh_bal,
+                fee_usdt=c.get('fee_usdt', 0.0),
             )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)

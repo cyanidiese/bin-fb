@@ -1,6 +1,7 @@
 import math
 from typing import List, Optional, Tuple
 
+from bot.mean_reversion import MRConfig, detect_range, mr_signal
 from bot.recommendation import Recommendation, RecommendationTypes
 from bot.trend import Trend
 from config.risk_config import load_risk_config
@@ -36,22 +37,66 @@ class RecommendationEngine:
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    def generate(self, root_trend: Trend, entry_price: float) -> Optional[Recommendation]:
+    def generate(
+        self, root_trend: Trend, entry_price: float, recent_klines: Optional[list] = None
+    ) -> Optional[Recommendation]:
         """
         Returns the single best scored recommendation, or None if no valid
         candidate survives filtering.
         """
+        mr_active, mr_rec = self._mr_recommendation(root_trend, entry_price, recent_klines)
+        if mr_active:
+            return mr_rec        # regime switch: MR owns this symbol; suppress trend
+
         candidates = self._collect(root_trend, entry_price)
         scored = self._score_and_filter(candidates)
         return self._select(scored)
 
-    def collect_all(self, root_trend: Trend, entry_price: float) -> List[Recommendation]:
+    def collect_all(
+        self, root_trend: Trend, entry_price: float, recent_klines: Optional[list] = None
+    ) -> List[Recommendation]:
         """
         Returns all per-level candidates with precision/RR populated, before
         final selection filtering. Useful for dashboard display and analysis.
         """
+        mr_active, mr_rec = self._mr_recommendation(root_trend, entry_price, recent_klines)
+        if mr_active:
+            return [mr_rec] if mr_rec else []
+
         candidates = self._collect(root_trend, entry_price)
         return self._score_and_filter(candidates)
+
+    # ------------------------------------------------------------------ #
+    # Mean-reversion regime switch                                        #
+    # ------------------------------------------------------------------ #
+
+    def _mr_config(self) -> MRConfig:
+        s = self._s
+        return MRConfig(window=s.mr_window, min_touches=s.mr_min_touches,
+                        touch_tol=s.mr_touch_tol, band_min=s.mr_band_min,
+                        band_max=s.mr_band_max, decile=s.mr_decile, sl_buf=s.mr_sl_buf)
+
+    def _mr_recommendation(self, root_trend, entry_price, recent_klines):
+        """Return (active, rec): active=True means a confirmed range is in force
+        (regime switch — suppress trend). rec may be None if no fade this candle."""
+        if not self._s.enable_mean_reversion or not recent_klines:
+            return False, None
+        cfg = self._mr_config()
+        rng = detect_range(recent_klines, cfg)
+        if rng is None:
+            return False, None
+        sig = mr_signal(recent_klines, rng, cfg)
+        if sig is None:
+            return True, None
+        point = root_trend.getCurrentPoint()
+        if point is None:
+            return True, None
+        rec = Recommendation(point, sig.tp, sig.sl, sig.side,
+                             RecommendationTypes.MEAN_REVERT_FADE)
+        rec.setLevel(1).setEntryPrice(sig.entry).setPrecision(1.0)
+        rr = abs(sig.tp - sig.entry) / abs(sig.sl - sig.entry) if sig.sl != sig.entry else 0.0
+        rec.setRR(rr)
+        return True, rec
 
     # ------------------------------------------------------------------ #
     # Step 1 — collect one candidate per level                            #

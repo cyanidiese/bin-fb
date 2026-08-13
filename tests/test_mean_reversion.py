@@ -83,3 +83,13 @@ def test_mr_signal_fires_sell_when_close_above_hi_with_strong_wick():
     sig = mr_signal(kl, _rng(), cfg)
     assert sig is not None and sig.side == 'SELL'
     assert abs(sig.tp - 105.0) < 1e-9
+
+def test_config_wiring_exists():
+    from bot.recommendation import RecommendationTypes
+    from config.settings import load_settings
+    from config.presets import PRESETS as ALL_PRESETS
+    assert RecommendationTypes.MEAN_REVERT_FADE.value == 'mean_revert_fade'
+    s = load_settings('TIAUSDT')
+    assert s.enable_mean_reversion is False       # OFF by default
+    assert s.mr_window == 48 and s.mr_sl_buf == 0.5
+    assert 'mr_fade' in ALL_PRESETS

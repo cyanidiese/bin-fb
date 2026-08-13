@@ -65,6 +65,15 @@ class PresetOverrides(TypedDict, total=False):
     # is True (blocks continuation signals into a DEFINED opposing bigger trend, while still
     # allowing thin/undetermined parents so post-BoS droughts are not reintroduced). Default False.
     enforce_parent_alignment_hard: bool
+    # Mean-reversion overlay settings (session 61)
+    enable_mean_reversion: bool
+    mr_window: int
+    mr_min_touches: int
+    mr_touch_tol: float
+    mr_band_min: float
+    mr_band_max: float
+    mr_decile: float
+    mr_sl_buf: float
 
 
 # ── Locked presets ─────────────────────────────────────────────────────────────
@@ -1055,6 +1064,20 @@ PRESETS: dict[str, PresetOverrides] = {
         'trail_activation_pct': 5.0, 'trail_min_distance_pct': 1.5,
         'range_position_max': 0.10,
         'loss_streak_max': 2, 'loss_streak_cooldown_candles': 5,
+    },
+
+    # ── Mean-reversion overlay (session 61) ───────────────────────────────────
+    'mr_fade': {
+        # Mean-reversion overlay preset (session 61). Fixed-geometry exits:
+        # TP=range mid, SL=boundary +/- sl_buf*range (set by mr_signal, not by preset).
+        # No partial/trail — MR banks the reversion outright.
+        'enable_mean_reversion': True,
+        'partial_take_pct': 0.0,
+        'trailing_stop_pct': 0.0,
+        'trail_activation_pct': 0.0,
+        'min_profit_loss_ratio': 0.0,   # MR is high-WR/low-payoff; do not RR-gate it
+        'tp_multiplier': 1.0,           # keep TP exactly at mid
+        'max_losing_candles': 96,
     },
 }
 

@@ -20,6 +20,8 @@ class RecommendationTypes(Enum):
     # BUY fired when price approaches a projected higher low from above in an
     # ascending trend (before the higher low is confirmed as a swing point).
     ASCENDING_NEAR_HIGHER_LOW = 'ascending_near_higher_low'
+    # Mean-reversion overlay: fade the extreme of a confirmed oscillating range.
+    MEAN_REVERT_FADE = 'mean_revert_fade'
 
 
 class Recommendation:

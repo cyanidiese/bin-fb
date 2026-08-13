@@ -132,6 +132,15 @@ class Settings:
     # +$137.71/47%WR vs sibling l2_bos_entry (alignment ignored) −$100.91/17%WR.
     # Default False. Can also be forced globally via risk_config global_enforce_parent_alignment.
     enforce_parent_alignment_hard: bool = False
+    # Mean-reversion overlay settings (session 61)
+    enable_mean_reversion: bool = False
+    mr_window: int = 48
+    mr_min_touches: int = 2
+    mr_touch_tol: float = 0.12
+    mr_band_min: float = 0.02
+    mr_band_max: float = 0.16
+    mr_decile: float = 0.15
+    mr_sl_buf: float = 0.5
 
 
 def load_settings(symbol: str | None = None) -> Settings:
@@ -216,6 +225,14 @@ def load_settings(symbol: str | None = None) -> Settings:
         trend_regime_filter=os.getenv('TREND_REGIME_FILTER', 'false').lower() in ('1', 'true', 'yes'),
         trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
         enforce_parent_alignment_hard=os.getenv('ENFORCE_PARENT_ALIGNMENT_HARD', 'false').lower() in ('1', 'true', 'yes'),
+        enable_mean_reversion=os.getenv('ENABLE_MEAN_REVERSION', 'false').lower() in ('1', 'true', 'yes'),
+        mr_window=int(os.getenv('MR_WINDOW', '48')),
+        mr_min_touches=int(os.getenv('MR_MIN_TOUCHES', '2')),
+        mr_touch_tol=float(os.getenv('MR_TOUCH_TOL', '0.12')),
+        mr_band_min=float(os.getenv('MR_BAND_MIN', '0.02')),
+        mr_band_max=float(os.getenv('MR_BAND_MAX', '0.16')),
+        mr_decile=float(os.getenv('MR_DECILE', '0.15')),
+        mr_sl_buf=float(os.getenv('MR_SL_BUF', '0.5')),
     )
 
     if symbol is not None:

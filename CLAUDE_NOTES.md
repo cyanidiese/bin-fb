@@ -1,6 +1,293 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-06-15 (session 52 — phantom SL fix + 5 risk_config changes + 2 new engine filters)
+## Last updated: 2026-08-13 (session 61 — trail-widen transfer analysis: negative result recorded, opposite lever found, no code changed)
+
+---
+
+## ⟳ RESUME POINT — session 61 (2026-08-13) — Wider-trail lever does NOT transfer to non-l2 families; tighten is the correct lever there (recorded, not applied)
+
+**Session goal**: Resume session-60 open item #3 — test whether the staged wider-trail change (`14b014b`, l2 family only) should extend to the OTHER trend/trail preset families.
+
+**Result (data-backed, fee-inclusive resim of real trades)**:
+- **Widening is net-negative on ALL 15 non-l2 trailing presets.** Raising `trailing_stop_pct` (0.15→0.35) monotonically lowers avg win + total. The `14b014b` lever does NOT generalize.
+- **Root cause = arming style.** l2 presets arm LATE (activation 2–2.5% favorable) → looser trail lets a matured winner run. Every other trailing preset arms EARLY off the partial-take price → widening just gives back more of an already-modest pop.
+- **Opposite lever works:** TIGHTENING 0.15→0.10 is robustly positive across 6/6 live-relevant presets & 3 active symbols (hl_buy_trail15/TIA, r5_sl_filter/EIGEN, r5_tight_rr3/INJ, trail_15_from_15/TIA+EIGEN). Live-relevant bucket total $766→$864 (+$99/+13%), payoff up, avgL flat (no winner flips to loss). Stop at 0.10 not 0.05 (intra-candle ordering optimism inflates very tight trails).
+
+**Decision**: User chose "just record the finding." **NO preset changed.** Deferred: tighten 0.15→0.10 on the 4 early-armed live presets (spec + stage on main + deploy with other staged changes), likely after the already-staged `main` commits deploy. Do NOT extend `14b014b` widening beyond its 5 l2 presets.
+
+**Artifacts**: `docs/profit-analysis/2026-08-13-trail-widen-does-not-transfer.md` (full tables + method). Tooling: `/tmp/s60/trail_widen_families.py` (+ inline tighten sweep). Data: `/tmp/s60/real_orders/`, `/tmp/s60/fullklines/`. Server/staging state unchanged from session-60 handoff (`docs/2026-08-13-session60-state.md`).
+
+---
+
+## ⟳ RESUME POINT — session 59 (2026-07-16) — Deep trend/signal pipeline analysis, second trail-arming fix, two structural BoS/stop-sourcing defects documented
+
+**Session goal**: Analyze the 260-trade all-time history and 92-trade Jun18-Jul13 window via parallel agents; identify root causes of persistent losses; deploy code fix #1; document specs for Fix A (same-level stops) and Fix B (soft BoS pruning).
+
+**Two structural pipeline defects identified (data-backed, both impact real trades)**:
+
+1. **BoS hard-wipe causes multi-day signal droughts** (`bot/trend.py::removePointsUpTo()` line 179-181, called from BoS handlers at 279-305):
+   - On Break of Structure, `removePointsUpTo()` deletes ALL prior swing history. `getSupposedNextPoints()` then requires 3 fresh highs AND 3 fresh lows before any signal fires again.
+   - Result: 5+ days with zero signals post-BoS while fresh structure rebuilds.
+   - Workaround presets exist (l2_bos_entry, l2_bos_trend, oscillating_zone, l2_regime_aware, l2_regime_aware_strict) purely to bypass this gate by dropping min_swing_points_projection to 1-2 and setting ignore_parent_alignment=True — re-admitting the exact low-quality signal class the hard-wipe was supposed to prevent.
+   - Root cause: Hard deletion of points vs soft-pruning (mark stale, fall back to pruned when fresh count is low).
+
+2. **Cross-level stop/target sourcing produces degenerate geometry** (`bot/trend.py::getRecommendation()` stops at 563, 624; `getSupposedNextPoints()` at 461-464; `findHighestInBiggerTrendsSince()`/`findLowestInBiggerTrendsSince()` at 202-254):
+   - Continuation signal stops come from `smaller_break_of_structure` — a DIFFERENT level's BoS, not the generating level's own structure.
+   - Supposed-point signals recurse up to all-time extremes after L2 seeding, especially post-BoS.
+   - Result: 6-15% SLs / 20-35% TPs on EIGENUSDT/INJUSDT, plus "entry=target=stop equal at 2dp" degenerate signals seen in logs.
+   - Root cause: Stops should come from same level's own structure with bounded (level-local) search, not cross-level delegation or unbounded parent recursion.
+
+**Data analysis findings (260 all-time trades, 92-trade Jun18-Jul13 window)**:
+
+- **Trailing exits are the only reliable profit source**: 74 trail exits = +$1,455.95 (70% WR) vs 2 structural TP hits in 260 trades. Losses: 151 trades = -$2,063.43 (0% WR).
+- **Hold duration is strongest predictor**: <1h holds = 151 trades (13% WR, -$603.93 net). 4-12h holds = 56% WR, +$386.29 net (only profitable).
+- **SELL side is loss driver**: -$594.45 vs BUY +$40-73. Confirms BoS geometry issue skews SELL worse.
+- **Level 2 signals far worse than Level 3**: L2 -$435.60 vs L3 break-even. L2 is loss concentration.
+- **SL-width analysis**: 8%+ SL is artifact zone (-$205, n=2 outliers), 4-8% is healthy (+$22, 45% WR). Not a "wide SL is bad" pattern.
+- **partial_high_rr preset**: 2 trades, both catastrophic losses (-$40.21, -$86.34 = 67% of DOGE's all-time loss). Thin sample, flagged.
+
+**Code fix #1 deployed (2026-07-16, commit c77dc4a)**:
+- **File**: `bot/fake_order.py` (FakeOrder class, presets with partial_take_pct > 0 AND trailing_stop_pct > 0 AND trail_activation_pct > 0)
+- **Change**: Trail now arms at `min(partial_price, activation_price)` for BUY / `max(...)` for SELL, instead of always using the (often unreachable) partial TP fraction.
+- **Impact**: EIGENUSDT/INJUSDT peaked +4.1-4.3% favorable (above 2% activation) but needed +5.1%/+8.9% for old partial arm point. Now arms earlier. ~$130 unrealized profit was unbanked, now captured.
+- **Regression tests**: 3 new tests in `tests/test_fake_order_trail_activation.py`, all 14+50 existing tests pass.
+
+**Hot-reload change (2026-07-16, interim guard pending Fix A)**:
+- Added `per_symbol_settings.{TIAUSDT,EIGENUSDT,INJUSDT,MEMEUSDT,DOGEUSDT}.max_sl_pct = 8.0`.
+- Data-backed: 8%+ SL bucket is toxic artifact zone; 4-8% is healthy.
+- Blocks cross-level-stop defect while Fix A is properly implemented.
+
+**Spec written (docs/specs/2026-07-16-trend-structure-fixes.md, commit 9d96b8a on main)**:
+Two NOT-YET-IMPLEMENTED fixes for after backtest validation:
+- **Fix A (same-level stops)**: Stops/targets from own-level structure, not cross-level BoS. Add dispersion sanity check.
+- **Fix B (soft-prune on BoS)**: Mark pruned instead of deleting; fall back when fresh count is short. After validation, restore min_swing_points_projection=3 on workaround presets.
+- **Validation**: Unit tests, full backtest sweep (expect SL>8% → 0), 1-week virtual-only if needed.
+
+**Deploy verified (hardened per session 58 TODO)**:
+- Waited for "Bot stopped." in log before rebuild (session 58 SIGTERM issue did NOT recur).
+- Verified on 2026-07-22: fix working. TIAUSDT new position 1.14% SL / 4.6% TP (vs old 9.4%/32%). INJUSDT +$138.51 trail exit. Balance at peak.
+
+**TODO.md additions**: Trail min-arming [x], max_sl_pct=8.0 [x], Spec [x], Implement Fix A [ ], Implement Fix B [ ], restore presets [ ], investigate EIGENUSDT loss [ ].
+
+---
+
+## ⟳ RESUME POINT — session 58 (2026-07-16) — Dead-trailing-stop bug fixed (commit 82ca600), stuck positions manually closed, klines analysis complete
+
+**Session goal**: Diagnose zero-trade silence (3 days post-deploy), identify root causes, fix code bugs, close stuck positions, and deploy.
+
+**CRITICAL BUG FOUND AND FIXED — Dead Trailing Stop**:
+- **Root cause**: `bot/fake_order.py` required `partial_take_pct > 0` to set the trail arm threshold (`_partial_price`). Presets with `trailing_stop_pct > 0` but no `partial_take_pct` (l2_regime_aware, l2_regime_aware_strict, l2_trend_sell, l2_trend_buy) had a trailing stop that could NEVER arm. Documented in the class docstring itself: "Requires partial_take_pct > 0 AND trailing_stop_pct > 0".
+- **Evidence**: Live TIAUSDT SELL (l2_regime_aware) showed `_best_price: 0.347` (price 11.5% favorable, ~$233 unrealized peak, ~$198 lockable) with `_partial_armed: false` and `_partial_price: null` — it banked nothing and decayed to a loss.
+- **Fix** (commit 82ca600): When `partial_take_pct == 0` and both `trailing_stop_pct > 0` and `trail_activation_pct > 0`, arm threshold is now `entry * (1 ± trail_activation_pct/100)`. Presets with partial take unchanged; trail-only presets without activation pct remain (documented) dead.
+- **Regression tests added**: 3 new tests in `tests/test_fake_order_trail_activation.py` (trail-only BUY arms/trails, SELL mirror, no-activation stays dead).
+- **Applies consistently**: Live orders, virtual simulation, and backtests all share FakeOrder.
+
+**Klines Retrospective Analysis**:
+1. **TIAUSDT SELL (l2_regime_aware, 16 days open)**: Peaked +11.5% favorable (best_price 0.347 vs entry 0.3919), trail never armed, decayed to -$66.34 realized loss. Max wrong-side streak: 396 × 15m candles (would be cut by max_losing_candles=96).
+2. **DOGEUSDT SELL (trail_15_from_30_full, 8 days open)**: Peaked +4.2% favorable, unbanked, realized -$19.27 loss. Max wrong-side streak: 508 × 15m candles (exceeds the 96-candle cap, but preset is LOCKED and uncapped per code invariant).
+3. **EIGENUSDT BUY (l2_bos_trend, opened Jul 13 20:00)**: Peaked +4.32% favorable, round-tripped unbanked. Has partial_take_pct so trail works eventually; 96-candle cap applies.
+4. **INJUSDT BUY (l2_bos_entry, opened Jul 14 07:45)**: Peaked +4.12% favorable, round-tripped unbanked. Same situation as EIGENUSDT.
+
+**Actions Taken** (user approved both via question):
+1. **Deployed the fix** (commit 82ca600 to feature/backtest-live-parity, graceful stop, Docker rebuild, restart).
+2. **Force-closed stuck positions** during deploy window (Jul 16 ~15:52–16:10 UTC):
+   - TIAUSDT SELL closed at 0.4047: realized **-$66.34**
+   - DOGEUSDT SELL closed at 0.07345: realized **-$19.27**
+   - Total -$85.61 realized loss (avoided worst-case ~-$256 at their SLs)
+   - Kept EIGENUSDT/INJUSDT BUYs open per user choice (in profit, 96-candle-capped)
+   - Trimmed restart_positions_test.json so only EIGENUSDT+INJUSDT restored
+
+**Deploy Process Anomaly**:
+- Initial SIGTERM at ~15:52 UTC did NOT stop the old bot (no shutdown lines in log; still processing candles at 16:00). Docker kill sent TERM but old process ignored it.
+- Recreated by `docker compose up -d` at ~16:04, extra container at 16:04:56, final clean start at 16:10:00.
+- No orders were placed during the window; final state verified correct.
+- **Follow-up TODO**: Harden bfb-deploy to verify "Bot stopped." in log before rebuild (avoid silent restart anomalies).
+
+**Post-Deploy Verification**:
+- Fix confirmed in running container, exactly EIGENUSDT+INJUSDT restored.
+- "Reconciliation complete: no orphan positions found" logged.
+- Stream connected, real balance re-seeded at $3,610.62.
+
+**Binance REST Rate Limits** (pre-existing, not session 58 focus):
+- -1003 "banned until" observed pre-deploy: 160 occurrences in bot.log.1 (Jul 5–12) vs 23 in bot.log (Jul 12–16).
+- Improving trend; WebSocket keeps live updates working. Logged as open item to investigate kline REST refresh pattern (5000-candle cache refresh per symbol per candle close).
+
+**Bugs Fixed Log Entry** (comprehensive):
+- **Dead trailing stop for trail-only presets**: Cause = FakeOrder arming gated exclusively on partial_price (which requires partial_take_pct>0). Fix = arm off trail_activation_pct when partial_take_pct==0 (commit 82ca600). Found via klines retrospective on the 16-day stuck TIAUSDT position. Applies to live, virtual, and backtest paths identically.
+
+**Bot Status** (session end, 2026-07-16):
+- Branch: feature/backtest-live-parity, commit 82ca600
+- Open positions: EIGENUSDT BUY, INJUSDT BUY (both in profit, 96-candle-capped)
+- Closed this session: TIAUSDT SELL (-$66.34), DOGEUSDT SELL (-$19.27)
+- Real balance: $3,610.62 USDT
+- Next: Monitor EIGENUSDT/INJUSDT BUY outcomes; check status of both positions on next session
+
+**Bookkeeping Note**:
+- Manual closes NOT in real_orders JSON files (old bot process killed before close-recording). Realized PnL from close script; wallet reflects them.
+
+---
+
+## ⟳ RESUME POINT — session 57 (2026-07-13) — Stuck-position root cause fixed, max_losing_candles safety net deployed, symbol weights rebalanced
+
+**Session goal**: Pull fresh logs from server, diagnose 13-day TIAUSDT trading silence, fix root causes, apply code and config changes.
+
+**Root cause analysis (logs from 185.237.14.105 via SCP)**:
+
+1. **TIAUSDT zero real orders in 13 days (2026-06-30 → 2026-07-13) — ROOT CAUSE IDENTIFIED**:
+   - Real SELL position opened 2026-06-30 on preset `l2_regime_aware` (entry=0.3919, SL=0.4287, TP=0.2677) never closed.
+   - Why: `max_losing_candles`, `max_losing_pct`, `max_losing_amount_usdt` all defaulted to 0 (disabled). Preset `l2_regime_aware` set none of these time-based exit caps.
+   - Position had only TP/SL exits (structurally 31.7% away, unreachable) with no soft escape valve.
+   - Unrealized loss at analysis: -$75.52.
+   - Signal suppression: Many valid BEST signals (RR 2.0–4.0) throughout July silently skipped because symbol already had open position.
+
+2. **DOGEUSDT stuck since 2026-07-08, preset `trail_15_from_30_full` (LOCKED_PRESETS)**:
+   - Preset is code-protected (marked "must never be modified or deleted"). Deliberately left unfixed per invariant.
+   - Unrealized: -$8.17. Weight=1 (small exposure).
+   - Documented as accepted risk for this specific preset.
+
+3. **MEMEUSDT zero trades since 2026-06-19 — NOT a bug**:
+   - Current volatility (avg 15m range 0.53%) below global_min_sl_pct floor (0.7%).
+   - SL force-widened, TP doesn't scale proportionally → RR < 1.5–2.0 minimum on nearly every signal.
+   - Verified via decision_log: repeated floor_sl_pct → skip_rr pairs, RR low as 0.84.
+   - RR filter working correctly; no code defect.
+   - Internal math is scale-invariant; log shows 0.00 for ~$0.00055 price (cosmetic only).
+
+4. **EIGENUSDT validation**: +$249.50 net over 28 trades since session 55 lock-removal. Session 55 decision confirmed working.
+
+5. **Net P&L 2026-06-29 → 2026-07-13**: EIGENUSDT +249.50, INJUSDT +9.49, DOGEUSDT -126.55, TIAUSDT -207.03 = -$74.59 total. Losses attributable to stuck positions, not strategy failure.
+
+6. **DOGEUSDT historical losses**: -$40.21 (2026-07-02, clean trend loss) + -$86.34 (2026-07-05→08, partial exit at 60% TP, no trailing stop) = 67% of all-time DOGE loss (-$188.84). Lower priority (weight=1, thin sample).
+
+7. **Loose issue — global_min_rr reversion**: Currently 2.0 on live; session 53 notes say deliberately raised to 3.0 on 2026-06-16. File mtime 2026-06-29 suggests possible reversion in session 55/56 batch. **UNRESOLVED — ask user.**
+
+**Code fix deployed**:
+- **File**: `config/presets.py`
+- **Change**: Added `max_losing_candles: 96` (24 hours at 15m candles) to 6 NON-LOCKED presets: `l2_bos_entry`, `l2_bos_trend`, `l2_trend_sell`, `l2_trend_buy`, `l2_regime_aware`, `l2_regime_aware_strict`.
+- **Rationale**: Calibrated from real l2_* trade history: winning trades close within 16.3h max (avg 5.2h), losing trades within 3.4h max (avg 0.7h). 24h cap stops only genuinely stuck positions, never cuts legitimate in-progress trades.
+- **LOCKED_PRESETS untouched**: `trail_15_from_30_full` still has no cap per code invariant. Risk documented; if ever used on higher-weight symbol, reconsider.
+- **Commit 3583a73**: "fix(presets): add max_losing_candles safety net to uncapped trend presets"
+- **Branch**: feature/backtest-live-parity (user chose over main due to 14-commit dashboard-only divergence on main)
+- **Deploy verified**: Docker rebuild successful, "Combined stream connected (15 symbols)" confirmed, both stuck positions correctly restored, `max_losing_candles` confirmed live via docker exec Python call.
+
+**Config hot-reload (risk_config.json)**:
+- **Symbol weights reallocated** (2026-07-13):
+  - MEMEUSDT 8→2 (structurally blocked by RR filter due to low volatility)
+  - EIGENUSDT 5→8 (strong recent +$249.50)
+  - INJUSDT 5→7 (positive +$9.49)
+  - TIAUSDT 15 (unchanged), DOGEUSDT 1 (unchanged)
+
+**Still open — user decision required**:
+- **Two open real positions** UNRESOLVED: TIAUSDT -$75.52 unrealized, DOGEUSDT -$8.17 unrealized. User asked clarifying question on "unrealized" but hasn't decided: force-close now (free TIAUSDT's trading capacity) or let them ride to SL/TP? **ACTION: Get user decision.**
+- **global_min_rr reversion** UNRESOLVED: Was intentional or regression? **ACTION: Ask user.**
+- **Loose end**: config/presets.py fix exists uncommitted on local main (via git stash pop). Should commit to main soon or confirm merge plan from feature/backtest-live-parity.
+
+**Bot status (session end)**:
+- Branch: feature/backtest-live-parity, commit 3583a73
+- Open positions: TIAUSDT, DOGEUSDT (both awaiting user decision)
+- Symbol weights: TIAUSDT 15, SOLUSDT 20, EIGENUSDT 8, INJUSDT 7, MEMEUSDT 2, DOGEUSDT 1
+- Next: (a) user decision on open positions, (b) clarify global_min_rr, (c) commit preset fix to main, (d) monitor TIAUSDT trading after position closes
+
+---
+
+## ⟳ RESUME POINT — session 55 (2026-06-28) — Profit analysis + EIGENUSDT lock removed + DOGEUSDT pre-lock removed
+
+**Session goal**: Analyze 10-day performance (Jun 18–28), identify root causes of losses, apply hot-reload fixes.
+
+**42 closed trades analyzed (Jun 18–28, session 54 fix deployed Jun 18)**:
+- Net P&L: -$252.97 USDT
+- Win rate: 33.3% (14 wins, 28 losses)
+- By symbol:
+  - TIAUSDT: -$51.46 (31 trades, 41.9% WR) — locked to hl_buy_trail15, BUY side struggling (0.79 PF), SELL side winning (0.75 WR)
+  - EIGENUSDT: -$189.12 (7 trades, 14.3% WR) — locked to lh_sell_trail15 ← **CRITICAL ROOT CAUSE FOUND**
+  - MEMEUSDT: -$1.48 (2 trades, 0% WR)
+  - SOLUSDT: -$10.91 (2 trades, 0% WR, Jun 18–20 only)
+
+**CRITICAL BUG FOUND — EIGENUSDT TATS-VirtualTracker mismatch**:
+- **Root cause**: VirtualTracker efficiency score uses `max()` across ALL presets for a symbol. EIGENUSDT's TATS score = +171.1 from best-overall preset "lh_sell_prox15_trail15".
+- **Locked preset mismatch**: But risk_config had locked_preset="lh_sell_trail15" (score -220.6, 6 consecutive losses Jun 22 while price rising).
+- **Effect**: Bot competed in TATS leaderboard with +171.1 score, but placed orders using lh_sell_trail15 (-220.6). Single day Jun 22 loss: ~$230.
+- **Fix applied** (hot-reload, Jun 28): Removed EIGENUSDT lock. VirtualTracker will now use lh_sell_prox15_trail15 (+171.1) for BOTH scoring and execution.
+- **Expected savings**: ~$30–50/week prevented losses.
+
+**DOGEUSDT pre-lock analysis and removed**:
+- DOGEUSDT locked preset was "r6_arm15_rr4" (in preset_blocklist, so effectively never placed real orders).
+- DOGEUSDT weight=1 < tats_min_weight=3.0 anyway (virtual-only in practice).
+- Removed lock (set to None) to simplify config; VirtualTracker can select best eligible preset.
+
+**Root cause pattern identified**:
+- **Locked presets bypass VirtualTracker best_preset() selection** — design intent was to override global blocklist on a per-symbol basis.
+- **But TATS scoring still uses VirtualTracker.best_preset()** — mismatch when locked_preset != best_preset.
+- **Fix in future**: Consider storing TATS scores per locked_preset if lock exists, OR always use locked_preset for both scoring and execution.
+
+**TIAUSDT analysis (after SELL position closes)**:
+- Virtual best preset: l2_bos_trend (score +262.0, tc=21)
+- TATS score: +262.0 from l2_bos_trend — but locked to hl_buy_trail15 (score +73.3)
+- BUY side: 27 trades, 37% WR, -$77.33 (losing)
+- SELL side: 4 trades, 75% WR, +$25.87 (working)
+- **PROPOSAL** (not yet applied): After open SELL position closes, remove hl_buy_trail15 lock — let VirtualTracker pick l2_bos_trend
+- **Blocking**: Cannot apply while position is open (would affect SL/TP management of live trade)
+
+**Opportunity analysis (signal suppression)**:
+1. **1000PEPEUSDT**: 549 BEST signals (weight=0), virtual best rr_4x_trail_20 (score +10.6)
+   - Zero price display (formatting artifact, internal calc correct)
+   - Potential: enable with weight=5–8 for diversification
+2. **INJUSDT**: 57 BEST signals (Jun 18–26), weight=0, precision 0.894
+   - Best unblocked preset: l2_regime_aware (score +344.5, tc=5)
+   - Potential: enable with weight=5
+3. **SOLUSDT**: weight=20 but zero orders since Jun 20
+   - Eff score +134.4 (high) but current market degenerate signals (stop 3 cents from entry)
+   - TIAUSDT open position blocks new orders on dominant symbol
+   - Signals rare with valid geometry in current market
+
+**VirtualTracker efficiency scores (as of Jun 28)**:
+- TIAUSDT: +262.0 (l2_bos_trend) × weight 15
+- SOLUSDT: +134.4 × weight 20
+- EIGENUSDT: +171.1 (lh_sell_prox15_trail15) × weight 5 — now correct
+- MEMEUSDT: +6.0 × weight 8
+- DOGEUSDT: +24.8 × weight 1
+
+**Hot-reload changes applied (Jun 28)**:
+1. Removed EIGENUSDT locked preset (lh_sell_trail15 → None)
+2. Removed DOGEUSDT locked preset (r6_arm15_rr4 → None)
+
+**Next steps**:
+1. After TIAUSDT SELL position closes: remove hl_buy_trail15 lock (propose to user first)
+2. Monitor if EIGENUSDT loss rate improves with lh_sell_prox15_trail15 alignment
+3. Consider enabling 1000PEPEUSDT (weight=5) for small allocation test
+4. Consider enabling INJUSDT (weight=5) if l2_regime_aware continues working
+
+**Bot status (Jun 28 session end)**:
+- Branch: main
+- TIAUSDT SELL open: entry=0.3738, TP=0.31262, SL=0.3899, qty=4966, open Jun 27 03:45
+- Locked presets: TIAUSDT→hl_buy_trail15 only (EIGENUSDT and DOGEUSDT locks removed)
+
+---
+
+## ⟳ RESUME POINT — session 53 continuation (2026-06-16) — Four precision improvements deployed
+
+**Session goal**: Deploy precision-improvement changes from session 53 spec (2026-06-16-precision-improvement.md).
+
+**Four changes deployed** (commit c01e338, live on server 10:59 UTC):
+
+1. **Entry zone hard gate** — New config `entry_zone_max_pct: 0.75` read in `recommendation_engine.py` line ~145. Rejects candidates where `rec.getHowClose() > proximity_zone_pct * entry_zone_max_pct`. Blocks outer-zone (low Q4 quality) entries. Expected: ~25% fewer entries, but those were lowest-quality.
+
+2. **Precision reweighting** — Changed `reliability: 0.40 → 0.25` and `entry_quality: 0.25 → 0.40` coefficients in `recommendation_engine.py`. Backtest data: Q1 entries (minimal adverse move) win 76.7% vs Q4 at 9.4%. Reweighting elevates precision-signal correlation; winners now rank higher.
+
+3. **Global correction weight override** — New config `global_correction_weight: -1.0` (disabled) in `recommendation_engine.py` _score_and_filter. When >= 0, overrides preset `correction_weight`. Deferred pending evaluation of correction bonus impact.
+
+4. **Trading blackout hours** — New config `trading_blackout_hours: [17, 18, 19]` (UTC) in `main.py` _try_place_order. Skips real orders during H17–H19 UTC; virtual continues. Historical: H17–19 = 44 trades at 8% win rate, -$176 loss. Expected: eliminate zero-quality window.
+
+**Risk config on server** (`/opt/bot/risk_config.json`):
+```json
+{
+  "entry_zone_max_pct": 0.75,
+  "trading_blackout_hours": [17, 18, 19]
+}
+```
+
+**Deployment**: Commit c01e338 on feature/backtest-live-parity, Docker rebuilt, bot running. MEMEUSDT position restored pre-deploy.
+
+**Next steps**: Monitor 50-trade sample post-deploy. Target: win rate > 28%, precision correlation restored.
 
 ---
 

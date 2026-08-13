@@ -4,6 +4,62 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 61 (2026-08-13) — Trail-Widen Transfer Analysis (negative result recorded)
+
+- [x] **Test whether `14b014b` wider-trail lever extends to non-l2 trail families** — fee-inclusive resim of every real trade, per-symbol. Result: **net-negative on all 15 trailing presets** (widening lowers avg win + total). Lever does NOT transfer.
+- [x] **Diagnose why** — arming style: l2 arms late (activation) → widen helps; other families arm early (partial price) → widening just gives back more of a modest pop.
+- [x] **Test opposite direction** — tightening 0.15→0.10 robustly positive across 6/6 live-relevant presets & 3 symbols; live-relevant bucket $766→$864 (+$99/+13%), payoff up, losers unaffected.
+- [x] **Record finding** — `docs/profit-analysis/2026-08-13-trail-widen-does-not-transfer.md`. User chose "just record"; NO preset changed.
+- [ ] **DEFERRED decision: tighten trail 0.15→0.10 on early-armed live presets** (hl_buy_trail15, r5_sl_filter, r5_tight_rr3, trail_15_from_15) — spec + stage on main + deploy with other staged changes. Revisit likely after the staged `main` commits are deployed.
+- [ ] **Do NOT extend `14b014b` widening beyond the 5 l2 presets** — confirmed net-negative elsewhere.
+
+---
+
+## Session 59 (2026-07-16) — Deep Pipeline Analysis, Trail Min-Arming Fix, Structural Defect Specs
+
+- [x] **Pull live trade data and analyze full history** — 260 all-time trades, 92 Jun18-Jul13 window analyzed via parallel agents
+- [x] **Identify structural pipeline defects** — BoS hard-wipe (signal droughts) + cross-level stop sourcing (artifact geometry) both documented
+- [x] **Deploy Code Fix #1 (trail min-arming)** — commit c77dc4a: min(partial_price, activation_price) arming rule for mixed-preset family
+- [x] **Add regression tests for trail min-arming** — 3 new tests, all 14+50 existing tests pass
+- [x] **Apply hot-reload guard** — per_symbol_settings.max_sl_pct = 8.0 on 5 symbols (blocks artifact SL zone)
+- [x] **Write structural fix specs** — docs/specs/2026-07-16-trend-structure-fixes.md (Fix A + Fix B, validation plan, commit 9d96b8a)
+- [x] **Verify deploy and trail fix working** — checked on 2026-07-22: TIAUSDT 1.14%/4.6% healthy position, INJUSDT +$138.51 trail exit
+- [ ] **Implement Fix A (same-level stops)** — next session after backtest validation (touch: trend.py getRecommendation, getSupposedNextPoints, find*InBiggerTrends)
+- [ ] **Implement Fix B (soft-prune on BoS)** — paired with Fix A; restore min_swing_points_projection=3 on workaround presets
+- [ ] **Investigate EIGENUSDT -$138.70 loss (2026-07-17, l2_bos_trend)** — no data yet on cause, flagged for next profit session
+- [ ] **Monitor partial_high_rr preset** — 2 catastrophic losses on DOGEUSDT (-$40, -$86 = 67% of DOGE's all-time loss); thin sample, watch for more
+
+---
+
+## Session 58 (2026-07-16) — Dead-Trail Bug Fix, Stuck Positions Closed
+
+- [x] **Diagnose zero-trade silence (3 days post-deploy)** — root cause: dead trailing stop in FakeOrder arming logic
+- [x] **Fix dead trailing stop for trail-only presets** — when partial_take_pct==0, now arm at entry±trail_activation_pct (commit 82ca600)
+- [x] **Add regression tests** — 3 new tests in tests/test_fake_order_trail_activation.py
+- [x] **Deploy fix to feature/backtest-live-parity** — commit 82ca600, graceful stop, Docker rebuild verified
+- [x] **Force-close TIAUSDT SELL** — closed at 0.4047, realized -$66.34 loss (avoided worst-case)
+- [x] **Force-close DOGEUSDT SELL** — closed at 0.07345, realized -$19.27 loss
+- [x] **Keep EIGENUSDT/INJUSDT BUY positions open** — both in profit, 96-candle-capped per user choice
+- [x] **Harden bfb-deploy procedure** — verify "Bot stopped." in log before rebuild (SIGTERM was ignored this session — NOW FIXED per session 59)
+- [ ] **Investigate Binance REST -1003 rate limits** — 160→23/week improving trend; check kline refresh pattern (5000-candle per symbol per close)
+- [x] **Monitor EIGENUSDT/INJUSDT BUY outcomes** — verified 2026-07-22: EIGENUSDT -$18.76, INJUSDT +$138.51 trail exit (exactly what session 59 fix targets)
+- [x] **Mark resolved: TIAUSDT/DOGEUSDT stuck positions** — closed Jul 16, total -$85.61 realized
+
+---
+
+## Session 57 (2026-07-13) — Stuck-Position Root Cause Fix, Weight Rebalancing
+
+- [x] **Diagnose TIAUSDT 13-day trading silence** — root cause: max_losing_candles defaults to 0, preset l2_regime_aware set none
+- [x] **Implement max_losing_candles safety net** — added `max_losing_candles: 96` to 6 non-locked trend presets
+- [x] **Deploy to feature/backtest-live-parity** — commit 3583a73, Docker rebuild verified
+- [x] **Hot-reload symbol weights** — MEMEUSDT 8→2, EIGENUSDT 5→8, INJUSDT 5→7
+- [x] **USER DECISION: Open positions (TIAUSDT -$75.52, DOGEUSDT -$8.17)** — force-close now or let ride to SL/TP? RESOLVED in session 58 (closed)
+- [ ] **Clarify global_min_rr reversion** — currently 2.0, session 53 said 3.0 deliberately set. Intentional or regression? BLOCKED on user clarification
+- [ ] **Commit config/presets.py fix to main** — currently uncommitted on main branch after git stash pop; should commit or confirm merge plan from feature/backtest-live-parity
+- [ ] **Monitor trading after stuck positions close** — verify bot resumes normal order flow post-fix
+
+---
+
 ## Phase 1 — Foundation
 
 - [x] `.gitignore`
@@ -405,6 +461,20 @@ Design approved + implemented in session 14.
 - [ ] XAUUSDT zero signals (strategy fit or data issue) — pending investigation
 - [ ] Pre-existing test failures: test_place_order_happy_path, test_perf_cache_ttl — pending investigation
 
+## Session 53 Continuation — Precision Improvements (2026-06-16)
+
+- [x] **Implement entry zone hard gate** — entry_zone_max_pct config in recommendation_engine.py, rejects outer-zone low-quality entries
+- [x] **Apply precision reweighting** — reliability 0.40→0.25, entry_quality 0.25→0.40 based on Q1 vs Q4 backtest data (76.7% vs 9.4% win rates)
+- [x] **Add global correction weight override** — global_correction_weight config key for manual correction-bonus control (deferred, currently -1.0)
+- [x] **Implement trading blackout hours** — trading_blackout_hours config in main.py, skips real orders H17–19 UTC (expected +$176 recovery)
+- [x] **Set risk_config values** — entry_zone_max_pct=0.75, trading_blackout_hours=[17,18,19] on server
+- [x] **Deploy to production** — Commit c01e338, Docker rebuild, bot live as of 10:59 UTC
+- [ ] **Monitor: after 50 real trades** — Check win rate (target >28%), verify precision correlation restored
+- [ ] **Monitor: H17–19 UTC blackout** — Confirm zero real orders in window; verify no phantom orders
+- [ ] **Consider: global_correction_weight=0.0** — If correction bonus continues to hurt, disable globally (currently deferred)
+- [ ] **Merge feature/backtest-live-parity → main** — Still pending from session 52
+- [ ] **Investigate SOLUSDT zero orders** — weight=20 but no real orders; still pending from session 52
+
 ## Session 52 — Loss Reduction: Risk Config Optimization (2026-06-15)
 
 - [x] **Diagnose phantom SL from max_loss_usdt** — Identified root cause: dollar cap at high quantities creates microscopic SL distance
@@ -414,11 +484,6 @@ Design approved + implemented in session 14.
 - [x] **Implement global signal-type filter** — Added global_blocked_signal_types=["lowering_near_last_low"] (100% loss rate)
 - [x] **Expand preset_blocklist** — Added loose_entry, broad_zone, aggressive, default, low_rr (all high loss rates)
 - [x] **Deploy code filters to production** — Commit d5d4fee: global_blocked_signal_types + global_max_level in recommendation_engine.py
-- [ ] **Investigate SOLUSDT zero orders** — weight=20 but no real orders; check which presets rank and if all blocklisted
-- [ ] **Merge feature/backtest-live-parity → main** — Update push.sh to deploy from main instead of feature branch
-- [ ] **1000PEPEUSDT analysis** — -$4,508 virtual loss at 37.1% loss rate (zero weight but pollutes virtual ranking)
-- [ ] **Monitor: SL floor 0.7% enforcement** — Next real order should show SL floored to 0.7% minimum (global_min_sl_pct)
-- [ ] **Monitor: locked_presets still work** — DOGEUSDT→r6_arm15_rr4, MEMEUSDT→sl_adjust_rr_tp95 should bypass blocklist
 
 ## Session 51 — Deploy Procedure Documentation (2026-06-14)
 

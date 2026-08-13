@@ -21,9 +21,15 @@ def test_detect_range_qualifies_on_oscillating_window():
     assert abs(rng.mid - 105.0) < 1e-9
 
 def test_detect_range_rejects_one_sided_window():
-    # only the high is ever tagged -> not a confirmed range
+    # Genuine one-sided window: the top is tagged every candle, but the low is
+    # reached only ONCE (below min_touches=2) -> not a confirmed oscillating range.
     cfg = MRConfig()
-    kl = [_k(105, 110, 104, 106, i) for i in range(48)]
+    kl = []
+    for i in range(48):
+        if i == 0:
+            kl.append(_k(105, 110, 100, 109, i))   # the ONLY candle reaching the low
+        else:
+            kl.append(_k(109, 110, 108, 109, i))   # hugs the top only
     assert detect_range(kl, cfg) is None
 
 def test_detect_range_rejects_breakout_series():

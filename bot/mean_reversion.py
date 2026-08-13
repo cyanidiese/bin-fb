@@ -49,7 +49,5 @@ def detect_range(klines: list, cfg: MRConfig) -> Optional[Range]:
     top_touches = sum(1 for h in highs if h >= top_band)
     bot_touches = sum(1 for l in lows if l <= bot_band)
     if top_touches >= cfg.min_touches and bot_touches >= cfg.min_touches:
-        # Ensure it's truly oscillating: not all candles hit both boundaries
-        if top_touches < len(win) and bot_touches < len(win):
-            return Range(hi=hi, lo=lo, mid=mid, width=width)
+        return Range(hi=hi, lo=lo, mid=mid, width=width)
     return None

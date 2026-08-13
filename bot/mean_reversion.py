@@ -76,11 +76,11 @@ def mr_signal(klines: list, rng: Range, cfg: MRConfig) -> Optional[MRSignal]:
         return None
     pos = (c - rng.lo) / span
     body_tol = 0.15 * (h - l + 1e-12)
-    # SELL: near top, poked above hi but closed back inside
+    # SELL: near top, poked above hi and closed well below its own high
     if pos >= 1 - cfg.decile:
         if h > rng.hi - 0.02 * span and c < h - body_tol:
             return MRSignal(side='SELL', entry=c, tp=rng.mid, sl=rng.hi + cfg.sl_buf * span)
-    # BUY: near bottom, poked below lo but closed back inside
+    # BUY: near bottom, poked below lo and closed well above its own low
     if pos <= cfg.decile:
         if l < rng.lo + 0.02 * span and c > l + body_tol:
             return MRSignal(side='BUY', entry=c, tp=rng.mid, sl=rng.lo - cfg.sl_buf * span)

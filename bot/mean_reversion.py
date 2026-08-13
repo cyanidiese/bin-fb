@@ -51,3 +51,34 @@ def detect_range(klines: list, cfg: MRConfig) -> Optional[Range]:
     if top_touches >= cfg.min_touches and bot_touches >= cfg.min_touches:
         return Range(hi=hi, lo=lo, mid=mid, width=width)
     return None
+
+
+@dataclass(frozen=True)
+class MRSignal:
+    side: str      # 'BUY' | 'SELL'
+    entry: float
+    tp: float
+    sl: float
+
+
+def mr_signal(klines: list, rng: Range, cfg: MRConfig) -> Optional[MRSignal]:
+    """Fade the extreme of a confirmed range on the last candle.
+    Requires a wick-rejection: the candle pokes past the boundary but closes
+    back inside. TP = range mid, SL = boundary +/- sl_buf * range_width."""
+    if not klines:
+        return None
+    o, h, l, c = _ohlc(klines[-1])
+    span = rng.hi - rng.lo
+    if span <= 0:
+        return None
+    pos = (c - rng.lo) / span
+    body_tol = 0.15 * (h - l + 1e-12)
+    # SELL: near top, poked above hi but closed back inside
+    if pos >= 1 - cfg.decile:
+        if h > rng.hi - 0.02 * span and c < h - body_tol and c <= rng.hi:
+            return MRSignal(side='SELL', entry=c, tp=rng.mid, sl=rng.hi + cfg.sl_buf * span)
+    # BUY: near bottom, poked below lo but closed back inside
+    if pos <= cfg.decile:
+        if l < rng.lo + 0.02 * span and c > l + body_tol and c >= rng.lo:
+            return MRSignal(side='BUY', entry=c, tp=rng.mid, sl=rng.lo - cfg.sl_buf * span)
+    return None

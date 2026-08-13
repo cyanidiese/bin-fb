@@ -73,3 +73,13 @@ def test_mr_signal_none_without_wick_rejection():
     # closes ABOVE hi (breakout, no rejection back inside) -> no fade
     kl = _oscillating() + [_k(109, 111.0, 108.5, 110.8, 99)]
     assert mr_signal(kl, _rng(), cfg) is None
+
+def test_mr_signal_fires_sell_when_close_above_hi_with_strong_wick():
+    # Fidelity to the validated probe: a candle that pokes well above hi and
+    # closes ABOVE hi but with a strong upper wick STILL fires a SELL fade.
+    # The probe has NO "closed back inside the range" requirement.
+    cfg = MRConfig()
+    kl = _oscillating() + [_k(109, 115.0, 108.0, 111.0, 99)]  # h=115, close 111 > hi 110, big wick
+    sig = mr_signal(kl, _rng(), cfg)
+    assert sig is not None and sig.side == 'SELL'
+    assert abs(sig.tp - 105.0) < 1e-9

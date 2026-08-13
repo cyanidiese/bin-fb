@@ -63,11 +63,14 @@ class MRSignal:
 
 def mr_signal(klines: list, rng: Range, cfg: MRConfig) -> Optional[MRSignal]:
     """Fade the extreme of a confirmed range on the last candle.
-    Requires a wick-rejection: the candle pokes past the boundary but closes
-    back inside. TP = range mid, SL = boundary +/- sl_buf * range_width."""
+    Requires a wick-rejection: the candle pokes past the boundary (high near/above
+    hi, or low near/below lo) and closes well below its own high (SELL) / above its
+    own low (BUY). Matches the validated probe /tmp/s60/mr_refine.py exactly — no
+    'closed back inside the range' requirement. TP = range mid,
+    SL = boundary +/- sl_buf * range_width."""
     if not klines:
         return None
-    o, h, l, c = _ohlc(klines[-1])
+    _o, h, l, c = _ohlc(klines[-1])
     span = rng.hi - rng.lo
     if span <= 0:
         return None
@@ -75,10 +78,10 @@ def mr_signal(klines: list, rng: Range, cfg: MRConfig) -> Optional[MRSignal]:
     body_tol = 0.15 * (h - l + 1e-12)
     # SELL: near top, poked above hi but closed back inside
     if pos >= 1 - cfg.decile:
-        if h > rng.hi - 0.02 * span and c < h - body_tol and c <= rng.hi:
+        if h > rng.hi - 0.02 * span and c < h - body_tol:
             return MRSignal(side='SELL', entry=c, tp=rng.mid, sl=rng.hi + cfg.sl_buf * span)
     # BUY: near bottom, poked below lo but closed back inside
     if pos <= cfg.decile:
-        if l < rng.lo + 0.02 * span and c > l + body_tol and c >= rng.lo:
+        if l < rng.lo + 0.02 * span and c > l + body_tol:
             return MRSignal(side='BUY', entry=c, tp=rng.mid, sl=rng.lo - cfg.sl_buf * span)
     return None

@@ -50,6 +50,19 @@ def test_engine_emits_mr_fade_when_enabled_and_range_confirmed():
     assert abs(rec.getTarget() - 105.0) < 1e-6      # TP=mid
     assert rec.getStop() > 110.0                      # SL beyond boundary
 
+def test_analyzer_add_candle_routes_mr():
+    s = dataclasses.replace(load_settings('TIAUSDT'), enable_mean_reversion=True)
+    engine = RecommendationEngine(s)
+    analyzer = Analyzer(s.swing_neighbours, engine)
+    kl = _oscillating_klines()
+    analyzer.build_from_klines(kl[:-1])
+    analyzer.update_price(109.0)
+    analyzer.add_candle(kl[-1])                 # feeds final fade candle
+    rec = analyzer.get_best_recommendation()
+    assert rec is not None
+    assert rec.getType() == RecommendationTypes.MEAN_REVERT_FADE
+
+
 def test_engine_ignores_mr_when_disabled():
     s = dataclasses.replace(load_settings('TIAUSDT'), enable_mean_reversion=False)
     engine = RecommendationEngine(s)

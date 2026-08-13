@@ -306,7 +306,7 @@ class Backtester:
                 # where signals are evaluated at the candle-close tick.
                 for entry_price in [close_price]:
                     analyzer.update_price(entry_price)
-                    rec = engine.generate(trend, entry_price)
+                    rec = engine.generate(trend, entry_price, recent_klines=analyzer.get_klines())
                     if rec is None:
                         continue
 

@@ -109,7 +109,8 @@ class Analyzer:
         if self._engine is None or self._trend is None:
             self._best_recommendation = None
             return
-        self._best_recommendation = self._engine.generate(self._trend, self._current_price)
+        self._best_recommendation = self._engine.generate(
+            self._trend, self._current_price, recent_klines=self._klines)
 
     def update_price(self, price: float) -> None:
         self._current_price = price
@@ -143,7 +144,8 @@ class Analyzer:
             return None
         import dataclasses
         s = dataclasses.replace(self._engine._s, **overrides)
-        return RecommendationEngine(s).generate(self._trend, self._current_price)
+        return RecommendationEngine(s).generate(
+            self._trend, self._current_price, recent_klines=self._klines)
 
     def get_all_points(self) -> list:
         # Determine which historical points are currently "active" (still present

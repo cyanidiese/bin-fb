@@ -19,6 +19,17 @@ _PERF_CACHE_TTL = 60.0   # seconds before re-reading backtest results from disk
 _CONFIG_CACHE_TTL = 5.0  # seconds before re-reading risk_config.json from disk
 _MIN_PRESET_TRADES = 4   # presets with fewer trades are excluded from scoring
 
+# Largest single-step rise in peak balance we treat as real trading profit.
+# A balance reading far above the current peak is almost always an artifact
+# (wrong asset in totalWalletBalance, exchange glitch, manual transfer) rather
+# than realised PnL. Ratcheting the peak up on such a reading permanently
+# inflates every later drawdown calculation and can latch the hard stop with
+# no real loss — see the 2026-08-18 incident, where a transient 5000.0 reading
+# raised the peak from 3724 to 5000 and froze all trading at a phantom 39.12%
+# drawdown while the account was actually down 18.3%.
+# Overridable per-deployment via risk_config.json -> "max_peak_jump_pct".
+_DEFAULT_MAX_PEAK_JUMP_PCT = 20.0
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "risk_config.json"
 _DEFAULT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "risk_state.json"
@@ -100,7 +111,7 @@ class RiskManager:
             if self._peak_balance is None:
                 self._peak_balance = balance
             elif balance > self._peak_balance:
-                self._peak_balance = balance
+                self._raise_peak(balance)
             pending = self._check_drawdown()
 
             # Check absolute floor: alert if balance drops below min_balance_pct of peak
@@ -121,6 +132,40 @@ class RiskManager:
         if min_balance_notify and self._notifier:
             level, title, source = min_balance_notify
             self._notifier.notify(level, title, "", source)
+
+    def _raise_peak(self, balance: float) -> None:
+        """Called inside lock, only when balance > current peak.
+
+        Raises the peak to the new balance only when the rise is within
+        max_peak_jump_pct. An implausible reading is refused outright and the
+        peak is left untouched, so a bogus value that repeats across many
+        readings still cannot ratchet the peak up (each comparison is made
+        against the same clean peak).
+
+        Trade-off: a genuine large deposit will not raise the peak either. That
+        is the safe direction — a lagging peak understates drawdown and can only
+        make the hard stop less trigger-happy, never more. Re-anchor
+        deliberately via reset_hard_stop() or a restart after a real deposit.
+        """
+        prev_peak = self._peak_balance
+        if prev_peak is None or prev_peak <= 0:
+            self._peak_balance = balance
+            return
+
+        cfg = self._load_config()
+        jump_pct = cfg.get("max_peak_jump_pct", _DEFAULT_MAX_PEAK_JUMP_PCT)
+        ceiling = prev_peak * (1.0 + jump_pct / 100.0)
+
+        if balance <= ceiling:
+            self._peak_balance = balance
+            return
+
+        logger.warning(
+            f"[RISK] Implausible balance jump ignored for peak: reading={balance:.2f} "
+            f"is {((balance / prev_peak) - 1) * 100:.1f}% above peak={prev_peak:.2f} "
+            f"(max {jump_pct:.0f}%, ceiling {ceiling:.2f}). Peak left at {prev_peak:.2f}. "
+            f"After a real deposit, re-anchor via the hard-stop reset or a restart."
+        )
 
     def can_open_sync(self, symbol: str) -> tuple[bool, str]:
         """
@@ -224,15 +269,28 @@ class RiskManager:
                 )
 
     def reset_hard_stop(self) -> None:
-        """Clear the hard stop latch. Requires user action via the dashboard."""
+        """Clear the hard stop latch. Requires user action via the dashboard.
+
+        Re-anchors the peak to the current balance. Without this the stale peak
+        survives the reset, _check_drawdown() recomputes the same breach on the
+        very next balance update, and the stop re-latches within one candle —
+        making the reset control silently useless (2026-08-18 incident).
+        """
         was_active = False
         with self._lock:
             was_active = self._hard_stop_active
             self._hard_stop_active = False
             self._warning_active = False
+            old_peak = self._peak_balance
+            if self._balance > 0:
+                self._peak_balance = self._balance
+            self._last_drawdown_pct = 0.0
             self._write_snapshot()
         if was_active:
-            logger.info("RiskManager: hard stop reset by user")
+            logger.info(
+                f"RiskManager: hard stop reset by user — peak re-anchored "
+                f"{old_peak if old_peak is None else f'{old_peak:.2f}'} -> {self._balance:.2f}"
+            )
             self.notify("hard_stop_reset", {"balance": self._balance})
 
     def reset_for_mode_switch(self, new_mode: str) -> None:

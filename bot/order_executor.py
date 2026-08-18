@@ -969,13 +969,35 @@ class OrderExecutor:
         except Exception as exc:
             logger.warning(f"sync_positions_with_exchange failed: {exc}")
 
+    # Quote asset every symbol we trade is margined in. The USDT wallet entry is
+    # the only figure that reliably reflects our tradable capital.
+    _QUOTE_ASSET = 'USDT'
+
     async def fetch_account_balance(self) -> float:
-        """Returns totalWalletBalance from the futures account, or 0.0 on error."""
+        """Returns the USDT wallet balance from the futures account, or 0.0 on error.
+
+        Reads assets[USDT].walletBalance rather than totalWalletBalance.
+        totalWalletBalance is not reliably USDT-only — a non-USDT holding can
+        surface there (this account also carries USDC and BTC), and on
+        2026-08-18 it returned exactly 5000.0 (the USDC balance) for ~35
+        minutes while real USDT was 3043.94. That poisoned the risk manager's
+        peak balance, latched the drawdown hard stop on a phantom 39% loss, and
+        oversized two live orders by ~36%. Falls back to totalWalletBalance only
+        if no USDT asset entry is present.
+        """
         if self._feed is None:
             return 0.0
         try:
             account = await asyncio.to_thread(self._feed.client.futures_account)
-            return float(account.get('totalWalletBalance', 0) or 0)
+            for asset in account.get('assets', []) or []:
+                if asset.get('asset') == self._QUOTE_ASSET:
+                    return float(asset.get('walletBalance', 0) or 0)
+            total = float(account.get('totalWalletBalance', 0) or 0)
+            logger.warning(
+                f"No {self._QUOTE_ASSET} asset entry in futures_account — "
+                f"falling back to totalWalletBalance={total:.2f}"
+            )
+            return total
         except Exception as exc:
             logger.warning(f"Failed to fetch account balance: {exc}")
             return 0.0

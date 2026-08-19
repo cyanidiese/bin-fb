@@ -50,6 +50,28 @@ def test_engine_emits_mr_fade_when_enabled_and_range_confirmed():
     assert abs(rec.getTarget() - 105.0) < 1e-6      # TP=mid
     assert rec.getStop() > 110.0                      # SL beyond boundary
 
+def test_engine_excludes_signal_candle_from_range():
+    # Fidelity guard (Gate-A follow-up): detect_range must be computed on the
+    # window BEFORE the signal candle, matching the validated probe mr_refine.py
+    # (kl[i-W:i]). The fade candle deliberately pokes past the boundary, so
+    # including it in the range contaminates hi/mid. Here the poke overshoots
+    # to 110.5: if it were inside the range, mid would be (110.5+100)/2=105.25;
+    # excluded, mid stays 105.0 and TP=mid=105.0.
+    s = dataclasses.replace(load_settings('TIAUSDT'), enable_mean_reversion=True)
+    engine = RecommendationEngine(s)
+    analyzer = Analyzer(s.swing_neighbours, engine)
+    base = _oscillating_klines()[:-1]                      # 60 candles, range 100-110
+    poke = _k(109, 110.5, 108.5, 109.0, 60 * 900_000)      # SELL fade, OVERSHOOTS top
+    kl = base + [poke]
+    analyzer.build_from_klines(kl)
+    trend = analyzer.get_trend()
+    rec = engine.generate(trend, 109.0, recent_klines=kl)
+    assert rec is not None
+    assert rec.getType() == RecommendationTypes.MEAN_REVERT_FADE
+    assert rec.getSide() == 'SELL'
+    assert abs(rec.getTarget() - 105.0) < 1e-6            # mid excludes the 110.5 poke
+
+
 def test_analyzer_add_candle_routes_mr():
     s = dataclasses.replace(load_settings('TIAUSDT'), enable_mean_reversion=True)
     engine = RecommendationEngine(s)

@@ -82,7 +82,11 @@ class RecommendationEngine:
         if not self._s.enable_mean_reversion or not recent_klines:
             return False, None
         cfg = self._mr_config()
-        rng = detect_range(recent_klines, cfg)
+        # Fidelity: compute the range on the window BEFORE the signal candle
+        # (matches the validated probe mr_refine.py, kl[i-W:i]). The fade candle
+        # pokes past the boundary by design, so including it would contaminate
+        # hi/mid. mr_signal still evaluates the fade on the current candle (-1).
+        rng = detect_range(recent_klines[:-1], cfg)
         if rng is None:
             return False, None
         sig = mr_signal(recent_klines, rng, cfg)

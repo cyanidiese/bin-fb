@@ -20,9 +20,11 @@ class FakeOrder:
         partial_price as a 'partial' win.
 
     ── Trailing stop ────────────────────────────────────────────────────────
-    Requires partial_take_pct > 0 AND trailing_stop_pct > 0.
+    Requires trailing_stop_pct > 0 and an arming threshold: either
+    partial_take_pct > 0 (arm at partial_price) or, when partial_take_pct == 0,
+    trail_activation_pct > 0 (arm once price moves that % in the trade's favor).
 
-      Arming is identical: partial_price is the activation threshold.
+      Arming: partial_price / trail-arm price is the activation threshold.
       Once armed, _max_favorable tracks the highest high (BUY) /
         lowest low (SELL) seen.
       On each subsequent candle:
@@ -87,10 +89,33 @@ class FakeOrder:
 
         if partial_take_pct > 0:
             if side == 'BUY':
-                self._partial_price: Optional[float] = entry_price + partial_take_pct * (tp - entry_price)
+                arm: float = entry_price + partial_take_pct * (tp - entry_price)
             else:
-                self._partial_price = entry_price - partial_take_pct * (entry_price - tp)
+                arm = entry_price - partial_take_pct * (entry_price - tp)
+            if trailing_stop_pct > 0 and trail_activation_pct > 0:
+                # With a trail active the partial price is purely the arm
+                # threshold (the trail replaces the partial exit). A far TP
+                # pushes it far beyond the trail's own activation gate, so
+                # profit protection never arms on trades that only run a few
+                # percent. Arm at whichever threshold price reaches first.
+                act = (
+                    entry_price * (1 + trail_activation_pct / 100.0)
+                    if side == 'BUY'
+                    else entry_price * (1 - trail_activation_pct / 100.0)
+                )
+                arm = min(arm, act) if side == 'BUY' else max(arm, act)
+            self._partial_price: Optional[float] = arm
             # _max_favorable starts at the arm threshold; only updated while armed
+            self._max_favorable = self._partial_price
+        elif trailing_stop_pct > 0 and trail_activation_pct > 0:
+            # Trail-only preset (no partial take): arm off trail_activation_pct.
+            # Without this, a trail configured alongside partial_take_pct == 0
+            # could never arm — the trailing stop was dead config and the only
+            # exits were TP/SL (a far TP then holds the position indefinitely).
+            if side == 'BUY':
+                self._partial_price = entry_price * (1 + trail_activation_pct / 100.0)
+            else:
+                self._partial_price = entry_price * (1 - trail_activation_pct / 100.0)
             self._max_favorable = self._partial_price
         else:
             self._partial_price = None

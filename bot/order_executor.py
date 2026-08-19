@@ -72,6 +72,16 @@ class OpenOrder:
     signal_level: int = 0
     precision_score: float = 0.0
     scenario: str = ''
+    # Average price the entry leg actually filled at, read back from the exchange
+    # after placement. entry_price above is the *intended* (signal) price and can
+    # differ materially: on 2026-08-18 INJUSDT was signalled at 4.052 and filled at
+    # 4.0670, so PnL computed off entry_price overstated the result by 5.57 USDT.
+    # 0.0 means "not reconciled" — use _effective_entry(), never this field raw.
+    fill_entry_price: float = 0.0
+    # USDT wallet balance read immediately before this order was submitted. This is
+    # the "Before" figure in the trade-close notification; balance_at_open above is
+    # the allocated per-symbol trade cap, which is a different (much smaller) number.
+    wallet_at_open: float = 0.0
 
 
 class OrderExecutor:
@@ -158,6 +168,7 @@ class OrderExecutor:
         signal_level: int = 0,
         precision_score: float = 0.0,
         scenario: str = '',
+        wallet_at_open: float = 0.0,
     ) -> bool:
         lock = self._get_placing_lock(symbol)
         async with lock:
@@ -212,6 +223,7 @@ class OrderExecutor:
                     signal_level=signal_level,
                     precision_score=precision_score,
                     scenario=scenario,
+                    wallet_at_open=wallet_at_open,
                 )
                 # Create software FakeOrder for trailing stop / TP / SL monitoring
                 _early_loss_sl = 0.0
@@ -266,6 +278,28 @@ class OrderExecutor:
                     f"Order placed: {symbol} {side} qty={rounded_qty} "
                     f"entry={entry} TP={tp} SL={sl} preset={preset_name}"
                 )
+                # Reconcile the entry against the real fill so every downstream money
+                # figure (PnL, fee, notification, efficiency ranking) is computed off the
+                # price we actually paid rather than the price we asked for. Runs last:
+                # it polls the exchange for up to ~0.5s and must never delay the
+                # protective SL above. Deliberately does NOT feed the FakeOrder or the
+                # SL/TP geometry — those stay on the signalled entry so trigger levels
+                # are unchanged by this fix.
+                _fill = await self._reconcile_entry_fill(symbol, order_id)
+                if _fill > 0:
+                    self._open_orders[symbol].fill_entry_price = _fill
+                    _slip_pct = abs(_fill - entry) / entry * 100 if entry > 0 else 0.0
+                    if _slip_pct >= 0.05:
+                        logger.warning(
+                            f"[{symbol}] Entry slippage: signalled {entry} → filled {_fill:.6f} "
+                            f"({_slip_pct:.3f}%) — PnL computed off the fill"
+                        )
+                    else:
+                        logger.info(f"[{symbol}] Entry fill reconciled: {_fill:.6f}")
+                else:
+                    logger.info(
+                        f"[{symbol}] Entry fill unavailable — PnL falls back to signalled entry {entry}"
+                    )
                 return True
             except FundsError as exc:
                 self._states[symbol] = OrderState.IDLE
@@ -336,8 +370,11 @@ class OrderExecutor:
                 "pnl_usdt": pnl,
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
+                "fill_entry_price": self._effective_entry(open_order),
                 "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
+                "fee_usdt": self._order_fee(
+                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
+                "wallet_at_open": open_order.wallet_at_open,
                 "leverage": open_order.leverage,
             })
             del self._open_orders[symbol]
@@ -396,8 +433,11 @@ class OrderExecutor:
                 "pnl_usdt": pnl,
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
+                "fill_entry_price": self._effective_entry(open_order),
                 "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
+                "fee_usdt": self._order_fee(
+                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
+                "wallet_at_open": open_order.wallet_at_open,
                 "leverage": open_order.leverage,
             }]
         finally:
@@ -456,8 +496,11 @@ class OrderExecutor:
                 "pnl_usdt": pnl,
                 "side": open_order.side,
                 "entry_price": open_order.entry_price,
+                "fill_entry_price": self._effective_entry(open_order),
                 "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(open_order.quantity, open_order.entry_price, actual_close_price),
+                "fee_usdt": self._order_fee(
+                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
+                "wallet_at_open": open_order.wallet_at_open,
                 "leverage": open_order.leverage,
             }
             del self._open_orders[symbol]
@@ -487,10 +530,13 @@ class OrderExecutor:
                     symbol=symbol,
                     side=order.side,
                     pnl_usdt=pnl,
-                    entry_price=order.entry_price,
+                    entry_price=self._effective_entry(order),
                     close_price=close_price,
                     preset_name=order.preset_name,
-                    fee_usdt=self._order_fee(order.quantity, order.entry_price, close_price),
+                    fee_usdt=self._order_fee(
+                        order.quantity, self._effective_entry(order), close_price),
+                    balance_before=order.wallet_at_open,
+                    balance_after=await self.fetch_account_balance(),
                 )
                 results.append({
                     "symbol": symbol,
@@ -582,9 +628,13 @@ class OrderExecutor:
                 symbol=symbol,
                 side=order.side,
                 pnl_usdt=pnl,
-                entry_price=order.entry_price,
+                entry_price=self._effective_entry(order),
                 close_price=close_price,
                 preset_name=order.preset_name,
+                fee_usdt=self._order_fee(
+                    order.quantity, self._effective_entry(order), close_price),
+                balance_before=order.wallet_at_open,
+                balance_after=await self.fetch_account_balance(),
             )
             result = {
                 "symbol": symbol,
@@ -631,6 +681,7 @@ class OrderExecutor:
             'preset_name': order.preset_name,
             'side': order.side,
             'entry_price': order.entry_price,
+            'fill_entry_price': self._effective_entry(order),
             'close_price': close_price,
             'tp': order.tp_price,
             'sl': order.sl_price,
@@ -639,9 +690,11 @@ class OrderExecutor:
             'open_time': order.open_time,
             'close_time': datetime.now(timezone.utc).isoformat(),
             'pnl_usdt': pnl_usdt,
-            'fee_usdt': self._order_fee(order.quantity, order.entry_price, close_price),
+            'fee_usdt': self._order_fee(
+                order.quantity, self._effective_entry(order), close_price),
             'result': result,
             'balance_at_open': order.balance_at_open,
+            'wallet_at_open': order.wallet_at_open,
             'signal_level': order.signal_level,
             'precision_score': order.precision_score,
             'scenario': order.scenario,
@@ -1199,6 +1252,33 @@ class OrderExecutor:
         and matches the fee already deducted inside _calc_pnl."""
         return (entry_price + close_price) * quantity * cls._TAKER_FEE_RATE
 
+    async def _reconcile_entry_fill(self, symbol: str, order_id: str | None) -> float:
+        """Read the entry leg's actual average fill price back from the exchange.
+
+        The MARKET order response carries avgPrice="0" until the matching engine
+        settles, so the trade-records endpoint (populated immediately from the fill)
+        is the reliable source — the same approach _market_close already uses for the
+        exit leg. Returns 0.0 if unavailable; callers then keep the intended price.
+        """
+        if self._feed is None or not order_id:
+            return 0.0
+        client = self._feed.client
+        for attempt in range(3):
+            try:
+                trades = await asyncio.to_thread(
+                    client.futures_account_trades, symbol=symbol, orderId=order_id,
+                )
+            except Exception as exc:
+                logger.debug(f"[{symbol}] Entry fill lookup failed: {exc}")
+                return 0.0
+            if trades:
+                avg = self._fill_price_from_trades(trades)
+                if avg > 0:
+                    return avg
+            if attempt < 2:
+                await asyncio.sleep(0.25)
+        return 0.0
+
     @staticmethod
     def _fill_price_from_trades(trades: list) -> float:
         """Weighted average fill price from a list of Binance trade records."""
@@ -1208,12 +1288,22 @@ class OrderExecutor:
         return sum(float(t.get('price', 0)) * float(t.get('qty', 0)) for t in trades) / total_qty
 
     @staticmethod
+    def _effective_entry(order: OpenOrder) -> float:
+        """The entry price to compute money against: the real fill when we have it.
+
+        Falls back to the intended/signal price when reconciliation did not run or
+        failed, which keeps behaviour identical to before for those cases.
+        """
+        return order.fill_entry_price if order.fill_entry_price > 0 else order.entry_price
+
+    @staticmethod
     def _calc_pnl(order: OpenOrder, close_price: float) -> float:
+        entry = OrderExecutor._effective_entry(order)
         if order.side == 'BUY':
-            raw = (close_price - order.entry_price) * order.quantity
+            raw = (close_price - entry) * order.quantity
         else:
-            raw = (order.entry_price - close_price) * order.quantity
-        fees = (order.entry_price + close_price) * order.quantity * OrderExecutor._TAKER_FEE_RATE
+            raw = (entry - close_price) * order.quantity
+        fees = (entry + close_price) * order.quantity * OrderExecutor._TAKER_FEE_RATE
         return raw - fees
 
     def _record_failure(self, symbol: str) -> bool:

@@ -143,6 +143,7 @@ Close trade early when adverse move becomes too large, reducing loss severity. T
 - **Live bot** (`main.py` in `check_symbol_price()`): on each price tick, compute current position PnL; trigger market close if threshold hit
 - **Virtual simulator** (`bot/virtual_order_simulator.py`): same tick-level checks as live; close position if threshold exceeded
 - **Presets**: 29 presets updated with safe-floor settings (e.g., 0.50 pct + 5 candles); 3 standout presets tuned with max-profit settings (pct=0.70, candles=5)
+- **Session 57 refinement (2026-07-13)**: Added `max_losing_candles: 96` (24 hours at 15m candles) to 6 non-locked l2_* presets (`l2_bos_entry`, `l2_bos_trend`, `l2_trend_sell`, `l2_trend_buy`, `l2_regime_aware`, `l2_regime_aware_strict`) to prevent stuck positions. Value calibrated from real l2_* trade history: winning trades close within 16.3h max (avg 5.2h), losing trades within 3.4h max (avg 0.7h). 24h cap stops only genuinely stuck positions, never cuts legitimate in-progress trades. LOCKED_PRESETS (code-protected) intentionally left untouched.
 - **Dashboard**: PresetSettingsPanel shows "Early exit" section with all 3 settings; Create page filtering supports mlp/mla/mlc abbreviations
 
 ### Cooldown Mechanisms
@@ -207,10 +208,13 @@ Simulates order entry/exit without exchange API. Entry at next-candle open. Exit
 
 **Files**: `bot/fake_order.py`
 **Key details**:
-- Trailing stop: when profit % reaches `partial_take_pct`, exit on next candle if price retraces by `trailing_stop_pct`
+- **Trailing stop (standard case)**: when profit % reaches `partial_take_pct`, arm at `_partial_price`, then exit on next candle if price retraces by `trailing_stop_pct`
+- **Trail-only presets** (session 58 fix): Presets with `trailing_stop_pct > 0` but `partial_take_pct == 0` cannot arm via `_partial_price`. New logic: if `trail_activation_pct > 0`, arm at `entry * (1 ± trail_activation_pct/100)` for each direction (BUY: 1 - pct%, SELL: 1 + pct%). Presets without `trail_activation_pct` remain documented dead (no arming).
+- **Trail min-arming for mixed presets** (session 59 fix, commit c77dc4a): For presets with both `partial_take_pct > 0` AND `trailing_stop_pct > 0` AND `trail_activation_pct > 0`, arm threshold is now `min(partial_price, activation_price)` for BUY / `max(...)` for SELL. This prevents waiting for unreachable partial-take TP fractions when activation threshold is hit first. Evidence: EIGENUSDT/INJUSDT positions peaked +4.1-4.3% favorable (above 2% activation) but needed +5.1%/+8.9% to reach old partial arm point — now arms earlier and captures favorable moves.
 - Conservative multi-hit logic: if same candle hits both TP and SL, SL assumed first (loss)
 - Stores: entry price, TP, SL, entry type, result, profit_pct, symbol, timeframe
 - Serializable to JSON for backtest result export
+- **Applies consistently**: Live orders (OrderExecutor), virtual simulation (VirtualOrderSimulator), and backtests (Backtester) all use FakeOrder for exit logic
 
 ### Backtester State Machine
 Iterates klines one by one (no lookahead), generates signals, opens/closes fake orders, tracks compound balance per preset.
@@ -266,9 +270,36 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
   - 2% quantity buffer applied after margin calculation to prevent rounding below Binance floor
 - Leverage gated by RiskManager; per-symbol leverage determined by LeverageScenario
 
+**Entry fill reconciliation** (session 62):
+- After placement, `_reconcile_entry_fill()` reads the entry leg's real average fill
+  price back from `futures_account_trades(symbol, orderId)` and stores it on
+  `OpenOrder.fill_entry_price`. The MARKET response carries `avgPrice="0"` until the
+  matching engine settles, so trade records are the reliable source — same approach
+  `_market_close()` already used for the exit leg.
+- `_effective_entry(order)` returns `fill_entry_price` when set, else `entry_price`
+  (the intended/signal price). `_calc_pnl()` and `_order_fee()` both use it, so PnL,
+  fee, the Telegram message, `real_orders_*.json`, balance history and the preset
+  efficiency ranking are all computed off the price actually paid.
+- **Runs last in `place_order()`, after the exchange SL is placed** — it polls for up
+  to ~0.5s and must never delay crash protection.
+- **Deliberately does NOT feed the FakeOrder or the SL/TP geometry.** Trigger levels
+  stay on the signalled entry, so this fix changes reported money only, never when a
+  trail arms or a stop fires. (Aligning trigger geometry to the fill is a separate,
+  behaviour-changing decision — not done.)
+- Logs `Entry slippage: signalled X → filled Y (Z%)` at WARNING when slippage ≥0.05%,
+  INFO otherwise; `0.0` fill (lookup failed) falls back to the signalled price with an
+  INFO line, preserving pre-session-62 behaviour.
+- **Why**: on 2026-08-18 INJUSDT was signalled at 4.052 and filled at 4.0670. PnL
+  computed off the signalled price reported +11.81 USDT against Binance's true
+  +6.24 — 5.57 USDT of phantom profit from 1.5 cents of slippage on 372.1 units.
+  Across the four Aug-18/19 real trades the bot reported +115.71 vs a true +109.26
+  (+5.9%); with reconciliation the same four report +109.40 (+0.12%, the residual
+  being funding fees, which PnL still does not model).
+
 **Real order persistence**:
 - Stored in `data/real_orders_{SYMBOL}_{MODE}.json` (one file per symbol per mode)
-- Includes: entry price, TP, SL, quantity, filled PnL, result, signal metadata, balance at open
+- Includes: entry price, **actual fill entry price**, TP, SL, quantity, filled PnL,
+  fee, result, signal metadata, balance at open, **wallet at open**
 - Old sessions archived to `real_orders_{SYMBOL}_{MODE}_archive_{YYYYMMDDTHHMMSSZ}.json` on bot restart
 
 ### Weight=0 Symbol Trading Gate
@@ -425,6 +456,16 @@ Override any preset setting for a specific symbol, allowing capital-unlock and f
 - **Any setting supported**: Any Settings field can be overridden (e.g., tp_multiplier, max_sl_pct, min_precision_score, etc.)
 - **Priority**: Per-symbol override > preset setting > default setting
 
+### Per-Symbol SL Caps (Session 59)
+Data-backed stop-loss width limits per symbol, protecting against artifact SL geometry from cross-level signal sourcing. Applied via per_symbol_settings `max_sl_pct` override.
+
+**Files**: `main.py` (_try_place_order), `config/risk_config.py`, server `risk_config.json`
+**Key details**:
+- **Rationale**: Analysis of 260 all-time trades revealed SL-width distribution: 8%+ SL bucket is artifact zone (-$205 net, n=2 outliers including one -$206.12 catastrophic loss), while 4-8% SL bucket is healthy (+$22 net, 45% WR, multiple profitable trades). Root cause: cross-level stop sourcing (session 59 defect #2) produces degenerate geometry with stop distances reaching parent trend extremes unbounded.
+- **Current setting (session 59, 2026-07-16)**: `per_symbol_settings.{TIAUSDT, EIGENUSDT, INJUSDT, MEMEUSDT, DOGEUSDT}.max_sl_pct = 8.0`
+- **Behavior**: Blocks any signal where computed SL distance exceeds 8% of entry. Interim guard until Fix A (same-level stop sourcing, not yet implemented) resolves root cause.
+- **Expected impact**: Eliminates artifact signals with wide SLs, preserves healthy 4-8% range signals.
+
 ### Two-Tier Preset Ranking (Session 32)
 Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ranking system. Live-proven presets (≥N real+virtual trades) are always ranked above seed-only presets (backtest-only), regardless of seed magnitude. Solves the TIAUSDT problem where a less-profitable preset with a large backtest seed outranked a better-performing preset with fewer live trades.
 
@@ -560,9 +601,11 @@ Optional feature for distributing capital proportionally by symbol weight. Can b
 - `use_allocation_weighting` flag controls behavior (default false)
 - When enabled (session 36): deployable capital distributed as `symbol_allocation = total_deployable × symbol_weight / sum(weights)`. Capital flows proportionally to higher-weighted symbols.
 - When disabled: all symbols compete equally for available capital (ranking determines priority)
-- **Current weights (session 46)**:
-  - Active (real orders): SOLUSDT:20, TIAUSDT:15, 1000PEPEUSDT:10, MEMEUSDT:8, INJUSDT:3, DOGEUSDT:1
-  - Virtual-only: 1000SHIBUSDT:0, APTUSDT:0, AVAXUSDT:0, EIGENUSDT:0, ETHFIUSDT:0, JUPUSDT:0, REZUSDT:0, THETAUSDT:0, WLDUSDT:0
+- **Current weights (session 57, 2026-07-13)**:
+  - Active (real orders): SOLUSDT:20, TIAUSDT:15, EIGENUSDT:8, INJUSDT:7, MEMEUSDT:2, DOGEUSDT:1
+  - Virtual-only: 1000SHIBUSDT:0, APTUSDT:0, AVAXUSDT:0, ETHFIUSDT:0, JUPUSDT:0, REZUSDT:0, THETAUSDT:0, WLDUSDT:0
+- **Previous weights (session 46)**: SOLUSDT:20, TIAUSDT:15, 1000PEPEUSDT:10, MEMEUSDT:8, INJUSDT:3, DOGEUSDT:1
+- **Rationale for session 57 rebalancing**: MEMEUSDT reduced (structurally blocked by RR filter due to low volatility 0.53% < 0.7% floor), EIGENUSDT increased to 8 (strong recent performance +$249.50 in 28 trades), INJUSDT increased to 7 (positive contribution +$9.49)
 
 ---
 
@@ -734,6 +777,51 @@ Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencie
 - **Session 42 fixes**:
   - **Shutdown closes now notify** — `close_all_orders_at_market()` now calls `notify_trade_close()` after closing each position
   - **Per-symbol rate limit** — Changed from shared `"trade"` key to per-symbol keys `f"trade:{symbol}"` so simultaneous closes on different symbols all send independent Telegram notifications (was: only first close notified, others suppressed by 120s cooldown)
+
+#### Trade-close message: Before / Net / Fee / After (session 62)
+Every real trade-close notification reports the wallet on both sides of the trade,
+the net result, and the commission paid:
+
+```
+✅ INJUSDT BUY — Win [Real]
+Before: 3,050.18 USDT
+Net PnL: +18.03 USDT (net of fee)
+Fee: 1.2163 USDT
+After: 3,068.06 USDT
+Entry: 4.0820 → Close: 4.1340
+Preset: oscillating_zone
+```
+
+**Files**: `bot/notifier.py` (`notify_trade_close`, `_fmt_balance`), `main.py`
+(`_read_wallet_now`, both close-notify loops), `bot/order_executor.py`
+(`OpenOrder.wallet_at_open`)
+
+**Key details**:
+- `Before` — `OpenOrder.wallet_at_open`: an uncached USDT wallet read taken in
+  `_try_place_order` immediately before submission. Distinct from
+  `balance_at_open`, which is the allocated per-symbol trade cap (a much smaller
+  number — ~296 vs ~3050 USDT).
+- `After` — uncached wallet read taken after the close settles, via
+  `_read_wallet_now()`.
+- `Fee` — actual taker commission both legs, `_order_fee()` at 0.04%.
+- `Net PnL` is already net of that fee. It does **not** include funding fees, so
+  `Before + Net` can differ from `After` by the funding charged during the hold
+  (typically ~0.15 USDT on a 1,500 USDT notional held over a funding window).
+- **Unavailable balances print `n/a (balance fetch failed)`** — never a
+  substituted or last-known figure. `0.0` is the "read failed" sentinel that
+  `fetch_account_balance()` already returns on error.
+- `_read_wallet_now()` bypasses the `_BALANCE_TTL` cache entirely and returns
+  `0.0` rather than a cached value. `_get_fresh_balance()` keeps its stale-cache
+  fallback because sizing needs *a* number; it must not be used for reporting.
+
+**Bug this replaced** (2026-08-19): the old single `Balance:` line was fed from
+`_get_fresh_balance()`, whose 5-second TTL cache had been populated by the
+placement pass at the top of `on_candle_close`. Closes detected ~2s later in the
+same handler therefore reported the balance from *before* the close settled.
+Trades closing via the price-tick path were unaffected, so 2 of 4 messages on
+Aug 19 were correct and 2 were not — the last one understated the wallet by
+49 USDT. A concurrent `-1003` IP ban made the final message stale a second way,
+via the cache fallback on fetch failure.
 
 ### Market Condition Error Handling
 Transient API errors (Binance -4131 PERCENT_PRICE filter violations) are caught as `MarketConditionError` and do not trigger order retry loops or auto-disable. Order is silently deferred and retried on next candle.
@@ -1141,6 +1229,59 @@ Caps single-candidate allocation in TATS mode when the candidate's weight is bel
 - **Default behavior**: tats_min_weight=0 preserves pre-session-47 behavior (any candidate gets full allocation).
 - **Current setting**: tats_min_weight=3.0 on server (session 47 deployment).
 - **First instance verified**: 2026-06-12 after 18:00 UTC, DOGEUSDT now receives proportional allocation when sole candidate.
+
+### Precision Improvements (Session 53)
+Four data-backed mechanisms to elevate trade quality by filtering low-confidence entries and eliminating zero-value trading windows.
+
+**Files**: `bot/recommendation_engine.py`, `main.py`, `config/risk_config.py`
+
+**1. Entry Zone Hard Gate** (`entry_zone_max_pct`)
+- **What**: Blocks entries outside inner zone; only allows high-quality (Q1) entries near optimal entry level
+- **Setting**: `entry_zone_max_pct: float` in risk_config.json (0.0–1.0, default 1.0 = disabled)
+- **Logic**: In `recommendation_engine.py::_score_and_filter()` line ~145: skip if `rec.getHowClose() > proximity_zone_pct * entry_zone_max_pct`
+- **Rationale**: Backtest data: Q1 entries (closest to optimal) = 76.7% win rate; Q4 entries (farthest) = 9.4% win rate. At 0.75 threshold, blocks outer 25% of zone (Q4 entries).
+- **Expected impact**: ~25% fewer entries, but those eliminated were lowest-quality. Net precision improves.
+- **Current setting (server)**: 0.75 (inner 75% of zone only)
+
+**2. Precision Reweighting** (reliability vs entry_quality)
+- **What**: Recalibrates precision score weights to elevate entry quality (proximity to optimal level) over reliability (variance smoothness)
+- **Changes**: In `recommendation_engine.py::_precision()`:
+  - `reliability` coefficient: 0.40 → 0.25 (down-weighted)
+  - `entry_quality` coefficient: 0.25 → 0.40 (up-weighted)
+- **Rationale**: Backtest analysis shows entry-quality correlation with win rate (76.7% Q1 vs 9.4% Q4). Proximity matters more than variance smoothness for trade outcome.
+- **Effect**: Precision scores now elevate signals with tight entry zones; winner signals (low adverse move) now rank higher than losers (high adverse move at same level)
+- **Current setting**: Applied in code
+
+**3. Global Correction Weight Override** (`global_correction_weight`)
+- **What**: Manual override for correction-bonus precision boost (e.g., disable globally if correction patterns consistently hurt)
+- **Setting**: `global_correction_weight: float` in risk_config.json (default -1.0 = disabled = use preset's correction_weight)
+- **Logic**: In `recommendation_engine.py::_score_and_filter()`, passed to `_precision()` as `correction_weight_override`
+- **When >= 0**: Overrides preset's `correction_weight` entirely (e.g., 0.0 = no correction bonus for any preset)
+- **Use case**: If correction patterns degrade precision overall, set to 0.0 to disable globally without per-preset edits
+- **Current setting (server)**: -1.0 (disabled, use preset values). Deferred pending evaluation.
+
+**4. Trading Blackout Hours** (`trading_blackout_hours`)
+- **What**: Skip real order placement during configured UTC hours; virtual orders continue
+- **Setting**: `trading_blackout_hours: list[int]` in risk_config.json (0–23 UTC hours, default empty = all hours allowed)
+- **Logic**: In `main.py::_try_place_order()` after duplicate check: if `current_utc_hour in trading_blackout_hours`, log message and return 0.0 (real order skipped, virtual continues)
+- **Rationale**: Historical analysis: H17–19 UTC = 44 trades at 8% win rate, -$176 net loss. Zero-quality trading window.
+- **Expected impact**: Eliminate worst trading window; expect ~$176 P&L recovery if patterns hold
+- **Current setting (server)**: [17, 18, 19] (UTC) — blocks 17:00–19:59 UTC
+
+**Server config** (risk_config.json as of 2026-06-16 10:59 UTC):
+```json
+{
+  "entry_zone_max_pct": 0.75,
+  "trading_blackout_hours": [17, 18, 19]
+}
+```
+
+**Deployment**: Commit c01e338 on feature/backtest-live-parity. Docker rebuilt. Bot live.
+
+**Next monitoring** (post-deploy):
+- After 50 real trades: verify win rate > 28%, check precision correlation restored
+- Confirm zero real orders in H17–19 UTC window
+- Evaluate correction-weight impact; consider setting global_correction_weight=0.0 if degrading
 
 ---
 

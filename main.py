@@ -406,6 +406,12 @@ async def run() -> None:
     _zone_sl_block: dict[str, int] = {}      # "symbol:preset:side" → candle_ts until zone block expires
 
     async def _get_fresh_balance() -> float:
+        """TTL-cached wallet balance for sizing/risk. May return a stale value.
+
+        Falling back to the cache on a failed fetch is deliberate here: sizing needs
+        *a* number and last-known is better than 0. Do NOT use this to report a
+        balance to the user — see _read_wallet_now().
+        """
         now = time.monotonic()
         cached_val, cached_ts = _balance_cache_inner[0]
         if now - cached_ts < _BALANCE_TTL:
@@ -419,6 +425,29 @@ async def run() -> None:
             _balance_cache_inner[0] = (bal, now)
             return bal
         return cached_val
+
+    async def _read_wallet_now() -> float:
+        """Uncached wallet read for figures we report to the user. 0.0 = unavailable.
+
+        Two things went wrong on 2026-08-19 and both are closed off here:
+        the TTL cache above was populated by the placement pass at the *top* of
+        on_candle_close, so a close notified ~2s later reported the balance from
+        BEFORE the close settled; and when futures_account returned -1003 (IP
+        banned) the cache fallback silently served an hours-old figure. This
+        bypasses the TTL entirely and returns 0.0 rather than any stale value, so
+        the notifier prints "n/a" instead of a wrong number. Successful reads still
+        refresh the shared cache so the call is not wasted.
+        """
+        try:
+            bal = await order_executor.fetch_account_balance()
+        except Exception as exc:
+            logger.warning(f"Wallet read failed: {exc}")
+            return 0.0
+        if bal > 0:
+            _balance_cache_inner[0] = (bal, time.monotonic())
+            return bal
+        logger.warning("Wallet read returned 0 — reporting balance as unavailable")
+        return 0.0
 
     async def _try_place_order(
         symbol: str, best, settings, balance: float, candle_ts: int,
@@ -780,6 +809,12 @@ async def run() -> None:
 
         precision = best.getPrecision() if hasattr(best, 'getPrecision') else 0.0
 
+        # The "Before" figure for this trade's close notification. Read here — the last
+        # moment the wallet is genuinely pre-trade — and carried on the OpenOrder, so it
+        # cannot be confused with a post-close read. Note `balance` above is the
+        # allocated per-symbol trade cap, not the wallet.
+        wallet_before = await _read_wallet_now()
+
         placed = await order_executor.place_order(
             symbol=symbol,
             preset_name=preset_name or 'default',
@@ -802,6 +837,7 @@ async def run() -> None:
             signal_level=best.getLevel() or 0,
             precision_score=precision or 0.0,
             scenario=_active_scenario_name,
+            wallet_at_open=wallet_before,
         )
         # Mark as attempted regardless of outcome: prevents repeated failed attempts
         # in the same candle batch when other symbols' close events trigger the loop.
@@ -1174,9 +1210,13 @@ async def run() -> None:
             _update_loss_streak(c, candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
-            fresh_bal = await _get_fresh_balance()
+            # Uncached: the TTL cache may hold a pre-close figure from the placement
+            # pass earlier in this same handler. 0.0 means unavailable -> reported n/a.
+            wallet_after = await _read_wallet_now()
             bh_record(
-                bh_path, balance=fresh_bal, trigger='order_close',
+                bh_path,
+                balance=wallet_after if wallet_after > 0 else await _get_fresh_balance(),
+                trigger='order_close',
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
@@ -1184,10 +1224,11 @@ async def run() -> None:
                 symbol=c['symbol'],
                 side=c.get('side', ''),
                 pnl_usdt=c.get('pnl_usdt', 0.0),
-                entry_price=c.get('entry_price', 0.0),
+                entry_price=c.get('fill_entry_price') or c.get('entry_price', 0.0),
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
-                balance_after=fresh_bal,
+                balance_before=c.get('wallet_at_open', 0.0),
+                balance_after=wallet_after,
                 fee_usdt=c.get('fee_usdt', 0.0),
             )
 
@@ -1239,9 +1280,13 @@ async def run() -> None:
             _update_loss_streak(c, _approx_candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
-            fresh_bal = await _get_fresh_balance()
+            # Uncached: the TTL cache may hold a pre-close figure from the placement
+            # pass earlier in this same handler. 0.0 means unavailable -> reported n/a.
+            wallet_after = await _read_wallet_now()
             bh_record(
-                bh_path, balance=fresh_bal, trigger='order_close',
+                bh_path,
+                balance=wallet_after if wallet_after > 0 else await _get_fresh_balance(),
+                trigger='order_close',
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
@@ -1249,10 +1294,11 @@ async def run() -> None:
                 symbol=c['symbol'],
                 side=c.get('side', ''),
                 pnl_usdt=c.get('pnl_usdt', 0.0),
-                entry_price=c.get('entry_price', 0.0),
+                entry_price=c.get('fill_entry_price') or c.get('entry_price', 0.0),
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
-                balance_after=fresh_bal,
+                balance_before=c.get('wallet_at_open', 0.0),
+                balance_after=wallet_after,
                 fee_usdt=c.get('fee_usdt', 0.0),
             )
 

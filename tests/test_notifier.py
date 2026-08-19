@@ -162,6 +162,79 @@ def test_trade_close_loss_format(tmp_path):
     assert "994.80" in text
 
 
+# ── Before / Net / Fee / After reporting ─────────────────────────────── #
+# The Aug-19 incident: the "Balance" line carried a pre-close wallet read on
+# two of four messages because main.py served it from a 5s cache populated
+# before the close settled. The message now names both sides explicitly and
+# must print "n/a" rather than any number it cannot vouch for.
+
+def _close_text(mock_post):
+    return mock_post.call_args[1]["json"]["text"]
+
+
+def test_trade_close_reports_before_net_fee_after(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close(
+            "INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+            balance_before=3050.18, balance_after=3068.06, fee_usdt=1.2163,
+        )
+    text = _close_text(mock_post)
+    assert "Before: 3,050.18 USDT" in text
+    assert "Net PnL: <b>+18.03 USDT</b>" in text
+    assert "Fee: 1.2163 USDT" in text
+    assert "After: 3,068.06 USDT" in text
+
+
+def test_before_and_after_appear_in_that_order(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close(
+            "INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+            balance_before=3050.18, balance_after=3068.06, fee_usdt=1.2163,
+        )
+    text = _close_text(mock_post)
+    assert text.index("Before:") < text.index("Net PnL:") < text.index("Fee:") < text.index("After:")
+
+
+def test_unavailable_after_balance_prints_na_not_a_stale_number(tmp_path):
+    """0.0 means 'the wallet read failed'. Showing the pre-close figure there
+    is the exact bug this replaces, so nothing numeric may be substituted."""
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close(
+            "INJUSDT", "BUY", 49.10, 4.216, 4.354, "oscillating_zone",
+            balance_before=3104.47, balance_after=0.0, fee_usdt=1.2374,
+        )
+    text = _close_text(mock_post)
+    assert "After: n/a" in text
+    assert "3,104.47" in text          # Before is known and still shown
+    assert "After: 3,104.47" not in text
+
+
+def test_unavailable_before_balance_prints_na(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close(
+            "INJUSDT", "BUY", 49.10, 4.216, 4.354, "oscillating_zone",
+            balance_before=0.0, balance_after=3153.21, fee_usdt=1.2374,
+        )
+    text = _close_text(mock_post)
+    assert "Before: n/a" in text
+    assert "After: 3,153.21 USDT" in text
+
+
+def test_net_pnl_is_labelled_net_of_fee(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close(
+            "INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+            balance_before=3050.18, balance_after=3068.06, fee_usdt=1.2163,
+        )
+    text = _close_text(mock_post)
+    assert "net of fee" in text
+
+
 def test_emergency_includes_mention(tmp_path):
     n = _make_notifier_with_creds(tmp_path)
     with patch("requests.post", return_value=_mock_resp()) as mock_post:

@@ -26,16 +26,20 @@ _TEST_SAMPLES: dict[str, tuple[str, bool]] = {
     ),
     "trade_win": (
         "✅ <b>BTCUSDT BUY — Win</b>\n"
-        "PnL: <b>+12.34 USDT</b>\n"
-        "Balance: 1,234.56 USDT\n"
+        "Before: 1,222.22 USDT\n"
+        "Net PnL: <b>+12.34 USDT</b> <i>(net of fee)</i>\n"
+        "Fee: 0.5472 USDT\n"
+        "After: 1,234.56 USDT\n"
         "Entry: 68,000.00 → Close: 68,450.00\n"
         "Preset: trail_15_from_30_full",
         False,
     ),
     "trade_loss": (
         "❌ <b>ETHUSDT SELL — Loss</b>\n"
-        "PnL: <b>-5.20 USDT</b>\n"
-        "Balance: 1,229.36 USDT\n"
+        "Before: 1,234.56 USDT\n"
+        "Net PnL: <b>-5.20 USDT</b> <i>(net of fee)</i>\n"
+        "Fee: 0.2576 USDT\n"
+        "After: 1,229.36 USDT\n"
         "Entry: 3,200.00 → Close: 3,218.50\n"
         "Preset: trail_15_from_30_full",
         False,
@@ -127,6 +131,19 @@ class Notifier:
             return f"{price:,.2f}"
         return f"{price:,.0f}"
 
+    @staticmethod
+    def _fmt_balance(balance: float) -> str:
+        """Wallet figures are only ever shown when they were actually read.
+
+        Callers pass 0.0 to mean "the wallet read failed" (fetch_account_balance
+        returns 0.0 on error). Printing anything numeric there is what produced
+        the Aug-19 messages that showed a pre-close balance as the post-close
+        one, so an unavailable figure must stay visibly unavailable.
+        """
+        if balance <= 0:
+            return "n/a <i>(balance fetch failed)</i>"
+        return f"{balance:,.2f} USDT"
+
     def notify_trade_close(
         self,
         symbol: str,
@@ -137,6 +154,7 @@ class Notifier:
         preset_name: str,
         balance_after: float = 0.0,
         fee_usdt: float = 0.0,
+        balance_before: float = 0.0,
     ) -> None:
         win = pnl_usdt >= 0
         emoji = "✅" if win else "❌"
@@ -144,9 +162,10 @@ class Notifier:
         sign = "+" if pnl_usdt >= 0 else ""
         text = (
             f"{emoji} <b>{html.escape(symbol)} {html.escape(side)} — {result}</b> <i>[Real]</i>\n"
-            f"PnL: <b>{sign}{pnl_usdt:.2f} USDT</b> <i>(net of fee)</i>\n"
+            f"Before: {self._fmt_balance(balance_before)}\n"
+            f"Net PnL: <b>{sign}{pnl_usdt:.2f} USDT</b> <i>(net of fee)</i>\n"
             f"Fee: {fee_usdt:.4f} USDT\n"
-            f"Balance: {balance_after:,.2f} USDT\n"
+            f"After: {self._fmt_balance(balance_after)}\n"
             f"Entry: {self._fmt_price(entry_price)} → Close: {self._fmt_price(close_price)}\n"
             f"Preset: {html.escape(preset_name)}"
         )

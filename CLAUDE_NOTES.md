@@ -1,6 +1,117 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-08-13 (session 61 — trail-widen transfer analysis: negative result recorded, opposite lever found, no code changed)
+## Last updated: 2026-08-19 (session 62 — Telegram Before/Net/Fee/After + entry-fill PnL fix; deployed, MR dormant)
+
+---
+
+## ⟳ RESUME POINT — session 62 (2026-08-19) — Trade-close reporting fixed and deployed; `-1003` IP bans are the top open problem
+
+**Trigger**: user received 4 INJUSDT win notifications where the balance barely moved
+between messages, and asked whether losing orders were being hidden or whether the
+messages weren't showing the post-close balance.
+
+**Answer**: nothing hidden — exactly 4 real orders since the 08-18 16:12 restart, all
+INJUSDT, all wins, confirmed against `bot.log`, `balance_history_test.json`, and
+Binance's own income ledger. The second hypothesis was right: the balance line was
+wrong on 2 of the 4.
+
+### Bugs found and fixed
+
+**Bug 1 — trade-close notification reported a PRE-close wallet balance (2 of 4 messages).**
+- *Cause*: `main.py` `_get_fresh_balance()` has a 5s TTL cache (`_BALANCE_TTL`). The
+  placement pass at the top of `on_candle_close` (line ~1029) populated it with the
+  pre-close wallet; the close was detected ~2s later in the same handler and reused
+  that cached value. Closes arriving via the price-tick path (`on_price_update`) had
+  no recent cached read — which is exactly why the two candle-path closes were wrong
+  and the two tick-path closes were right. Second, independent cause: on a failed
+  fetch, `_get_fresh_balance` falls back to the cached value with no staleness check,
+  and at 15:15 the fetch failed with `-1003 IP banned`. The last message understated
+  the wallet by 49 USDT (showed 3,103.86; real 3,153.21).
+- *Fix*: new `_read_wallet_now()` bypasses the TTL entirely and returns `0.0` rather
+  than any cached value. `Notifier._fmt_balance()` renders `0.0` as
+  `n/a (balance fetch failed)` — never a substituted number. `_get_fresh_balance()`
+  keeps its stale fallback for *sizing* (where some number beats none) and now
+  documents that it must not be used for reporting.
+
+**Bug 2 — PnL computed off the intended entry price, not the fill (overstated results by 5.9%).**
+- *Cause*: `_submit_to_exchange()` discarded everything but `orderId`;
+  `OpenOrder.entry_price` stayed the signal price forever, and `_calc_pnl` used it.
+  INJUSDT trade #1 was signalled at 4.052 and filled at 4.0670 — 1.5 cents on 372.1
+  units = **5.57 USDT of phantom profit**. Reported total for the four trades was
+  +115.71 vs Binance's true +109.26.
+- *Fix*: `_reconcile_entry_fill()` reads the entry leg's real average fill from
+  `futures_account_trades(symbol, orderId)` after placement (the MARKET response
+  carries `avgPrice="0"` until the engine settles — same trade-records approach
+  `_market_close` already used for the exit leg). Stored on
+  `OpenOrder.fill_entry_price`; `_effective_entry()` feeds it to `_calc_pnl` and
+  `_order_fee`. Same four trades now report +109.40 (**+0.12%**, residual is funding).
+- *Two deliberate constraints*: it runs **last** in `place_order`, after the exchange
+  SL is placed (it polls up to ~0.5s and must never delay crash protection); and it
+  **does not** feed the FakeOrder or SL/TP geometry, so trigger levels are unchanged
+  and this fix alters reported money only.
+
+**Message format** is now `Before / Net PnL / Fee / After`. `wallet_at_open` is a real
+pre-submission wallet read carried on `OpenOrder` — deliberately separate from
+`balance_at_open`, which is the allocated per-symbol trade cap (~296 vs ~3050 USDT;
+conflating the two is why the old single `Balance:` line was unreadable).
+
+### Repo hygiene issue found and resolved
+`feature/mean-reversion-overlay` had diverged at `9545794` and was **missing three
+commits that were live on the server** (`3583a73` presets safety net, `82ca600` +
+`c77dc4a` trail arming). Their *content* had been hand-copied into the working tree
+instead (`bot/fake_order.py` was byte-identical to `c77dc4a`). Committed the copies
+(`e85cd62`) then merged `c77dc4a` (`ced0757`) — the merge produced a **zero-diff tree**,
+confirming equivalence, so history now matches reality. Server also carried a
+hand-made commit `bd2a0cc` (same message as our `9541e8b`); `risk_manager.py` was
+byte-identical, so resetting the server to our branch lost nothing.
+
+### Deployed
+`ced0757` on `feature/mean-reversion-overlay`. Server switched from
+`feature/backtest-live-parity`. Rebuilt, restarted 17:01 UTC, `Combined stream
+connected (15 symbols)`, no errors, no real position open at restart.
+`RiskManager: real balance seeded — balance=peak=3153.21 USDT` — matches Binance's
+ledger exactly.
+
+**Mean-reversion overlay is dormant on two independent levels** (verified):
+1. `ENABLE_MEAN_REVERSION` absent from server `.env` → `Settings.enable_mean_reversion`
+   is `False` → `_mr_recommendation()` returns early before `detect_range`.
+2. `mr_fade` is in `risk_config.json` `preset_blocklist`, enforced at
+   `virtual_tracker.py:114` (excluded from `best_preset`) and `main.py:451` (real order
+   skipped). This matters because the `mr_fade` preset sets
+   `'enable_mean_reversion': True` and preset overrides reach `Settings` via
+   `dataclasses.replace` — so blocklisting is what stops a preset override from
+   waking MR up. Zero `mr_fade`/`MEAN_REVERT_FADE` mentions in the log after restart.
+
+### Open problems (priority order)
+1. **`-1003 "Way too many requests; IP banned"` — top priority.** 14 occurrences in
+   the 24h before the deploy, and by 16:00–16:30 it had spread from
+   `futures_account` to `data_feed.load_klines`. This is not cosmetic: the balance it
+   blocks feeds `risk_manager.update_balance()` and position sizing at
+   `main.py:1029-1031`. Same failure surface as the 08-18 incident that latched the
+   drawdown hard stop on a phantom 39% loss. Binance's own message says to use the
+   websocket for balance updates rather than polling `futures_account`.
+2. **Trade-close Telegram messages can still be silently dropped.**
+   `notifier.py:161` throttles to 1 per 120s **per symbol**
+   (`telegram_notify_interval_s`). Two closes on one symbol inside 2 minutes → the
+   second message never sends. The `system_log` entry is still written first, so
+   nothing is lost from the log. Related: `tests/test_notifier.py::test_rate_limit_drops_second_trade_message`
+   is a **pre-existing failure** — it asserts a global throttle while the code is
+   per-symbol (changed deliberately in session 42), so the test encodes stale intent.
+3. **Funding fees are not modelled in PnL.** `Before + Net` differs from `After` by the
+   funding charged during the hold (−0.1511 USDT across these four trades). Would need
+   an income-history call per close to close the gap.
+4. **FakeOrder trigger geometry still uses the signalled entry**, not the fill. Left
+   alone on purpose (changing it moves when trails arm and stops fire). Worth a
+   decision, not a silent change.
+5. **`Startup complete: 15 symbol(s) active` overstates reality** — 7 symbols are
+   disabled and `JUPUSDT` has `weight: 0` while producing 40 `BEST` signals in 24h
+   (second only to INJUSDT's 67). All 40 dropped at `main.py:1041`. Only INJUSDT
+   actually trades, and it was in a position essentially 100% of the time.
+
+**Pre-existing test failures (unchanged by this session, 12 of them)**: 1 in
+`test_notifier.py` (see #2 above), 5 in `test_risk_manager.py`, 5 in
+`test_virtual_order_simulator.py`, 1 in `test_virtual_tracker.py`. Baseline was 12
+failed / 295 passed; after this session 12 failed / 314 passed (19 new tests).
 
 ---
 

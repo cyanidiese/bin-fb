@@ -4,6 +4,50 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 62 (2026-08-19) — Trade-Close Reporting Fix (deployed)
+
+- [x] **Audit the 4 INJUSDT win notifications** — verified against `bot.log`,
+      `balance_history_test.json` and Binance income history. Nothing hidden: exactly
+      4 real orders since the 08-18 16:12 restart, all INJUSDT, all genuinely wins.
+- [x] **Fix pre-close balance in trade-close message** — `_read_wallet_now()` bypasses
+      the 5s TTL cache; unavailable balances print `n/a`, never a stale figure.
+- [x] **Fix PnL computed off the signalled entry instead of the fill** —
+      `_reconcile_entry_fill()` + `_effective_entry()`. Error on the four real trades
+      drops from +6.45 USDT (+5.9%) to +0.13 USDT (+0.12%).
+- [x] **Message shows Before / Net PnL / Fee / After** — with `(net of fee)` marker.
+- [x] **Reconcile branch history** — `feature/mean-reversion-overlay` was missing
+      `3583a73`/`82ca600`/`c77dc4a` (live on server, content hand-copied). Merged;
+      zero-diff tree confirmed equivalence.
+- [x] **Deploy `ced0757` + restart, MR dormant** — verified dormant on two levels
+      (`ENABLE_MEAN_REVERSION` absent from `.env`; `mr_fade` in `preset_blocklist`).
+
+- [ ] **HIGH: stop the `-1003` IP bans.** 14 in 24h, spreading from `futures_account`
+      to `load_klines`. Blocks the balance that feeds `risk_manager.update_balance()`
+      and sizing (`main.py:1029-1031`) — same surface as the 08-18 phantom-drawdown
+      incident. Binance's error text recommends the websocket over polling
+      `futures_account`. Options to weigh: user-data-stream balance updates, raising
+      `_BALANCE_TTL` above 5s, or one balance read per candle batch instead of per symbol.
+- [ ] **Trade-close messages can still be silently dropped** — `notifier.py:161`
+      throttles 1 per 120s per symbol. Two closes on one symbol inside 2 min → second
+      never sends (log entry still written). Decide whether trade closes should bypass
+      the throttle entirely.
+- [ ] **Fix or retire `test_notifier.py::test_rate_limit_drops_second_trade_message`** —
+      pre-existing failure; asserts a global throttle, code is per-symbol since
+      session 42. Test encodes stale intent.
+- [ ] **Decide: align FakeOrder trigger geometry to the actual fill?** Currently trails
+      arm and stops fire off the *signalled* entry. Left unchanged deliberately in
+      session 62 because it moves live trigger levels.
+- [ ] **Model funding fees in PnL** — `Before + Net` differs from `After` by funding
+      (−0.1511 USDT over these four trades). Needs an income-history call per close.
+- [ ] **`JUPUSDT` has weight 0 but produced 40 `BEST` signals in 24h** (2nd most, after
+      INJUSDT's 67) — all dropped at `main.py:1041`. Worth a data-backed look at
+      re-enabling, per the usual win-rate/trade-count/USDT thresholds.
+- [ ] **11 pre-existing test failures remain** (5 `test_risk_manager`,
+      5 `test_virtual_order_simulator`, 1 `test_virtual_tracker`) — untouched by
+      session 62, but they mean the suite is not a clean gate.
+
+---
+
 ## Session 61 (2026-08-13) — Trail-Widen Transfer Analysis (negative result recorded)
 
 - [x] **Test whether `14b014b` wider-trail lever extends to non-l2 trail families** — fee-inclusive resim of every real trade, per-symbol. Result: **net-negative on all 15 trailing presets** (widening lowers avg win + total). Lever does NOT transfer.

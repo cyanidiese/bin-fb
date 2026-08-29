@@ -1,6 +1,87 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## Last updated: 2026-08-19 (session 62 — Telegram Before/Net/Fee/After + entry-fill PnL fix; deployed, MR dormant)
+## Last updated: 2026-08-29 (session 63 — allocation corrected to INJUSDT; geometry tuning proven futile)
+
+---
+
+## ⟳ RESUME POINT — session 63 (2026-08-29) — symbol_weights was inverted vs evidence; corrected. Do NOT tune trade geometry.
+
+**Applied (hot-reload, no deploy):** `risk_config.symbol_weights`
+`INJUSDT 7→14`, `EIGENUSDT 8→0`, `TIAUSDT 10→4`, `MEMEUSDT 2→1`.
+Backup: `/opt/bot/risk_config.json.bak.pre-weights-20260829`. Verified in-container.
+New shares: INJ 73.7%, TIA 21.1%, MEME 5.3%.
+
+### The mechanism that was wrong
+There are **two** weight systems and they are not interchangeable:
+1. `symbol_registry.json` weights — in TATS mode the gate at `main.py:1077` is
+   **skipped** (`_active_scenario_name != "tats"` is False), so these barely matter.
+2. `risk_config.json` `symbol_weights` — **this is the live lever.**
+   `TatsScenario.uses_weight_allocation = False` (`bot/leverage_scenario.py:235`), so
+   `main.py:1101` does `raw_score = raw_score * symbol_weights[sym]`. That feeds
+   `bgf_fractions` → `sym_cap` → real capital. Weight 0 ⇒ score 0 ⇒ dropped by the
+   TATS `candidates = [c for c in candidates if c[3] > 0.0]` filter.
+
+Before the fix the ranking was inverted against every data window: TIA 10 and
+EIGEN 8 outranked INJ 7. EIGEN was 42 of the 83 post-fix trades — half the volume
+in a structurally negative symbol.
+
+Also note `tats_min_weight = 3.0`: a **registry** weight ≥3.0 makes a symbol bypass
+the proportional cap and take the ENTIRE deployable budget (~7× position size).
+Landmine — do not raise registry weights to 3+ casually.
+
+### Evidence (three windows, all agree)
+| symbol | all data | post trail-fix (Jul22+) | post PnL-fix (Aug19+) | payoff vs needed |
+|---|---|---|---|---|
+| INJUSDT | +246.28 (47%) | +236.79 (52%) | +71.44 (40%) | 2.20 vs 0.92 ✓ |
+| EIGENUSDT | −61.40 (41%) | −103.03 (43%) | −74.56 (19%) | 1.00 vs 1.33 ✗ |
+| MEMEUSDT | −7.27 (23%) | −6.92 (25%) | −4.92 (20%) | 1.02 vs 3.00 ✗ |
+| TIAUSDT | +7.82 (33%) | −66.60 (n=2) | — | unproven post-fix |
+
+EIGEN's defect is payoff, not win rate: avg win +16.87 ≈ avg loss −16.95 at 43% WR.
+INJ survives deleting its 3 best trades (+69.16 over the remaining 20, +3.46/trade).
+
+### NEGATIVE RESULTS — do not re-investigate without new evidence
+Replayed 151 real trades against real klines using the **production FakeOrder**
+engine (tracking error 0.22 USDT/trade), split into halves, requiring any fix to
+work in BOTH. **Nothing in trade management survives:**
+- stop ×1.25 / ×1.5 / ×2.0 — reverses sign (×1.5 looked like +162 USDT; it is one
+  symbol in one month, and makes INJ worse)
+- target ×0.4…×1.5 — reverses or negative both halves
+- max hold 2h/4h/8h/16h — reverses or negative both
+- min-stop-distance skip filter — jagged, non-monotone; "surviving" thresholds cut 75% of trades
+Position size is `margin × leverage / entry` (`main.py:805`), independent of stop
+distance, so widening a stop cannot shrink a winner — the counterfactual is clean,
+and it still fails. **Sessions 59–61 tuned these knobs; the data says there is
+nothing there. Stop.**
+
+### precision_score is NOT inverted (earlier session-63 claim was wrong)
+`corr(precision, SL distance) = −0.236`. `_entry_quality` returns 1.0 when price is
+*at* the projected level and the stop sits just past it, so a "perfect" entry
+mechanically yields a stop too tight to survive noise (median SL 0.68% in the 0.90+
+band vs 1.38% in the <0.60 band). **Controlling for stop distance the inversion
+disappears** — in the 1.5–3.0% SL band high precision is better (+4.45 vs +2.02).
+The score is fine; the geometry it produces is not. Needs a design spec, not a patch.
+
+### Blocklist recommendation WITHDRAWN
+An earlier proposal to block six presets (+424.66/+589.98 claimed) was built on
+pre-fix data. On post-Jul-22 data `lh_sell_trail15` is +8.76 and
+`trail_15_from_30_full` is +6.48 — it would have blocked profitable presets.
+**Window all preset analysis to Jul 22+.** Revisit at ~150 post-fix trades (now 83).
+
+### Statistical honesty
+Post-fix window: 83 trades, +60.25, but 95% CI on mean/trade is [−4.43, +5.85],
+P(mean≤0)=39%; the top 3 trades are +167.63 of it. INJ-only reaches P=4.6%.
+The Aug 23–28 “losing streak” is **normal variance** — 20% of all historical
+14-trade windows are that bad or worse (bootstrap: 21.9%). Do not chase it.
+The Aug-19 trail widen (14b014b) did **not** cause it: replayed both param sets,
+the widen is better in both periods (+84.22).
+
+### Open
+1. **`-1003` IP bans** — still firing (new IP 15.158.242.107), now hitting
+   `load_klines`. Corrupts sizing, not just logs.
+2. **JUPUSDT** — produced 28 of today's 28 signals at RR 4.0 / precision 0.900,
+   weight 0 so all discarded. Never traded real. Needs a backtest before enabling.
+3. **Entry-zone/stop geometry** (see precision note) — the real structural issue.
 
 ---
 

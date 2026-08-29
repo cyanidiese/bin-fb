@@ -4,6 +4,41 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 63 (2026-08-29) — Allocation corrected; geometry tuning closed out
+
+- [x] **Correct `risk_config.symbol_weights`** — was inverted vs evidence (TIA 10 / EIGEN 8
+      outranked INJ 7). Now INJ 14, EIGEN 0, TIA 4, MEME 1. Hot-reloaded, verified in-container.
+- [x] **Identify the real allocation lever** — `TatsScenario.uses_weight_allocation=False`
+      makes `main.py:1101` multiply efficiency score by `risk_config.symbol_weights`.
+      The `symbol_registry.json` weights are largely inert in TATS mode.
+- [x] **Counterfactual replay of 151 real trades** (production FakeOrder, real klines,
+      OOS split) — no stop/target/hold-time change survives. Documented as negative results.
+- [x] **Withdraw the preset blocklist proposal** — was built on pre-fix data.
+- [x] **Resolve the precision_score question** — not inverted; it is a stop-geometry
+      artifact (`corr(precision, SL dist) = -0.236`).
+- [x] **Confirm Aug 23-28 was variance, not regression** — 20% of historical 14-trade
+      windows are as bad; the Aug-19 trail widen was exonerated by replay.
+
+- [ ] **MONITOR the weight change** — expect INJ to take ~74% of allocation, EIGEN to
+      stop trading entirely. Check in ~2 weeks / ~20 trades. Revert from
+      `risk_config.json.bak.pre-weights-20260829` if INJ win rate drops below ~35%.
+- [ ] **HIGH: stop the `-1003` IP bans** — still firing on the new IP (15.158.242.107),
+      now hitting `load_klines` as well as `futures_account`. Corrupts position sizing
+      via the stale-cache fallback, not just logs.
+- [ ] **Spec the entry-zone/stop geometry problem** — `_entry_quality` scores 1.0 at the
+      projected level and the stop goes just past it, so the best-scored entries get the
+      tightest, least survivable stops (median SL 0.68% vs 1.38%). This is the largest
+      remaining structural defect. Needs a design doc, not a parameter tweak.
+- [ ] **Backtest JUPUSDT before enabling** — produced 28 of 28 signals on Aug 29 at
+      RR 4.0 / precision 0.900, weight 0, never traded real. Currently the bot's only
+      signal source on many days.
+- [ ] **Revisit the preset blocklist at ~150 post-Jul-22 trades** (currently 83). Window
+      ALL preset analysis to Jul 22+ — earlier data is contaminated by since-fixed defects.
+- [ ] **Do NOT re-tune stops/targets/hold time** without genuinely new evidence — see
+      CLAUDE_NOTES session 63 negative results.
+
+---
+
 ## Session 62 (2026-08-19) — Trade-Close Reporting Fix (deployed)
 
 - [x] **Audit the 4 INJUSDT win notifications** — verified against `bot.log`,

@@ -3,7 +3,8 @@
 
 import { useState, useImperativeHandle } from 'react'
 import type { Signal } from '@/lib/types'
-import type { LearningOrder } from '@/lib/learningTypes'
+import type { LearningOrder, LearningEvent } from '@/lib/learningTypes'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 import { formatPrice, priceToInputValue } from '@/lib/formatPrice'
 
 export interface LearningPanelHandle {
@@ -30,6 +31,8 @@ interface Props {
    *  Same event as the floating "+ Note" button — this is just a second, in-context
    *  entry point next to the order controls. */
   onAddNote?: (text: string) => void
+  /** Session events, used to render the collapsible log of notes and orders. */
+  events?: LearningEvent[]
 }
 
 type PanelState = 'idle' | 'reject-form' | 'custom-form' | 'note-form'
@@ -45,6 +48,7 @@ export default function LearningRecommendationPanel({
   orders,
   onCloseOrder,
   onAddNote,
+  events,
 }: Props) {
   const [panelState, setPanelState] = useState<PanelState>('idle')
   const [rejectReason, setRejectReason] = useState('')
@@ -56,6 +60,8 @@ export default function LearningRecommendationPanel({
   const [closingOrderId, setClosingOrderId] = useState<string | null>(null)
   const [closeNote, setCloseNote] = useState('')
   const [standaloneNote, setStandaloneNote] = useState('')
+  // Collapsed by default; the preference persists like the page's other sections.
+  const [logOpen, setLogOpen] = useLocalStorage<boolean>('db:learning:logOpen', false)
 
   // Which custom-order field is focused. The page mirrors this to the chart so a
   // click can be routed into the right input.
@@ -143,6 +149,131 @@ export default function LearningRecommendationPanel({
   const btnDanger  = 'px-3 py-1.5 text-xs font-semibold rounded bg-red-900 text-white hover:bg-red-800 transition-colors border border-red-700'
   const btnNeutral = 'px-3 py-1.5 text-xs font-semibold rounded border border-gray-600 text-gray-300 hover:text-white hover:border-gray-400 transition-colors'
 
+  // ── Session log: notes + orders, collapsed by default ────────────────────
+  // Built from the event stream rather than the orders array so notes and orders
+  // interleave in the order they actually happened. Close outcomes are folded onto
+  // their originating order row instead of appearing as separate lines.
+  type LogRow = {
+    key: string
+    time: string
+    kind: 'order' | 'note'
+    side?: 'BUY' | 'SELL'
+    entry?: number
+    tp?: number
+    sl?: number
+    text?: string
+    outcome?: 'tp_hit' | 'sl_hit' | 'manual_close'
+    pnlPct?: number
+    closeNote?: string
+  }
+
+  const logRows: LogRow[] = (() => {
+    const rows: LogRow[] = []
+    const byOrderId = new Map<string, LogRow>()
+    for (const e of events ?? []) {
+      if (e.type === 'custom_order_placed') {
+        const row: LogRow = {
+          key: e.order.id,
+          time: e.candle?.time ?? e.timestamp,
+          kind: 'order',
+          side: e.order.side,
+          entry: e.order.entryPrice,
+          tp: e.order.tpPrice,
+          sl: e.order.slPrice,
+          text: e.order.note,
+        }
+        byOrderId.set(e.order.id, row)
+        rows.push(row)
+      } else if (e.type === 'note_added') {
+        rows.push({
+          key: `n${rows.length}-${e.timestamp}`,
+          time: e.candle?.time ?? e.timestamp,
+          kind: 'note',
+          text: e.text,
+        })
+      } else if (e.type === 'order_closed') {
+        const row = byOrderId.get(e.order_id)
+        if (row) {
+          row.outcome = e.market_outcome
+          row.pnlPct = e.pnl_pct
+          row.closeNote = e.note
+        }
+      }
+    }
+    return rows
+  })()
+
+  const outcomeLabel = (o?: LogRow['outcome']) =>
+    o === 'tp_hit' ? 'TP' : o === 'sl_hit' ? 'SL' : o === 'manual_close' ? 'manual' : 'open'
+
+  const sessionLog = (
+    <div className="rounded-lg border border-gray-800 bg-gray-900 p-3 space-y-2">
+      <button
+        onClick={() => setLogOpen(v => !v)}
+        className="w-full flex items-center justify-between text-xs text-gray-500 uppercase tracking-wider hover:text-gray-300 transition-colors"
+      >
+        <span>Session log ({logRows.length})</span>
+        <span className="text-gray-600">{logOpen ? '▾' : '▸'}</span>
+      </button>
+
+      {logOpen && (
+        logRows.length === 0 ? (
+          <p className="text-xs text-gray-600">Nothing recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="text-gray-600 text-left">
+                  <th className="py-1 pr-2 font-normal">Candle</th>
+                  <th className="py-1 pr-2 font-normal">Type</th>
+                  <th className="py-1 pr-2 font-normal">Detail</th>
+                  <th className="py-1 font-normal">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logRows.map(r => (
+                  <tr key={r.key} className="border-t border-gray-800 align-top">
+                    <td className="py-1 pr-2 text-gray-500 whitespace-nowrap">
+                      {new Date(r.time).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </td>
+                    <td className="py-1 pr-2 whitespace-nowrap">
+                      {r.kind === 'note' ? (
+                        <span className="text-amber-500">NOTE</span>
+                      ) : (
+                        <span className={r.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}>{r.side}</span>
+                      )}
+                    </td>
+                    <td className="py-1 pr-2 text-gray-400 whitespace-nowrap">
+                      {r.kind === 'order' ? (
+                        <>
+                          {formatPrice(r.entry!)}
+                          <span className="text-gray-600"> tp </span>{formatPrice(r.tp!)}
+                          <span className="text-gray-600"> sl </span>{formatPrice(r.sl!)}
+                          <span className={
+                            r.outcome === undefined ? ' text-gray-500'
+                            : (r.pnlPct ?? 0) >= 0 ? ' text-emerald-400' : ' text-red-400'
+                          }>
+                            {' · '}{outcomeLabel(r.outcome)}
+                            {r.pnlPct !== undefined && ` ${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(2)}%`}
+                          </span>
+                        </>
+                      ) : '—'}
+                    </td>
+                    <td className="py-1 text-gray-300 whitespace-pre-wrap break-words">
+                      {[r.text, r.closeNote && `exit: ${r.closeNote}`].filter(Boolean).join('\n') || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  )
+
   const openOrders = (orders ?? []).filter(o => o.closedAtCandleIndex === undefined)
 
   // Rendered above every panel state so an open position can always be closed,
@@ -218,6 +349,7 @@ export default function LearningRecommendationPanel({
             <button onClick={() => setPanelState('idle')} className={btnNeutral}>Cancel</button>
           </div>
         </div>
+        {sessionLog}
       </>
     )
   }
@@ -244,6 +376,7 @@ export default function LearningRecommendationPanel({
             <button onClick={() => { setStandaloneNote(''); setPanelState('idle') }} className={btnNeutral}>Cancel</button>
           </div>
         </div>
+        {sessionLog}
       </>
     )
   }
@@ -308,6 +441,7 @@ export default function LearningRecommendationPanel({
             <button onClick={closeCustomForm} className={btnNeutral}>Cancel</button>
           </div>
         </div>
+        {sessionLog}
       </>
     )
   }
@@ -352,6 +486,7 @@ export default function LearningRecommendationPanel({
           </>
         )}
       </div>
+      {sessionLog}
     </>
   )
 }

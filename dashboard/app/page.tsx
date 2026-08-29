@@ -311,6 +311,7 @@ function PageContent({ symbol }: { symbol: string }) {
             orders={learningSession.orders}
             onCloseOrder={learningSession.closeOrderManually}
             onAddNote={learningSession.addNote}
+            events={learningSession.session?.events}
           />
         </div>
       )}

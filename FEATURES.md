@@ -753,6 +753,21 @@ form — the spec's separate `LearningOrderForm.tsx` was folded in here),
     **Place Custom Note** button sitting next to Place Custom Order in the panel, so a
     "no trade, and here's why" can be captured without leaving the decision controls.
     Both call the same `addNote`, so a session is uniform regardless of entry point.
+- **Session log table (session 63)** — a collapsible table at the bottom of the
+  Bot Recommendation panel, under the Place Custom Order / Place Custom Note buttons.
+  Collapsed by default; the open/closed preference persists in localStorage
+  (`db:learning:logOpen`), matching the page's other sections. The header shows the
+  row count so the size is visible while collapsed.
+  Columns: candle time · type (BUY/SELL/NOTE) · detail · note. Order rows show
+  `entry tp sl · outcome ±pnl%` with the outcome colour-coded, reading `open` until
+  the order ends. Entry and exit rationales share the note column, the exit one
+  prefixed `exit:`.
+  Built from the **event stream**, not the orders array, so notes and orders
+  interleave chronologically and `order_closed` events fold onto their originating
+  order row rather than appearing as separate lines — a closed trade is one row
+  showing both why it was entered and why it ended.
+  Rendered in all four panel states, so the log stays reachable while the reject,
+  note or custom-order form is open.
   - Both event types now embed a `CandleContext` (`{time, open, high, low, close}`).
     Previously a note carried only `candle_index`, which cannot be interpreted later
     without also having the exact kline file the session was recorded against — the

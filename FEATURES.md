@@ -755,7 +755,14 @@ form — the spec's separate `LearningOrderForm.tsx` was folded in here),
     without also having the exact kline file the session was recorded against — the
     events are now self-describing.
 - Orders are evaluated against each new candle's high/low; TP/SL crossings close the
-  order and emit `order_closed` with `tp_hit`/`sl_hit` and `pnl_pct`.
+  order and emit `order_closed` with `tp_hit`/`sl_hit`, `close_price` and `pnl_pct`.
+- **Manual close with a note (session 63)** — the sticky panel lists every still-open
+  order (side, entry, TP, SL) with a **Close** button. Closing captures an optional
+  rationale and emits `order_closed` with `market_outcome: 'manual_close'`, the close
+  price, `pnl_pct` and the note. This covers "I would have got out here" for reasons
+  the TP/SL geometry cannot express. The list renders above every panel state, so a
+  position can be closed even while the custom-order or reject form is open.
+  Manual closes settle at the current candle's **close** price.
 - Open orders draw TP (green) / SL (red) zones on the chart; closed orders stay
   visible faded.
 - Frontend only — uses the existing `/api/replay`; no bot changes.

@@ -3,6 +3,7 @@
 
 import { useState, useImperativeHandle } from 'react'
 import type { Signal } from '@/lib/types'
+import type { LearningOrder } from '@/lib/learningTypes'
 import { formatPrice, priceToInputValue } from '@/lib/formatPrice'
 
 export interface LearningPanelHandle {
@@ -22,6 +23,9 @@ interface Props {
   /** Reports which custom-order field has focus (null when none) so the page can
    *  switch the chart into price-capture mode. */
   onCaptureFieldChange?: (field: 'entry' | 'tp' | 'sl' | null) => void
+  /** All learning orders; the panel lists the still-open ones so they can be closed by hand. */
+  orders?: LearningOrder[]
+  onCloseOrder?: (orderId: string, note?: string) => void
 }
 
 type PanelState = 'idle' | 'reject-form' | 'custom-form'
@@ -34,6 +38,8 @@ export default function LearningRecommendationPanel({
   onPlaceCustom,
   ref,
   onCaptureFieldChange,
+  orders,
+  onCloseOrder,
 }: Props) {
   const [panelState, setPanelState] = useState<PanelState>('idle')
   const [rejectReason, setRejectReason] = useState('')
@@ -42,6 +48,8 @@ export default function LearningRecommendationPanel({
   const [customTp, setCustomTp] = useState('')
   const [customSl, setCustomSl] = useState('')
   const [customNote, setCustomNote] = useState('')
+  const [closingOrderId, setClosingOrderId] = useState<string | null>(null)
+  const [closeNote, setCloseNote] = useState('')
 
   // Which custom-order field is focused. The page mirrors this to the chart so a
   // click can be routed into the right input.
@@ -117,119 +125,185 @@ export default function LearningRecommendationPanel({
   const btnDanger  = 'px-3 py-1.5 text-xs font-semibold rounded bg-red-900 text-white hover:bg-red-800 transition-colors border border-red-700'
   const btnNeutral = 'px-3 py-1.5 text-xs font-semibold rounded border border-gray-600 text-gray-300 hover:text-white hover:border-gray-400 transition-colors'
 
+  const openOrders = (orders ?? []).filter(o => o.closedAtCandleIndex === undefined)
+
+  // Rendered above every panel state so an open position can always be closed,
+  // including while the custom-order or reject form is on screen.
+  const openOrdersBlock = openOrders.length > 0 ? (
+    <div className="rounded-lg border border-gray-800 bg-gray-900 p-3 space-y-2">
+      <p className={labelCls}>Open orders ({openOrders.length})</p>
+      {openOrders.map(o => (
+        <div key={o.id} className="space-y-1">
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className={o.side === 'BUY' ? 'text-emerald-400' : 'text-red-400'}>{o.side}</span>
+            <span className="text-gray-500">entry</span><span>{formatPrice(o.entryPrice)}</span>
+            <span className="text-gray-500">tp</span><span>{formatPrice(o.tpPrice)}</span>
+            <span className="text-gray-500">sl</span><span>{formatPrice(o.slPrice)}</span>
+            {closingOrderId !== o.id && (
+              <button
+                onClick={() => { setClosingOrderId(o.id); setCloseNote('') }}
+                className="ml-auto px-2 py-0.5 text-xs font-semibold rounded border border-gray-600 text-gray-300 hover:text-white hover:border-gray-400 transition-colors"
+              >
+                Close
+              </button>
+            )}
+          </div>
+          {closingOrderId === o.id && (
+            <div className="space-y-2 pl-1 border-l border-gray-700">
+              <p className="text-xs text-gray-600">
+                Closes at this candle&apos;s close ({formatPrice(currentKlineClose)}).
+              </p>
+              <textarea
+                autoFocus
+                value={closeNote}
+                onChange={e => setCloseNote(e.target.value)}
+                placeholder="Why close here? (optional)"
+                className={`${inputCls} resize-none h-14`}
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    onCloseOrder?.(o.id, closeNote.trim() || undefined)
+                    setClosingOrderId(null)
+                    setCloseNote('')
+                  }}
+                  className={btnDanger}
+                >
+                  Confirm Close
+                </button>
+                <button onClick={() => { setClosingOrderId(null); setCloseNote('') }} className={btnNeutral}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  ) : null
+
   if (panelState === 'reject-form' && signal) {
     return (
-      <div className={cardCls}>
-        <p className={labelCls}>Reject reason (optional)</p>
-        <textarea
-          autoFocus
-          value={rejectReason}
-          onChange={e => setRejectReason(e.target.value)}
-          placeholder="Why are you rejecting this signal? (leave blank to skip)"
-          className={`${inputCls} resize-none h-16`}
-        />
-        <div className="flex gap-2">
-          <button onClick={handleRejectSubmit} className={btnDanger}>Confirm Reject</button>
-          <button onClick={() => setPanelState('idle')} className={btnNeutral}>Cancel</button>
+      <>
+        {openOrdersBlock}
+        <div className={cardCls}>
+          <p className={labelCls}>Reject reason (optional)</p>
+          <textarea
+            autoFocus
+            value={rejectReason}
+            onChange={e => setRejectReason(e.target.value)}
+            placeholder="Why are you rejecting this signal? (leave blank to skip)"
+            className={`${inputCls} resize-none h-16`}
+          />
+          <div className="flex gap-2">
+            <button onClick={handleRejectSubmit} className={btnDanger}>Confirm Reject</button>
+            <button onClick={() => setPanelState('idle')} className={btnNeutral}>Cancel</button>
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
   if (panelState === 'custom-form') {
     return (
-      <div className={cardCls}>
-        <p className={labelCls}>Place custom order</p>
-        <p className="text-xs text-gray-600">
-          Focus a field, then click the chart to fill it with the price at your cursor.
-        </p>
-        <div className="flex gap-2">
-          {(['BUY', 'SELL'] as const).map(s => (
-            <button
-              key={s}
-              onClick={() => setCustomSide(s)}
-              className={`flex-1 py-1 text-xs font-semibold rounded border transition-colors ${
-                customSide === s
-                  ? s === 'BUY'
-                    ? 'bg-emerald-800 border-emerald-600 text-white'
-                    : 'bg-red-900 border-red-700 text-white'
-                  : 'border-gray-700 text-gray-400 hover:text-white'
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="space-y-1">
-            <label className={labelCls}>Entry</label>
-            <input type="number" value={customEntry} onChange={e => setCustomEntry(e.target.value)}
-                   onFocus={() => focusField('entry')} onBlur={blurField}
-                   className={`${inputCls} ${captureField === 'entry' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+      <>
+        {openOrdersBlock}
+        <div className={cardCls}>
+          <p className={labelCls}>Place custom order</p>
+          <p className="text-xs text-gray-600">
+            Focus a field, then click the chart to fill it with the price at your cursor.
+          </p>
+          <div className="flex gap-2">
+            {(['BUY', 'SELL'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setCustomSide(s)}
+                className={`flex-1 py-1 text-xs font-semibold rounded border transition-colors ${
+                  customSide === s
+                    ? s === 'BUY'
+                      ? 'bg-emerald-800 border-emerald-600 text-white'
+                      : 'bg-red-900 border-red-700 text-white'
+                    : 'border-gray-700 text-gray-400 hover:text-white'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <label className={labelCls}>Entry</label>
+              <input type="number" value={customEntry} onChange={e => setCustomEntry(e.target.value)}
+                     onFocus={() => focusField('entry')} onBlur={blurField}
+                     className={`${inputCls} ${captureField === 'entry' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+            </div>
+            <div className="space-y-1">
+              <label className={labelCls}>TP</label>
+              <input type="number" value={customTp} onChange={e => setCustomTp(e.target.value)}
+                     onFocus={() => focusField('tp')} onBlur={blurField}
+                     className={`${inputCls} ${captureField === 'tp' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+            </div>
+            <div className="space-y-1">
+              <label className={labelCls}>SL</label>
+              <input type="number" value={customSl} onChange={e => setCustomSl(e.target.value)}
+                     onFocus={() => focusField('sl')} onBlur={blurField}
+                     className={`${inputCls} ${captureField === 'sl' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+            </div>
           </div>
           <div className="space-y-1">
-            <label className={labelCls}>TP</label>
-            <input type="number" value={customTp} onChange={e => setCustomTp(e.target.value)}
-                   onFocus={() => focusField('tp')} onBlur={blurField}
-                   className={`${inputCls} ${captureField === 'tp' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+            <label className={labelCls}>Note (optional)</label>
+            <textarea
+              value={customNote}
+              onChange={e => setCustomNote(e.target.value)}
+              placeholder="Why this entry? What are you seeing on the chart?"
+              className={`${inputCls} resize-none h-16`}
+            />
           </div>
-          <div className="space-y-1">
-            <label className={labelCls}>SL</label>
-            <input type="number" value={customSl} onChange={e => setCustomSl(e.target.value)}
-                   onFocus={() => focusField('sl')} onBlur={blurField}
-                   className={`${inputCls} ${captureField === 'sl' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
+          <div className="flex gap-2">
+            <button onClick={handleCustomSubmit} className={btnPrimary}>Place Order</button>
+            <button onClick={closeCustomForm} className={btnNeutral}>Cancel</button>
           </div>
         </div>
-        <div className="space-y-1">
-          <label className={labelCls}>Note (optional)</label>
-          <textarea
-            value={customNote}
-            onChange={e => setCustomNote(e.target.value)}
-            placeholder="Why this entry? What are you seeing on the chart?"
-            className={`${inputCls} resize-none h-16`}
-          />
-        </div>
-        <div className="flex gap-2">
-          <button onClick={handleCustomSubmit} className={btnPrimary}>Place Order</button>
-          <button onClick={closeCustomForm} className={btnNeutral}>Cancel</button>
-        </div>
-      </div>
+      </>
     )
   }
 
   // Default: signal display or no-signal state
   return (
-    <div className={cardCls}>
-      {signal ? (
-        <>
-          <div className="flex items-center gap-2">
+    <>
+      {openOrdersBlock}
+      <div className={cardCls}>
+        {signal ? (
+          <>
+            <div className="flex items-center gap-2">
+              <p className={labelCls}>Bot Recommendation</p>
+              <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${
+                signal.side === 'BUY' ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'
+              }`}>
+                {signal.side}
+              </span>
+              <span className="text-xs text-gray-500 font-mono">{signal.signal_type}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-3 text-xs font-mono">
+              <div><span className="text-gray-500">Entry</span><br />{formatPrice(signal.entry)}</div>
+              <div><span className="text-gray-500">TP</span><br />{formatPrice(signal.target)}</div>
+              <div><span className="text-gray-500">SL</span><br />{signal.stop ? formatPrice(signal.stop) : '—'}</div>
+              <div><span className="text-gray-500">RR</span><br />{signal.rr != null ? `${signal.rr.toFixed(2)}x` : '—'}</div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={handleAccept} className={btnPrimary}>Accept ✓</button>
+              <button onClick={() => setPanelState('reject-form')} className={btnDanger}>Reject ✗</button>
+              <button onClick={openCustomForm} className={btnNeutral}>Place Custom</button>
+            </div>
+          </>
+        ) : (
+          <>
             <p className={labelCls}>Bot Recommendation</p>
-            <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${
-              signal.side === 'BUY' ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'
-            }`}>
-              {signal.side}
-            </span>
-            <span className="text-xs text-gray-500 font-mono">{signal.signal_type}</span>
-          </div>
-          <div className="grid grid-cols-4 gap-3 text-xs font-mono">
-            <div><span className="text-gray-500">Entry</span><br />{formatPrice(signal.entry)}</div>
-            <div><span className="text-gray-500">TP</span><br />{formatPrice(signal.target)}</div>
-            <div><span className="text-gray-500">SL</span><br />{signal.stop ? formatPrice(signal.stop) : '—'}</div>
-            <div><span className="text-gray-500">RR</span><br />{signal.rr != null ? `${signal.rr.toFixed(2)}x` : '—'}</div>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={handleAccept} className={btnPrimary}>Accept ✓</button>
-            <button onClick={() => setPanelState('reject-form')} className={btnDanger}>Reject ✗</button>
-            <button onClick={openCustomForm} className={btnNeutral}>Place Custom</button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className={labelCls}>Bot Recommendation</p>
-          <p className="text-gray-600 text-sm">No signal this candle.</p>
-          <button onClick={openCustomForm} className={btnNeutral}>Place Custom Order</button>
-        </>
-      )}
-    </div>
+            <p className="text-gray-600 text-sm">No signal this candle.</p>
+            <button onClick={openCustomForm} className={btnNeutral}>Place Custom Order</button>
+          </>
+        )}
+      </div>
+    </>
   )
 }

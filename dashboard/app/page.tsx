@@ -308,6 +308,8 @@ function PageContent({ symbol }: { symbol: string }) {
             onPlaceCustom={learningSession.placeCustomOrder}
             ref={learningPanelRef}
             onCaptureFieldChange={setCaptureField}
+            orders={learningSession.orders}
+            onCloseOrder={learningSession.closeOrderManually}
           />
         </div>
       )}

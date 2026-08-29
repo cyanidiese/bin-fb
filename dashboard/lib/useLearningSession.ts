@@ -31,6 +31,7 @@ export interface LearningSessionHandle {
   acceptSignal: (signal: Signal) => void
   rejectSignal: (signal: Signal, reason?: string) => void
   placeCustomOrder: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number, note?: string) => void
+  closeOrderManually: (orderId: string, note?: string) => void
   addNote: (text: string) => void
   saveAndExit: () => void
 }
@@ -122,7 +123,12 @@ export function useLearningSession(): LearningSessionHandle {
         order_id: c.orderId,
         candle_index: candleIndex,
         market_outcome: c.outcome,
+        close_price: c.closePrice,
         pnl_pct: c.pnlPct,
+        candle: {
+          time: new Date(kline.time * 1000).toISOString(),
+          open: kline.open, high: kline.high, low: kline.low, close: kline.close,
+        },
         timestamp: now,
       })),
     ]
@@ -184,6 +190,38 @@ export function useLearningSession(): LearningSessionHandle {
     setSession(s => s ? { ...s, events: [...s.events, event] } : s)
   }, [])
 
+  /**
+   * Close an open order by hand at the current candle's close, with an optional
+   * rationale. TP/SL closes happen automatically in onReplayResult; this covers
+   * "I would have got out here" for reasons the geometry does not capture.
+   */
+  const closeOrderManually = useCallback((orderId: string, note?: string) => {
+    const prev = sessionRef.current
+    const kline = currentKlineRef.current
+    if (!prev || !kline) return
+    const order = ordersRef.current.find(o => o.id === orderId)
+    if (!order || order.closedAtCandleIndex !== undefined) return
+
+    const closePrice = kline.close
+    const closed = { ...order, closedAtCandleIndex: prev.currentCandleIndex, closePrice }
+    const updated = ordersRef.current.map(o => (o.id === orderId ? closed : o))
+    setOrders(updated)
+    ordersRef.current = updated
+
+    const event: LearningEvent = {
+      type: 'order_closed',
+      order_id: orderId,
+      candle_index: prev.currentCandleIndex,
+      market_outcome: 'manual_close',
+      close_price: closePrice,
+      pnl_pct: computePnlPct(order, closePrice),
+      ...(note ? { note } : {}),
+      candle: candleContext(),
+      timestamp: new Date().toISOString(),
+    }
+    setSession(sPrev => (sPrev ? { ...sPrev, events: [...sPrev.events, event] } : sPrev))
+  }, [])
+
   const addNote = useCallback((text: string) => {
     setSession(prev => {
       if (!prev) return prev
@@ -228,6 +266,7 @@ export function useLearningSession(): LearningSessionHandle {
     acceptSignal,
     rejectSignal,
     placeCustomOrder,
+    closeOrderManually,
     addNote,
     saveAndExit,
   }

@@ -36,7 +36,20 @@ export type LearningEvent =
   | { type: 'signal_accepted'; candle_index: number; signal: Signal; timestamp: string }
   | { type: 'signal_rejected'; candle_index: number; signal: Signal; reason?: string; timestamp: string }
   | { type: 'custom_order_placed'; candle_index: number; order: LearningOrder; candle?: CandleContext; timestamp: string }
-  | { type: 'order_closed'; order_id: string; candle_index: number; market_outcome: 'tp_hit' | 'sl_hit'; pnl_pct: number; timestamp: string }
+  | {
+      type: 'order_closed'
+      order_id: string
+      candle_index: number
+      /** How the order ended. 'manual_close' means the user closed it by hand at the
+       *  candle close rather than waiting for TP or SL to be crossed. */
+      market_outcome: 'tp_hit' | 'sl_hit' | 'manual_close'
+      close_price: number
+      pnl_pct: number
+      /** Free-text rationale captured when closing by hand ("why I'd get out here"). */
+      note?: string
+      candle?: CandleContext
+      timestamp: string
+    }
   | { type: 'note_added'; candle_index: number; text: string; candle?: CandleContext; timestamp: string }
 
 export interface LearningSession {

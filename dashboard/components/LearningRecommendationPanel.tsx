@@ -26,9 +26,13 @@ interface Props {
   /** All learning orders; the panel lists the still-open ones so they can be closed by hand. */
   orders?: LearningOrder[]
   onCloseOrder?: (orderId: string, note?: string) => void
+  /** Record a standalone note on the current candle without placing an order.
+   *  Same event as the floating "+ Note" button — this is just a second, in-context
+   *  entry point next to the order controls. */
+  onAddNote?: (text: string) => void
 }
 
-type PanelState = 'idle' | 'reject-form' | 'custom-form'
+type PanelState = 'idle' | 'reject-form' | 'custom-form' | 'note-form'
 
 export default function LearningRecommendationPanel({
   signal,
@@ -40,6 +44,7 @@ export default function LearningRecommendationPanel({
   onCaptureFieldChange,
   orders,
   onCloseOrder,
+  onAddNote,
 }: Props) {
   const [panelState, setPanelState] = useState<PanelState>('idle')
   const [rejectReason, setRejectReason] = useState('')
@@ -50,6 +55,7 @@ export default function LearningRecommendationPanel({
   const [customNote, setCustomNote] = useState('')
   const [closingOrderId, setClosingOrderId] = useState<string | null>(null)
   const [closeNote, setCloseNote] = useState('')
+  const [standaloneNote, setStandaloneNote] = useState('')
 
   // Which custom-order field is focused. The page mirrors this to the chart so a
   // click can be routed into the right input.
@@ -109,6 +115,18 @@ export default function LearningRecommendationPanel({
   function openCustomForm() {
     setCustomEntry(String(currentKlineClose))
     setPanelState('custom-form')
+  }
+
+  function openNoteForm() {
+    setStandaloneNote('')
+    setPanelState('note-form')
+  }
+
+  function handleNoteSubmit() {
+    const t = standaloneNote.trim()
+    if (t) onAddNote?.(t)
+    setStandaloneNote('')
+    setPanelState('idle')
   }
 
   function closeCustomForm() {
@@ -198,6 +216,32 @@ export default function LearningRecommendationPanel({
           <div className="flex gap-2">
             <button onClick={handleRejectSubmit} className={btnDanger}>Confirm Reject</button>
             <button onClick={() => setPanelState('idle')} className={btnNeutral}>Cancel</button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  if (panelState === 'note-form') {
+    return (
+      <>
+        {openOrdersBlock}
+        <div className={cardCls}>
+          <p className={labelCls}>Note on this candle</p>
+          <p className="text-xs text-gray-600">
+            Recorded against the current candle. No order is placed.
+          </p>
+          <textarea
+            autoFocus
+            value={standaloneNote}
+            onChange={e => setStandaloneNote(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleNoteSubmit() }}
+            placeholder="What are you seeing here? Why no trade?"
+            className={`${inputCls} resize-none h-20`}
+          />
+          <div className="flex gap-2">
+            <button onClick={handleNoteSubmit} className={btnPrimary}>Save Note</button>
+            <button onClick={() => { setStandaloneNote(''); setPanelState('idle') }} className={btnNeutral}>Cancel</button>
           </div>
         </div>
       </>
@@ -294,13 +338,17 @@ export default function LearningRecommendationPanel({
               <button onClick={handleAccept} className={btnPrimary}>Accept ✓</button>
               <button onClick={() => setPanelState('reject-form')} className={btnDanger}>Reject ✗</button>
               <button onClick={openCustomForm} className={btnNeutral}>Place Custom</button>
+              <button onClick={openNoteForm} className={btnNeutral}>Place Custom Note</button>
             </div>
           </>
         ) : (
           <>
             <p className={labelCls}>Bot Recommendation</p>
             <p className="text-gray-600 text-sm">No signal this candle.</p>
-            <button onClick={openCustomForm} className={btnNeutral}>Place Custom Order</button>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={openCustomForm} className={btnNeutral}>Place Custom Order</button>
+              <button onClick={openNoteForm} className={btnNeutral}>Place Custom Note</button>
+            </div>
           </>
         )}
       </div>

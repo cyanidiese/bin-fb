@@ -310,6 +310,7 @@ function PageContent({ symbol }: { symbol: string }) {
             onCaptureFieldChange={setCaptureField}
             orders={learningSession.orders}
             onCloseOrder={learningSession.closeOrderManually}
+            onAddNote={learningSession.addNote}
           />
         </div>
       )}

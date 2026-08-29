@@ -16,6 +16,47 @@ Final shares: **INJ 63.6%, TIA 18.2%, EIGEN 13.6%, MEME 4.5%.**
 > warns against. Reduced weight cuts position size (and the bleed) proportionally
 > while keeping the symbol trading and generating clean data.
 
+### CORRECTION — the reweighting's real impact is marginal (4.7% of candles)
+`risk_config.symbol_weights` only affects candidate **ranking** and the capital split
+when 2+ symbols signal in the SAME candle. Position size for a **solo** candidate comes
+from `symbol_registry` weights via `_sym_frac = _sym_w/_total_w` (`main.py:1131-1141`),
+which are all 1 → every symbol gets 1/7 = 14.3% of deployable regardless.
+
+Measured over 2 weeks: **262 of 275 active-symbol candles (95.3%) had a SOLO candidate.**
+Only 13 candles (4.7%) had two competing (INJ+TIA ×9, EIGEN+TIA ×4). So the reweighting
+changes which symbol wins in 13 candles and nothing else. An earlier claim in this
+session that it lifts income from +1.67 to +13.80 USDT/day was **WRONG** — it assumed
+size scales with `risk_config` weight share, which it does not.
+
+**To actually change position size** you must change `symbol_registry` weights — but
+mind `tats_min_weight = 3.0` (registry weight ≥3 ⇒ the symbol takes the ENTIRE
+deployable budget, ~7×). And note the real binding constraint below.
+
+### Position size is already capped, not weight-limited
+**27 of 91 recent trades (30%) sit exactly at `max_order_notional_usdt = 2000`.**
+Median notional 1577, p90 2000. Raising registry weights would just push more trades
+into the cap. The only genuine size lever is `max_order_notional_usdt` itself, which is
+a direct risk increase (2000 notional at 5× = 400 margin = ~13% of a 3153 USDT account).
+Owner decision, not an optimisation.
+
+### CORRECTION — the `-1003` IP bans are NOT an ongoing problem
+Ban counts: Aug 16-20 = 18/30/49/65/48, **Aug 21-28 = 0 every day**, Aug 29 = 4 (one
+20-second burst at 00:45). Steady ~400 kline refreshes/day with no bans. Earlier notes
+in this session called this the top priority based on 4 log lines without checking the
+trend. It resolved itself after Aug 20. Do not spend effort here.
+
+### Opportunity rate is the real constraint (owner declined the fix)
+Distinct setups/day over 2 weeks (repeats within 30min collapsed):
+JUP 1.50 · SOL 1.43 · EIGEN 1.07 · DOGE 1.00 · PEPE 0.86 · INJ 0.64 · TIA 0.64.
+**67% of all opportunities are on zero-weight symbols and discarded.** INJ — which now
+holds the largest weight — produced only **1 setup in the last 7 days**.
+
+SOLUSDT backtested best of every symbol tested (62% of eligible presets positive,
+16/56 positive in BOTH halves, `oscillating_zone` +392 USDT / 102 trades / 55% WR,
+vs INJ 29%/4-of-55 and JUP 11%). It was zeroed in June for **structural signal silence**
+("wait for market structure refresh"), not for losing money — and the structure has
+refreshed. **Owner decided 2026-08-29 to leave SOL off.** Revisit only if asked.
+
 ### EIGENUSDT diagnosis — no validated fix exists yet (do not re-run these)
 EIGEN is **not** a bad-win-rate symbol (43% WR, healthy). Two real defects:
 - **Fat left tail.** Top-3 losses (−63.6, −59.1, −53.9) = **43% of all its losses**,

@@ -4,7 +4,21 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
-## Session 63 (2026-08-29) — Allocation corrected; geometry tuning closed out
+## Session 63 (2026-08-29) — Allocation corrected; 3 real defects fixed and DEPLOYED
+
+- [x] **DEPLOYED `fecc6bd`** — trade-close notifications, unknown-symbol leverage,
+      zero-score logging. Verified in the running image; new logging confirmed firing
+      live at 14:00 UTC. No errors since startup.
+- [x] **Trade closes can no longer be silently dropped** — content dedup replaces the
+      120s per-symbol throttle (`bot/notifier.py`).
+- [x] **Unknown symbols get base leverage, not 6x** — `_get_cross_symbol_score` returns
+      0.0 instead of 0.5 when a symbol has no backtest data (`bot/risk_manager.py`).
+- [x] **Zero-score signal discards are logged** — bot log + decision log
+      (`skip_zero_score`). The Aug 29 idle day is now self-explaining.
+- [x] **Test suite is a clean gate: 335 passed / 0 failed** (was 12 failed / 295 passed).
+      All 12 were stale tests, each rewritten against the current contract.
+
+
 
 - [x] **Correct `risk_config.symbol_weights`** — was inverted vs evidence (TIA 10 / EIGEN 8
       outranked INJ 7). Now INJ 14, EIGEN 0, TIA 4, MEME 1. Hot-reloaded, verified in-container.

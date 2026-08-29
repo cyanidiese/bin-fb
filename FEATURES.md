@@ -728,6 +728,31 @@ Top nav bar with symbol switcher, mode badge, alert count, links to Strategy / B
 
 ---
 
+## Learning Mode (dashboard)
+Step through historical candles one at a time, accept/reject the bot's signal, place
+manual paper orders, and attach free-text notes. On "Stop & Save" the session is
+downloaded as JSON for Claude to analyse into `docs/learning/hypotheses.md`.
+
+**Files**: `dashboard/lib/useLearningSession.ts`, `dashboard/lib/learningTypes.ts`,
+`dashboard/components/LearningStartModal.tsx`,
+`dashboard/components/LearningRecommendationPanel.tsx` (includes the custom-order
+form — the spec's separate `LearningOrderForm.tsx` was folded in here),
+`dashboard/components/LearningNoteOverlay.tsx`, `dashboard/app/page.tsx`,
+`dashboard/components/SwingPointsChart.tsx`, `dashboard/components/TimeScrubber.tsx`
+
+**Key details**:
+- Six event types are recorded: `candle_advanced`, `signal_accepted`,
+  `signal_rejected`, `custom_order_placed`, `order_closed`, `note_added`.
+- Orders are evaluated against each new candle's high/low; TP/SL crossings close the
+  order and emit `order_closed` with `tp_hit`/`sl_hit` and `pnl_pct`.
+- Open orders draw TP (green) / SL (red) zones on the chart; closed orders stay
+  visible faded.
+- Frontend only — uses the existing `/api/replay`; no bot changes.
+- **Session 63 fix**: the order panel was rendered *below* the Swing Points chart, so
+  it sat off-screen while the sticky note button stayed visible — order placement
+  looked unimplemented. It is now rendered directly under the candle scrubber and is
+  `sticky top-2`, so Accept / Reject / Place Custom stays in view while stepping.
+
 ## Telegram Interactive Menu
 
 ### Three-Tier Access Control
@@ -791,6 +816,23 @@ Bot handles SIGTERM signal (from `docker stop` or deployment scripts) by closing
 - Virtual positions written to final JSON file via `_write_open_positions()`
 - Bot then exits cleanly after pending order closes complete (within 45s window)
 - **Prevents orphan positions** when bot restarts during deploy; graceful shutdown ensures all exchange orders are cancelled/closed before process exits
+
+### Dashboard auto-login on localhost (session 63)
+Local development skips the login screen. Implemented in `dashboard/proxy.ts`
+(Next 16 renamed Middleware → Proxy; the file must export `proxy` + `config`).
+
+**Key details**:
+- Bypass requires BOTH a loopback hostname (`localhost`, `127.0.0.1`, `::1`) **and**
+  a non-production build (`NODE_ENV !== 'production'`).
+- **Why both**: `req.nextUrl.hostname` derives from the `Host` header, which any
+  client can set. A hostname-only check would let anyone bypass auth on the public
+  dashboard (185.237.14.105:3000) by sending `Host: localhost`. The NODE_ENV gate is
+  what actually makes it safe — the server runs `next start` (production), so the
+  bypass can never engage there regardless of headers.
+- `DASHBOARD_LOCAL_NO_AUTH=1` forces the bypass for a *local* production build.
+  Never set this in the server `.env`.
+- Verified: dev+localhost → 200; production+localhost → 307 to `/login`;
+  production+opt-in → 200.
 
 ### Notifier & Telegram Alerts
 Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencies to alert state file. Implements cooldown to avoid spam.

@@ -302,6 +302,24 @@ function PageContent({ symbol }: { symbol: string }) {
         </div>
       </div>
 
+      {/* Learning Mode: order controls sit directly under the candle scrubber so
+          Accept / Reject / Place Custom Order is always visible while stepping
+          through candles. Sticky so it stays on screen as the user scrolls the
+          chart — previously it was rendered below the Swing Points chart and fell
+          off-screen, which made order placement look unimplemented. */}
+      {learningSession.isActive && (
+        <div className="sticky top-2 z-30">
+          <LearningRecommendationPanel
+            key={scrubberIdx ?? -1}
+            signal={currentSignal}
+            currentKlineClose={filteredKlines.length > 0 ? filteredKlines[filteredKlines.length - 1].close : 0}
+            onAccept={learningSession.acceptSignal}
+            onReject={learningSession.rejectSignal}
+            onPlaceCustom={learningSession.placeCustomOrder}
+          />
+        </div>
+      )}
+
       <CollapsibleSection title="Swing Points" storageKey="db:strategy:s:swingpoints">
         <SwingPointsChart
           key={selectedLevel ?? 0}
@@ -311,16 +329,11 @@ function PageContent({ symbol }: { symbol: string }) {
         />
       </CollapsibleSection>
 
-      {learningSession.isActive && (
-        <LearningRecommendationPanel
-          key={scrubberIdx ?? -1}
-          signal={currentSignal}
-          currentKlineClose={filteredKlines.length > 0 ? filteredKlines[filteredKlines.length - 1].close : 0}
-          onAccept={learningSession.acceptSignal}
-          onReject={learningSession.rejectSignal}
-          onPlaceCustom={learningSession.placeCustomOrder}
-        />
-      )}
+      {/* Learning Mode order panel is rendered near the top of the page (above the
+          chart) rather than here, so Accept / Reject / Place Custom is always in
+          view next to the candle controls. It previously sat below the Swing Points
+          chart, which pushed it off-screen — the sticky note button stayed visible
+          while order placement did not, making the feature look absent. */}
 
       <CollapsibleSection title="Trend Levels" storageKey="db:strategy:s:trendlevels">
         <TrendLevelsTable levels={filteredLevels} />

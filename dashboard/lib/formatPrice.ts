@@ -19,3 +19,17 @@ export function formatPrice(price: number | null): string {
   }
   return price.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
 }
+
+/**
+ * Raw price → a plain number string suitable for an <input type="number">.
+ *
+ * Unlike formatPrice this must NOT group digits or pad — the result is parsed back
+ * with Number(). Precision scales with magnitude so sub-cent symbols keep meaningful
+ * digits (MEME ~0.00056) while large ones stay readable (SOL ~68).
+ */
+export function priceToInputValue(p: number): string {
+  if (!isFinite(p)) return ''
+  const abs = Math.abs(p)
+  const decimals = abs >= 10000 ? 1 : abs >= 100 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8
+  return String(Number(p.toFixed(decimals)))
+}

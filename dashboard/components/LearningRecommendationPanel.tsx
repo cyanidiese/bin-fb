@@ -1,9 +1,15 @@
 // dashboard/components/LearningRecommendationPanel.tsx
 'use client'
 
-import { useState } from 'react'
+import { useState, useImperativeHandle } from 'react'
 import type { Signal } from '@/lib/types'
-import { formatPrice } from '@/lib/formatPrice'
+import { formatPrice, priceToInputValue } from '@/lib/formatPrice'
+
+export interface LearningPanelHandle {
+  /** Fill the focused custom-order field with a price picked off the chart.
+   *  No-op when the custom form is closed or no field has focus. */
+  applyChartPrice: (price: number) => void
+}
 
 interface Props {
   signal: Signal | null
@@ -11,6 +17,11 @@ interface Props {
   onAccept: (signal: Signal) => void
   onReject: (signal: Signal, reason?: string) => void
   onPlaceCustom: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number) => void
+  /** Imperative handle so the page can push a chart-clicked price into the focused field. */
+  ref?: React.Ref<LearningPanelHandle>
+  /** Reports which custom-order field has focus (null when none) so the page can
+   *  switch the chart into price-capture mode. */
+  onCaptureFieldChange?: (field: 'entry' | 'tp' | 'sl' | null) => void
 }
 
 type PanelState = 'idle' | 'reject-form' | 'custom-form'
@@ -21,6 +32,8 @@ export default function LearningRecommendationPanel({
   onAccept,
   onReject,
   onPlaceCustom,
+  ref,
+  onCaptureFieldChange,
 }: Props) {
   const [panelState, setPanelState] = useState<PanelState>('idle')
   const [rejectReason, setRejectReason] = useState('')
@@ -28,6 +41,33 @@ export default function LearningRecommendationPanel({
   const [customEntry, setCustomEntry] = useState('')
   const [customTp, setCustomTp] = useState('')
   const [customSl, setCustomSl] = useState('')
+
+  // Which custom-order field is focused. The page mirrors this to the chart so a
+  // click can be routed into the right input.
+  const [captureField, setCaptureField] = useState<'entry' | 'tp' | 'sl' | null>(null)
+
+  function focusField(f: 'entry' | 'tp' | 'sl') {
+    setCaptureField(f)
+    onCaptureFieldChange?.(f)
+  }
+  function blurField() {
+    // Deliberately does NOT clear captureField: clicking the chart blurs the input,
+    // and clearing here would drop the target before the click is delivered. The
+    // field is cleared when the form closes or another field takes focus.
+  }
+
+  // Exposed to the page so a chart click can fill the focused field. Event-driven
+  // rather than prop+effect: setting state in an effect in response to a changing
+  // prop causes cascading renders (react-hooks/set-state-in-effect).
+  useImperativeHandle(ref, () => ({
+    applyChartPrice(price: number) {
+      if (panelState !== 'custom-form' || !captureField) return
+      const v = priceToInputValue(price)
+      if (captureField === 'entry') setCustomEntry(v)
+      else if (captureField === 'tp') setCustomTp(v)
+      else setCustomSl(v)
+    },
+  }), [panelState, captureField])
 
   function handleAccept() {
     if (!signal) return
@@ -51,12 +91,20 @@ export default function LearningRecommendationPanel({
     setCustomEntry('')
     setCustomTp('')
     setCustomSl('')
+    setCaptureField(null)
+    onCaptureFieldChange?.(null)
     setPanelState('idle')
   }
 
   function openCustomForm() {
     setCustomEntry(String(currentKlineClose))
     setPanelState('custom-form')
+  }
+
+  function closeCustomForm() {
+    setCaptureField(null)
+    onCaptureFieldChange?.(null)
+    setPanelState('idle')
   }
 
   const cardCls = 'rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3'
@@ -89,6 +137,9 @@ export default function LearningRecommendationPanel({
     return (
       <div className={cardCls}>
         <p className={labelCls}>Place custom order</p>
+        <p className="text-xs text-gray-600">
+          Focus a field, then click the chart to fill it with the price at your cursor.
+        </p>
         <div className="flex gap-2">
           {(['BUY', 'SELL'] as const).map(s => (
             <button
@@ -109,20 +160,26 @@ export default function LearningRecommendationPanel({
         <div className="grid grid-cols-3 gap-2">
           <div className="space-y-1">
             <label className={labelCls}>Entry</label>
-            <input type="number" value={customEntry} onChange={e => setCustomEntry(e.target.value)} className={inputCls} />
+            <input type="number" value={customEntry} onChange={e => setCustomEntry(e.target.value)}
+                   onFocus={() => focusField('entry')} onBlur={blurField}
+                   className={`${inputCls} ${captureField === 'entry' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
           </div>
           <div className="space-y-1">
             <label className={labelCls}>TP</label>
-            <input type="number" value={customTp} onChange={e => setCustomTp(e.target.value)} className={inputCls} />
+            <input type="number" value={customTp} onChange={e => setCustomTp(e.target.value)}
+                   onFocus={() => focusField('tp')} onBlur={blurField}
+                   className={`${inputCls} ${captureField === 'tp' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
           </div>
           <div className="space-y-1">
             <label className={labelCls}>SL</label>
-            <input type="number" value={customSl} onChange={e => setCustomSl(e.target.value)} className={inputCls} />
+            <input type="number" value={customSl} onChange={e => setCustomSl(e.target.value)}
+                   onFocus={() => focusField('sl')} onBlur={blurField}
+                   className={`${inputCls} ${captureField === 'sl' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
           </div>
         </div>
         <div className="flex gap-2">
           <button onClick={handleCustomSubmit} className={btnPrimary}>Place Order</button>
-          <button onClick={() => setPanelState('idle')} className={btnNeutral}>Cancel</button>
+          <button onClick={closeCustomForm} className={btnNeutral}>Cancel</button>
         </div>
       </div>
     )

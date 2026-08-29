@@ -748,6 +748,19 @@ form — the spec's separate `LearningOrderForm.tsx` was folded in here),
 - Open orders draw TP (green) / SL (red) zones on the chart; closed orders stay
   visible faded.
 - Frontend only — uses the existing `/api/replay`; no bot changes.
+- **Pick TP/SL/Entry off the chart** (session 63). With the custom-order form open,
+  focusing a price field arms price capture: the chart shows a crosshair cursor and
+  clicking it fills that field with the price under the pointer. The focused field is
+  outlined amber. Works on both the line and candlestick views.
+  Chart.js reports clicks in canvas pixels, so `scales.y.getValueForPixel()` converts
+  to a price (`makePriceClickHandler` in `SwingPointsChart.tsx`).
+  `priceToInputValue` (`lib/formatPrice.ts`) formats it for a number input — precision
+  scales with magnitude (8dp under 0.01 → 1dp above 10,000) and never groups digits,
+  so `Number()` can parse it back. Blur deliberately does NOT clear the target, since
+  clicking the chart blurs the input; the target clears on submit or cancel.
+  The page reaches the panel through a `useImperativeHandle` (`LearningPanelHandle`)
+  rather than a prop+effect — pushing a value down as a prop and applying it in an
+  effect triggers cascading renders (`react-hooks/set-state-in-effect`).
 - **Start is chosen by date & time, not candle index** (session 63). The modal shows a
   `datetime-local` picker snapped to 15-minute boundaries, echoes back which candle it
   resolves to and how many remain, and shows the available data range. Mapping lives in

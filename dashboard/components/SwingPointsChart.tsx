@@ -25,6 +25,13 @@ interface Props {
   klines: Kline[]
   points: SwingPoint[]
   learningOrders?: LearningOrder[]
+  /**
+   * Learning Mode: called with the price under the cursor when the chart is clicked.
+   * Lets the user pick a TP/SL/Entry level off the chart instead of typing a number.
+   */
+  onPriceClick?: (price: number) => void
+  /** True while a custom-order field is focused — shows a crosshair cursor. */
+  priceCaptureActive?: boolean
 }
 
 const fmt = (price: number) => formatPrice(price)
@@ -156,7 +163,22 @@ function makeLearningOrdersPlugin(klines: Kline[], orders: LearningOrder[]): Plu
   }
 }
 
-export default function SwingPointsChart({ klines, points, learningOrders }: Props) {
+// Chart.js reports the click position in canvas pixels; the y scale converts that
+// to a price. Learning Mode uses it to fill the focused custom-order field so a
+// TP/SL can be picked off the chart instead of typed.
+function makePriceClickHandler(onPriceClick?: (price: number) => void) {
+  if (!onPriceClick) return undefined
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (evt: any, _els: unknown, chart: any) => {
+    const y = evt?.y
+    const scale = chart?.scales?.y
+    if (typeof y !== 'number' || !scale) return
+    const price = scale.getValueForPixel(y)
+    if (typeof price === 'number' && isFinite(price)) onPriceClick(price)
+  }
+}
+
+export default function SwingPointsChart({ klines, points, learningOrders, onPriceClick, priceCaptureActive }: Props) {
   const [candleView]  = useLocalStorage<boolean>('db:chart:candleView',  false)
   const [clampSpikes] = useLocalStorage<boolean>('db:chart:clampSpikes', false)
   const chartData = useMemo(() => {
@@ -293,11 +315,12 @@ export default function SwingPointsChart({ klines, points, learningOrders }: Pro
         },
       },
       scales: SHARED_SCALES,
+      onClick: makePriceClickHandler(onPriceClick),
     }
 
     return (
       <div className="rounded-lg border border-gray-800 bg-gray-900">
-        <div className="h-72 p-4">
+        <div className={`h-72 p-4 ${priceCaptureActive ? 'cursor-crosshair' : ''}`}>
           {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
           <Chart type={'candlestick' as any} data={candleData as any} options={candleOptions as any} plugins={[learningPlugin]} />
         </div>
@@ -378,11 +401,12 @@ export default function SwingPointsChart({ klines, points, learningOrders }: Pro
       },
     },
     scales: SHARED_SCALES,
+    onClick: makePriceClickHandler(onPriceClick),
   }
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900">
-      <div className="h-72 p-4">
+      <div className={`h-72 p-4 ${priceCaptureActive ? 'cursor-crosshair' : ''}`}>
         <Line data={lineData} options={lineOptions as Parameters<typeof Line>[0]['options']} plugins={[learningPlugin]} />
       </div>
       {colorLegend}

@@ -16,6 +16,7 @@ import type { ReplayResult } from '@/lib/types'
 import { useLearningSession } from '@/lib/useLearningSession'
 import LearningStartModal from '@/components/LearningStartModal'
 import LearningRecommendationPanel from '@/components/LearningRecommendationPanel'
+import type { LearningPanelHandle } from '@/components/LearningRecommendationPanel'
 import LearningNoteOverlay from '@/components/LearningNoteOverlay'
 import { tsToDatetimeLocal, snapTo15Min } from '@/lib/datetime'
 
@@ -38,6 +39,10 @@ function PageContent({ symbol }: { symbol: string }) {
 
   const learningSession = useLearningSession()
   const [learningModalOpen, setLearningModalOpen] = useState(false)
+  // Learning Mode: which custom-order field is focused, and the last price picked by
+  // clicking the chart. The nonce makes two clicks at the same price distinct events.
+  const [captureField, setCaptureField] = useState<'entry' | 'tp' | 'sl' | null>(null)
+  const learningPanelRef = useRef<LearningPanelHandle | null>(null)
 
   const dataRef = useRef<BotResults | null>(null)
   dataRef.current = data
@@ -301,6 +306,8 @@ function PageContent({ symbol }: { symbol: string }) {
             onAccept={learningSession.acceptSignal}
             onReject={learningSession.rejectSignal}
             onPlaceCustom={learningSession.placeCustomOrder}
+            ref={learningPanelRef}
+            onCaptureFieldChange={setCaptureField}
           />
         </div>
       )}
@@ -311,6 +318,12 @@ function PageContent({ symbol }: { symbol: string }) {
           klines={filteredKlines}
           points={filteredPoints}
           learningOrders={learningSession.isActive ? learningSession.orders : undefined}
+          priceCaptureActive={learningSession.isActive && captureField !== null}
+          onPriceClick={
+            learningSession.isActive && captureField !== null
+              ? (price) => learningPanelRef.current?.applyChartPrice(price)
+              : undefined
+          }
         />
       </CollapsibleSection>
 

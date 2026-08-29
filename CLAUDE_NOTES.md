@@ -7,9 +7,41 @@
 ## ⟳ RESUME POINT — session 63 (2026-08-29) — symbol_weights was inverted vs evidence; corrected. Do NOT tune trade geometry.
 
 **Applied (hot-reload, no deploy):** `risk_config.symbol_weights`
-`INJUSDT 7→14`, `EIGENUSDT 8→0`, `TIAUSDT 10→4`, `MEMEUSDT 2→1`.
+`INJUSDT 7→14`, `EIGENUSDT 8→3`, `TIAUSDT 10→4`, `MEMEUSDT 2→1`.
 Backup: `/opt/bot/risk_config.json.bak.pre-weights-20260829`. Verified in-container.
-New shares: INJ 73.7%, TIA 21.1%, MEME 5.3%.
+Final shares: **INJ 63.6%, TIA 18.2%, EIGEN 13.6%, MEME 4.5%.**
+
+> EIGEN was briefly set to 0 and then restored to 3 after user pushback. Zeroing a
+> symbol is the degenerate "no trades → no losses" move that CLAUDE.md explicitly
+> warns against. Reduced weight cuts position size (and the bleed) proportionally
+> while keeping the symbol trading and generating clean data.
+
+### EIGENUSDT diagnosis — no validated fix exists yet (do not re-run these)
+EIGEN is **not** a bad-win-rate symbol (43% WR, healthy). Two real defects:
+- **Fat left tail.** Top-3 losses (−63.6, −59.1, −53.9) = **43% of all its losses**,
+  while the median loss is only −11.81. `max_loss_usdt` is 0 (disabled) and EIGEN's
+  presets all have `max_losing_pct = 0`.
+- **Moves are too small for its targets.** Winners' median MFE is **1.13%** while TP
+  sits at **3.10%** — TP is unreachable, so every EIGEN win is a trail exit (21 trail /
+  21 loss / **0 TP**). INJ winners reach 2.90% MFE for comparison.
+- **Losers never go into profit at all**: median MFE **0.00%**, and **0 of 31** ever
+  reached their trail-arming threshold. So no exit-side change can rescue them.
+
+**Nine hypothesis families tested** against the production `FakeOrder` with an
+out-of-sample split. ALL failed (reversed sign between halves, or too thin):
+stop ×1.25–×2.0 · target ×0.35–×1.5 (global and EIGEN-only) · max hold 2–16h ·
+min-stop-distance skip · **hard `max_loss_usdt` cap 10–40** (helps INJ, *hurts*
+EIGEN) · preset blocks · side split · level split · signal-type split.
+Only `r5_tight_sl` (n=4) and EIGEN-level-2 (n=25, consistent loss both halves)
+survived, and both are inside multiple-testing noise on a 42-trade sample.
+
+**Conclusion: 42 post-fix EIGEN trades cannot distinguish any fix from noise.**
+Revisit only when EIGEN has ~100 post-Jul-22 trades. Do not re-test exit geometry.
+
+**MEASUREMENT WARNING:** an earlier version of this analysis reported "EIGEN losers
+peak at +2.87% before collapsing". That was WRONG — MFE was scanned over a fixed
+96–192 candle window that ran past the actual exit. Always bound MFE by the trade's
+real `close_time`. Corrected figure is 0.00%.
 
 ### The mechanism that was wrong
 There are **two** weight systems and they are not interchangeable:

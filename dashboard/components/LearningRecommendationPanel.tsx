@@ -16,7 +16,7 @@ interface Props {
   currentKlineClose: number
   onAccept: (signal: Signal) => void
   onReject: (signal: Signal, reason?: string) => void
-  onPlaceCustom: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number) => void
+  onPlaceCustom: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number, note?: string) => void
   /** Imperative handle so the page can push a chart-clicked price into the focused field. */
   ref?: React.Ref<LearningPanelHandle>
   /** Reports which custom-order field has focus (null when none) so the page can
@@ -41,6 +41,7 @@ export default function LearningRecommendationPanel({
   const [customEntry, setCustomEntry] = useState('')
   const [customTp, setCustomTp] = useState('')
   const [customSl, setCustomSl] = useState('')
+  const [customNote, setCustomNote] = useState('')
 
   // Which custom-order field is focused. The page mirrors this to the chart so a
   // click can be routed into the right input.
@@ -87,10 +88,11 @@ export default function LearningRecommendationPanel({
     const tp    = Number(customTp)
     const sl    = Number(customSl)
     if (!entry || !tp || !sl) return
-    onPlaceCustom(customSide, entry, tp, sl)
+    onPlaceCustom(customSide, entry, tp, sl, customNote.trim() || undefined)
     setCustomEntry('')
     setCustomTp('')
     setCustomSl('')
+    setCustomNote('')
     setCaptureField(null)
     onCaptureFieldChange?.(null)
     setPanelState('idle')
@@ -102,6 +104,7 @@ export default function LearningRecommendationPanel({
   }
 
   function closeCustomForm() {
+    setCustomNote('')
     setCaptureField(null)
     onCaptureFieldChange?.(null)
     setPanelState('idle')
@@ -176,6 +179,15 @@ export default function LearningRecommendationPanel({
                    onFocus={() => focusField('sl')} onBlur={blurField}
                    className={`${inputCls} ${captureField === 'sl' ? 'border-amber-500 ring-1 ring-amber-500/40' : ''}`} />
           </div>
+        </div>
+        <div className="space-y-1">
+          <label className={labelCls}>Note (optional)</label>
+          <textarea
+            value={customNote}
+            onChange={e => setCustomNote(e.target.value)}
+            placeholder="Why this entry? What are you seeing on the chart?"
+            className={`${inputCls} resize-none h-16`}
+          />
         </div>
         <div className="flex gap-2">
           <button onClick={handleCustomSubmit} className={btnPrimary}>Place Order</button>

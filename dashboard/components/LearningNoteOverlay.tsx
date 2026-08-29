@@ -2,12 +2,19 @@
 'use client'
 
 import { useState } from 'react'
+import type { Kline } from '@/lib/types'
+import { formatPrice } from '@/lib/formatPrice'
 
 interface Props {
   onAddNote: (text: string) => void
+  /** Candle the note will be attached to — shown so it is unambiguous which bar is
+   *  being annotated. Notes are recorded against the current candle whether or not
+   *  an order exists on it. */
+  currentKline?: Kline | null
+  currentCandleIndex?: number
 }
 
-export default function LearningNoteOverlay({ onAddNote }: Props) {
+export default function LearningNoteOverlay({ onAddNote, currentKline, currentCandleIndex }: Props) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
 
@@ -36,7 +43,17 @@ export default function LearningNoteOverlay({ onAddNote }: Props) {
             className="bg-gray-900 border border-gray-700 rounded-lg p-4 w-80 space-y-3 shadow-xl"
             onClick={e => e.stopPropagation()}
           >
-            <p className="text-xs text-gray-500 uppercase tracking-wider">Add Note</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Add note on this candle</p>
+            {currentKline && (
+              <p className="text-xs text-gray-600 font-mono">
+                {new Date(currentKline.time * 1000).toLocaleString()}
+                {currentCandleIndex !== undefined && <span className="text-gray-700"> · #{currentCandleIndex}</span>}
+                <br />
+                <span className="text-gray-500">
+                  O {formatPrice(currentKline.open)} · H {formatPrice(currentKline.high)} · L {formatPrice(currentKline.low)} · C {formatPrice(currentKline.close)}
+                </span>
+              </p>
+            )}
             <textarea
               autoFocus
               value={text}

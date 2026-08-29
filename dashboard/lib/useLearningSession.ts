@@ -9,6 +9,7 @@ import type {
   LearningEvent,
   TrendStateSnapshot,
   LearningSessionFile,
+  CandleContext,
 } from '@/lib/learningTypes'
 
 function uuid(): string {
@@ -29,7 +30,7 @@ export interface LearningSessionHandle {
   onReplayResult: (candleIndex: number, kline: Kline, trendState: TrendStateSnapshot) => void
   acceptSignal: (signal: Signal) => void
   rejectSignal: (signal: Signal, reason?: string) => void
-  placeCustomOrder: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number) => void
+  placeCustomOrder: (side: 'BUY' | 'SELL', entry: number, tp: number, sl: number, note?: string) => void
   addNote: (text: string) => void
   saveAndExit: () => void
 }
@@ -46,6 +47,20 @@ export function useLearningSession(): LearningSessionHandle {
   // without nesting setOrders inside a setSession updater (which runs twice in Strict Mode)
   const sessionRef = useRef<LearningSession | null>(null)
   sessionRef.current = session
+
+  // Latest kline handed to onReplayResult. Notes and orders embed this so each event
+  // is self-describing — a bare candle_index cannot be interpreted later without the
+  // exact kline file the session was recorded against.
+  const currentKlineRef = useRef<Kline | null>(null)
+
+  function candleContext(): CandleContext | undefined {
+    const k = currentKlineRef.current
+    if (!k) return undefined
+    return {
+      time: new Date(k.time * 1000).toISOString(),
+      open: k.open, high: k.high, low: k.low, close: k.close,
+    }
+  }
 
   const isActive = session !== null
 
@@ -71,6 +86,7 @@ export function useLearningSession(): LearningSessionHandle {
   // Evaluates open orders against the new kline, appends candle_advanced + any order_closed events.
   const onReplayResult = useCallback((candleIndex: number, kline: Kline, trendState: TrendStateSnapshot) => {
     const now = new Date().toISOString()
+    currentKlineRef.current = kline
     const currentOrders = ordersRef.current
 
     type Closure = { orderId: string; outcome: 'tp_hit' | 'sl_hit'; closePrice: number; pnlPct: number }
@@ -144,7 +160,7 @@ export function useLearningSession(): LearningSessionHandle {
     })
   }, [])
 
-  const placeCustomOrder = useCallback((side: 'BUY' | 'SELL', entry: number, tp: number, sl: number) => {
+  const placeCustomOrder = useCallback((side: 'BUY' | 'SELL', entry: number, tp: number, sl: number, note?: string) => {
     const prev = sessionRef.current
     if (!prev) return
     const order: LearningOrder = {
@@ -154,11 +170,13 @@ export function useLearningSession(): LearningSessionHandle {
       entryPrice: entry,
       tpPrice: tp,
       slPrice: sl,
+      ...(note ? { note } : {}),
     }
     const event: LearningEvent = {
       type: 'custom_order_placed',
       candle_index: prev.currentCandleIndex,
       order,
+      candle: candleContext(),
       timestamp: new Date().toISOString(),
     }
     setOrders(o => [...o, order])
@@ -173,6 +191,7 @@ export function useLearningSession(): LearningSessionHandle {
         type: 'note_added',
         candle_index: prev.currentCandleIndex,
         text,
+        candle: candleContext(),
         timestamp: new Date().toISOString(),
       }
       return { ...prev, events: [...prev.events, event] }

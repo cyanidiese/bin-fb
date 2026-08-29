@@ -743,6 +743,17 @@ form — the spec's separate `LearningOrderForm.tsx` was folded in here),
 **Key details**:
 - Six event types are recorded: `candle_advanced`, `signal_accepted`,
   `signal_rejected`, `custom_order_placed`, `order_closed`, `note_added`.
+- **Notes (session 63)** — two independent kinds, both meant for later analysis:
+  - *Order rationale*: an optional Note field in the Place-custom-order form, stored
+    as `LearningOrder.note` and carried on the `custom_order_placed` event.
+  - *Standalone candle note*: the sticky "+ Note" button records a `note_added`
+    event against the current candle, with or without any order on it. The overlay
+    shows the candle's timestamp, index and OHLC so it is unambiguous which bar is
+    being annotated.
+  - Both event types now embed a `CandleContext` (`{time, open, high, low, close}`).
+    Previously a note carried only `candle_index`, which cannot be interpreted later
+    without also having the exact kline file the session was recorded against — the
+    events are now self-describing.
 - Orders are evaluated against each new candle's high/low; TP/SL crossings close the
   order and emit `order_closed` with `tp_hit`/`sl_hit` and `pnl_pct`.
 - Open orders draw TP (green) / SL (red) zones on the chart; closed orders stay

@@ -366,7 +366,11 @@ function PageContent({ symbol }: { symbol: string }) {
       />
 
       {learningSession.isActive && (
-        <LearningNoteOverlay onAddNote={learningSession.addNote} />
+        <LearningNoteOverlay
+          onAddNote={learningSession.addNote}
+          currentKline={filteredKlines.length > 0 ? filteredKlines[filteredKlines.length - 1] : null}
+          currentCandleIndex={learningSession.session?.currentCandleIndex}
+        />
       )}
     </main>
   )

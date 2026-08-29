@@ -748,6 +748,13 @@ form — the spec's separate `LearningOrderForm.tsx` was folded in here),
 - Open orders draw TP (green) / SL (red) zones on the chart; closed orders stay
   visible faded.
 - Frontend only — uses the existing `/api/replay`; no bot changes.
+- **Start is chosen by date & time, not candle index** (session 63). The modal shows a
+  `datetime-local` picker snapped to 15-minute boundaries, echoes back which candle it
+  resolves to and how many remain, and shows the available data range. Mapping lives in
+  `dashboard/lib/datetime.ts` (`datetimeLocalToCandleIndex`) — binary search for the
+  last candle opening at or before the chosen time, clamping outside the range. The
+  resume prompt shows the session's start timestamp rather than its index. Users have
+  no way to know candle indexes, so the picker is the only usable entry point.
 - **Session 63 fix**: the order panel was rendered *below* the Swing Points chart, so
   it sat off-screen while the sticky note button stayed visible — order placement
   looked unimplemented. It is now rendered directly under the candle scrubber and is

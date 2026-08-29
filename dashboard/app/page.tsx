@@ -17,22 +17,7 @@ import { useLearningSession } from '@/lib/useLearningSession'
 import LearningStartModal from '@/components/LearningStartModal'
 import LearningRecommendationPanel from '@/components/LearningRecommendationPanel'
 import LearningNoteOverlay from '@/components/LearningNoteOverlay'
-
-function tsToDatetimeLocal(unixSeconds: number): string {
-  const d = new Date(unixSeconds * 1000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function snapTo15Min(dt: string): string {
-  if (!dt) return dt
-  const ms = new Date(dt).getTime()
-  if (isNaN(ms)) return dt
-  const snapped = Math.floor(ms / 900_000) * 900_000
-  const d = new Date(snapped)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
+import { tsToDatetimeLocal, snapTo15Min } from '@/lib/datetime'
 
 function PageContent({ symbol }: { symbol: string }) {
   // Raw snapshot loaded from /results_${symbol}.json (written by bot/exporter.py after each candle close)
@@ -352,7 +337,7 @@ function PageContent({ symbol }: { symbol: string }) {
       <LearningStartModal
         isOpen={learningModalOpen}
         currentCandleIndex={scrubberIdx ?? (data.klines.length - 1)}
-        totalCandles={data.klines.length}
+        klines={data.klines}
         existingSession={learningSession.session}
         onStart={(idx) => {
           learningSession.startSession(symbol, idx)

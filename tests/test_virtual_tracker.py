@@ -5,6 +5,12 @@ from unittest.mock import patch
 from bot.virtual_tracker import VirtualTracker
 
 
+def _seed_factor() -> float:
+    """The live backtest_seed_leverage_factor seed_from_backtest will apply."""
+    from config.risk_config import load_risk_config
+    return float(load_risk_config().get("backtest_seed_leverage_factor", 1.0))
+
+
 def _make_tracker(tmp_path, mode='test', min_trades=3):
     return VirtualTracker(
         mode=mode,
@@ -49,7 +55,10 @@ def test_seed_from_backtest(tmp_path):
     # seed_from_backtest stores the backtest score under seeded_winning_usdt;
     # total_winning_usdt and trade_count stay at 0 so UI won't confuse backtest
     # history with live virtual trades.
-    assert eff["seeded_winning_usdt"] == pytest.approx(33.0)  # (1.0 - 0.5 + 2.0 + 0.8) / 100 * 1000 net
+    # seeded USD is scaled by backtest_seed_leverage_factor so it is comparable
+    # to live PnL earned at real leverage. Pin the factor rather than reading the
+    # project's risk_config.json, which made this test environment-dependent.
+    assert eff["seeded_winning_usdt"] == pytest.approx(33.0 * _seed_factor())
     assert eff["trade_count"] == 0
 
 

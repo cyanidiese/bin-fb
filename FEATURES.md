@@ -302,6 +302,35 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
   fee, result, signal metadata, balance at open, **wallet at open**
 - Old sessions archived to `real_orders_{SYMBOL}_{MODE}_archive_{YYYYMMDDTHHMMSSZ}.json` on bot restart
 
+### Unknown-symbol leverage containment (session 63)
+A symbol with no readable `backtest_results_{symbol}.json` scores **0.0** in
+`_get_cross_symbol_score`, so it sizes at `base_leverage`.
+
+**Files**: `bot/risk_manager.py`; tests in `tests/test_risk_manager_unknown_symbol.py`
+
+**Key details**:
+- Previously returned `0.5`, which on a 2/10 config gave an entirely unknown symbol
+  `2 + floor(0.5 * 8)` = **6x leverage** — mid-range sizing for the one case with no
+  evidence it can carry leverage at all.
+- Symbols *with* data are unaffected: they still normalise across `symbol_weights`
+  and scale from base up to the tier ceiling.
+- Complements the `can_open_sync` policy, which deliberately allows unknown symbols
+  to trade (`pf=0.0` is "no data", not "a loser" — otherwise a new symbol could never
+  accumulate data). The risk is contained on the leverage side instead: unknown
+  symbols may trade, but only at base leverage.
+
+### Zero-score signal discards are logged (session 63)
+When TATS drops a candidate for `score <= 0` — almost always
+`risk_config.symbol_weights[sym] == 0` zeroing it — the reason is now written to both
+the bot log and the decision log (`decision='skip_zero_score'`).
+
+**Files**: `main.py` (TATS candidate filter)
+
+**Why**: on 2026-08-29 the bot produced 28 valid signals and placed zero orders, and
+**nothing in the log explained why** — every signal was JUPUSDT at weight 0, dropped
+by a filter with no logging. Diagnosing an idle day required correlating `trades.log`
+against `risk_config` by hand.
+
 ### Weight=0 Symbol Trading Gate
 Symbols with allocation weight set to 0 are excluded from both real order placement and virtual order simulation. Enforced at two points: candidate filtering before real orders, and guard before virtual simulator processing.
 
@@ -777,6 +806,22 @@ Sends alerts to Telegram (token/chat_id from config). Routes warnings/emergencie
 - **Session 42 fixes**:
   - **Shutdown closes now notify** — `close_all_orders_at_market()` now calls `notify_trade_close()` after closing each position
   - **Per-symbol rate limit** — Changed from shared `"trade"` key to per-symbol keys `f"trade:{symbol}"` so simultaneous closes on different symbols all send independent Telegram notifications (was: only first close notified, others suppressed by 120s cooldown)
+
+#### Trade closes are never silently dropped (session 63)
+`notify_trade_close` no longer uses the generic per-symbol time throttle. It dedups
+on **message content** instead (`_trade_content_ok`, 300s window):
+
+- Two *distinct* closes on the same symbol seconds apart **both send**.
+- Only a byte-identical repeat (a resend bug) is suppressed, and that is logged.
+- The `system_log` entry is written *before* any send decision, so the log is
+  complete even when Telegram is suppressed or unreachable.
+
+**Why**: the old `_rate_limit_ok(f"trade:{symbol}")` 120s throttle could swallow a
+genuine second close on one symbol. From the user's side that is indistinguishable
+from the bot hiding a losing trade — which is exactly the suspicion that opened
+session 62. The generic time throttle still applies to ordinary warnings.
+
+**Files**: `bot/notifier.py`; tests in `tests/test_notifier.py`.
 
 #### Trade-close message: Before / Net / Fee / After (session 62)
 Every real trade-close notification reports the wallet on both sides of the trade,

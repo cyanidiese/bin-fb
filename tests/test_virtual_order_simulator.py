@@ -9,6 +9,12 @@ from bot.virtual_tracker import VirtualTracker
 # ── VirtualTracker tests (unchanged) ──────────────────────────────────────
 
 
+def _seed_factor() -> float:
+    """The live backtest_seed_leverage_factor seed_from_backtest will apply."""
+    from config.risk_config import load_risk_config
+    return float(load_risk_config().get("backtest_seed_leverage_factor", 1.0))
+
+
 def make_tracker(tmp_path):
     return VirtualTracker(
         mode='test',
@@ -52,7 +58,7 @@ def test_seed_from_backtest_populates_efficiency(tmp_path):
     # seed_from_backtest stores backtest score in seeded_winning_usdt;
     # trade_count stays 0 so UI won't show backtest history as live trades.
     assert eff['trade_count'] == 0
-    assert eff['seeded_winning_usdt'] == pytest.approx(25.0)  # (1.0 - 0.5 + 2.0) / 100 * 1000 net
+    assert eff['seeded_winning_usdt'] == pytest.approx(25.0 * _seed_factor())
 
 
 def test_seed_from_backtest_skips_if_symbol_already_seeded(tmp_path):
@@ -62,7 +68,7 @@ def test_seed_from_backtest_skips_if_symbol_already_seeded(tmp_path):
     bt_path.write_text('{"presets": {}}')  # empty presets — nothing to overwrite
     tracker.seed_from_backtest('BTCUSDT', bt_path)
     eff = tracker.get_efficiency('BTCUSDT', 'preset_a')
-    assert eff['seeded_winning_usdt'] == pytest.approx(25.0)  # original net value preserved
+    assert eff['seeded_winning_usdt'] == pytest.approx(25.0 * _seed_factor())  # original preserved
 
 
 def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
@@ -71,7 +77,7 @@ def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
     bt_path_eth = make_backtest_file(tmp_path, 'ETHUSDT')
     tracker.seed_from_backtest('BTCUSDT', bt_path_btc)
     tracker.seed_from_backtest('ETHUSDT', bt_path_eth)
-    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['seeded_winning_usdt'] == pytest.approx(25.0)
+    assert tracker.get_efficiency('ETHUSDT', 'preset_a')['seeded_winning_usdt'] == pytest.approx(25.0 * _seed_factor())
 
 
 # ── VirtualOrderSimulator rank-based tests ────────────────────────────────
@@ -154,25 +160,33 @@ def test_rank_balances_initialised(tmp_path):
     assert all(v == 500.0 for v in balances.values())
 
 
-def test_apply_real_balance_seeds_rank_files(tmp_path):
+def test_sync_real_balance_writes_every_rank_file(tmp_path):
     sim = make_simulator(tmp_path, initial_balance=0.0, rank_max=3)
-    sim.apply_real_balance_if_fresh(777.0)
+    sim.sync_real_balance_on_start(777.0)
     for rank in (2, 3):
         path = tmp_path / 'data' / f'virtual_balance_rank{rank}_test.json'
         assert path.exists()
-        data = json.loads(path.read_text())
-        assert data['balance'] == 777.0
+        assert json.loads(path.read_text())['balance'] == 777.0
 
 
-def test_apply_real_balance_skips_if_file_exists(tmp_path):
+def test_sync_real_balance_overwrites_existing_pool(tmp_path):
+    """Deliberate behaviour change: the old apply_real_balance_if_fresh() seeded a
+    rank only when its file was absent, so pools drifted from the real account
+    across restarts. sync_real_balance_on_start() re-baselines every pool on every
+    start, so virtual and real begin each session from the same number."""
     sim = make_simulator(tmp_path, initial_balance=100.0, rank_max=3)
-    # Pre-create rank-2 file with a specific value
     (tmp_path / 'data').mkdir(parents=True, exist_ok=True)
     (tmp_path / 'data' / 'virtual_balance_rank2_test.json').write_text('{"balance": 999.0}')
     sim2 = make_simulator(tmp_path, initial_balance=100.0, rank_max=3)
-    sim2.apply_real_balance_if_fresh(500.0)
-    # rank-2 already had a file — should NOT be overwritten
-    assert sim2._rank_balance[2] == 999.0
+    sim2.sync_real_balance_on_start(500.0)
+    assert sim2._rank_balance[2] == 500.0
+
+
+def test_sync_real_balance_ignores_non_positive(tmp_path):
+    """A failed balance read returns 0.0 — it must not zero out the virtual pools."""
+    sim = make_simulator(tmp_path, initial_balance=250.0, rank_max=3)
+    sim.sync_real_balance_on_start(0.0)
+    assert sim._rank_balance[2] == 250.0
 
 
 def test_rank_balance_persists_to_disk(tmp_path):

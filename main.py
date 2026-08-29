@@ -1104,7 +1104,25 @@ async def run() -> None:
 
         candidates.sort(key=lambda x: x[3], reverse=True)
         if _active_scenario_name == "tats":
+            # Zero-score candidates are dropped here. In practice this is almost
+            # always symbol_weights[sym] == 0 zeroing the score at the multiply
+            # above — a deliberate config choice, but previously invisible: a whole
+            # day could pass with valid signals and no orders and nothing in the
+            # log said why. Record it so "why did nothing trade?" is answerable.
+            _dropped = [c for c in candidates if c[3] <= 0.0]
             candidates = [c for c in candidates if c[3] > 0.0]
+            for _sym, _best, _s, _score in _dropped:
+                _w = risk_cfg.get("symbol_weights", {}).get(_sym, 1.0)
+                _why = (f"symbol_weights={_w} zeroes the score" if _w == 0
+                        else f"efficiency score {_score:.2f} <= 0")
+                logger.info(f"[{_sym}] Signal discarded — {_why}")
+                dl_record(
+                    dl_path, candle_ts=candle_ts, symbol=_sym,
+                    decision='skip_zero_score', reason=_why,
+                    balance=0.0, leverage=0,
+                    efficiency_score=virtual_tracker.get_efficiency_score(_sym),
+                    preset_name='', scenario=_active_scenario_name,
+                )
         if scenario.uses_weight_allocation:
             virtual_order_simulator.set_candle_alloc_context(True, {})
             deployable = risk_manager.get_deployable_budget()

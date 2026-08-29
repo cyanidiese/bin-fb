@@ -413,7 +413,12 @@ class RiskManager:
         my_pct = cached[3] if cached and len(cached) > 3 else None
 
         if my_pct is None or not raw_pcts:
-            return 0.5
+            # No performance data for this symbol (missing/unreadable
+            # backtest_results_{symbol}.json). Score 0.0 → base leverage.
+            # This used to return 0.5, which on a 2/10 config handed an entirely
+            # unknown symbol 6x — the one case where we have no evidence it can
+            # carry leverage at all. Symbols WITH data are unaffected.
+            return 0.0
         lo, hi = min(raw_pcts), max(raw_pcts)
         return (my_pct - lo) / (hi - lo) if hi > lo else 1.0
 

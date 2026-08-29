@@ -58,11 +58,29 @@ def test_unequal_weights(tmp_path):
 
 # ── can_open_sync — capital gate ──────────────────────────────────────────────
 
-def test_can_open_passes_with_zero_size(tmp_path):
-    # No backtest results file → profit_factor=0 < threshold → blocked
+def test_unknown_symbol_is_allowed_but_at_base_leverage(tmp_path):
+    """Policy (see can_open_sync): pf=0.0 means "no data yet", which is treated as
+    unknown rather than as a loser — otherwise a new symbol could never trade and
+    so could never accumulate data. The risk is contained on the leverage side
+    instead: an unknown symbol sizes at base leverage, not mid-range.
+    This test previously asserted the opposite and predated that decision."""
     rm = make_rm(tmp_path, balance=1000.0)
     allowed, reason = rm.can_open_sync("BTCUSDT")
-    # Blocked because no results file → performance score 0 → pf below threshold
+    assert allowed is True
+    assert reason == ""
+    assert rm.get_leverage("BTCUSDT") == 2   # base — the containment for unknowns
+
+
+def test_symbol_with_poor_profit_factor_is_blocked(tmp_path):
+    """A symbol that HAS data and performs badly is still blocked."""
+    rm = make_rm(tmp_path, balance=1000.0)
+    (tmp_path / "backtest_results_BTCUSDT.json").write_text(json.dumps({
+        "presets": {"p": {
+            "total_trades": 50, "total_profit_pct": -5.0,
+            "trades": [{"profit_pct": 1.0}] * 10 + [{"profit_pct": -5.0}] * 40,
+        }}
+    }))
+    allowed, reason = rm.can_open_sync("BTCUSDT")
     assert allowed is False
     assert "profit_factor" in reason
 
@@ -139,33 +157,45 @@ def test_warning_auto_resets_on_recovery(tmp_path):
 
 # ── Leverage computation ──────────────────────────────────────────────────────
 
-def test_leverage_base_when_score_zero(tmp_path):
+def _seed_perf(rm, **raw_pcts):
+    """Populate _perf_cache in the CURRENT 4-tuple shape: (score, ts, pf, raw_pct).
+
+    Leverage is driven by _get_cross_symbol_score, which normalises this symbol's
+    raw_pct against every symbol in symbol_weights — so every symbol must be
+    seeded, not just the one under test. These tests previously seeded 3-tuples,
+    which silently fell through to the no-data path.
+    """
+    import time
+    now = time.monotonic()
+    for sym, pct in raw_pcts.items():
+        rm._perf_cache[sym] = (0.0, now, 9999999999.0, pct)
+
+
+def test_leverage_base_when_worst_cross_symbol(tmp_path):
     rm = make_rm(tmp_path, balance=1000.0)
-    rm._perf_cache["BTCUSDT"] = (0.0, 9999999999.0, 2.0)
-    lev = rm.get_leverage("BTCUSDT")
-    assert lev == 2  # base_leverage
+    _seed_perf(rm, BTCUSDT=0.0, ETHUSDT=10.0)   # BTC is the worst performer
+    assert rm.get_leverage("BTCUSDT") == 2      # base_leverage
 
 
-def test_leverage_max_when_score_one(tmp_path):
-    rm = make_rm(tmp_path, balance=2000.0)  # tier ceiling=10
-    rm._perf_cache["BTCUSDT"] = (1.0, 9999999999.0, 5.0)
-    lev = rm.get_leverage("BTCUSDT")
-    assert lev == 10  # min(max_leverage=10, ceiling=10)
+def test_leverage_max_when_best_cross_symbol(tmp_path):
+    rm = make_rm(tmp_path, balance=2000.0)      # tier ceiling = 10
+    _seed_perf(rm, BTCUSDT=10.0, ETHUSDT=0.0)   # BTC is the best performer
+    assert rm.get_leverage("BTCUSDT") == 10     # min(max_leverage=10, ceiling=10)
 
 
 def test_leverage_capped_by_tier_ceiling(tmp_path):
-    rm = make_rm(tmp_path, balance=500.0)   # tier ceiling=5
-    rm._perf_cache["BTCUSDT"] = (1.0, 9999999999.0, 5.0)
-    lev = rm.get_leverage("BTCUSDT")
-    assert lev == 5  # ceiling from balance tier
+    rm = make_rm(tmp_path, balance=500.0)       # tier ceiling = 5
+    _seed_perf(rm, BTCUSDT=10.0, ETHUSDT=0.0)
+    assert rm.get_leverage("BTCUSDT") == 5      # ceiling from balance tier
 
 
 def test_leverage_midpoint(tmp_path):
-    rm = make_rm(tmp_path, balance=2000.0)  # tier: base=2, ceiling=10
-    rm._perf_cache["BTCUSDT"] = (0.5, 9999999999.0, 2.0)
-    lev = rm.get_leverage("BTCUSDT")
-    # base + floor(0.5 * (10 - 2)) = 2 + floor(4.0) = 6
-    assert lev == 6
+    rm = make_rm(tmp_path, balance=2000.0,      # base=2, ceiling=10
+                 symbol_weights={"BTCUSDT": 1, "ETHUSDT": 1, "XRPUSDT": 1})
+    _seed_perf(rm, BTCUSDT=5.0, ETHUSDT=0.0, XRPUSDT=10.0)
+    # BTC sits midway between worst (0.0) and best (10.0):
+    # (5-0)/(10-0) = 0.5 -> base + floor(0.5 * (10-2)) = 6
+    assert rm.get_leverage("BTCUSDT") == 6
 
 
 def test_perf_cache_ttl(tmp_path, monkeypatch):
@@ -174,17 +204,19 @@ def test_perf_cache_ttl(tmp_path, monkeypatch):
     original = rm._compute_perf_score
     def patched(sym):
         calls.append(sym)
-        return 0.5, 1.5
+        return 0.5, 1.5, 3.0        # (intra_score, pf, raw_profit_pct)
     monkeypatch.setattr(rm, "_compute_perf_score", patched)
 
     rm.get_leverage("BTCUSDT")
     rm.get_leverage("BTCUSDT")  # second call — should use cache
-    assert len(calls) == 1
+    # _get_cross_symbol_score walks every symbol in symbol_weights, so count
+    # only recomputes of the symbol under test.
+    assert calls.count("BTCUSDT") == 1
 
     # Expire the cache
-    rm._perf_cache["BTCUSDT"] = (0.5, 0.0, 1.5)  # ts=0 → always expired
+    rm._perf_cache["BTCUSDT"] = (0.5, 0.0, 1.5, 3.0)  # ts=0 → always expired
     rm.get_leverage("BTCUSDT")
-    assert len(calls) == 2
+    assert calls.count("BTCUSDT") == 2
 
 
 def test_get_balance_returns_current_balance(tmp_path):

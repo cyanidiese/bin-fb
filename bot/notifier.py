@@ -78,6 +78,11 @@ class Notifier:
         self._last_sent: dict[str, float] = {}
         # content-hash → last monotonic time sent, so the same message is never spammed
         self._last_sent_content: dict[str, float] = {}
+        # Trade closes get their own content-keyed dedup rather than the time
+        # throttle above — see _trade_content_ok. Two distinct closes on one
+        # symbol seconds apart must both send; only byte-identical repeats drop.
+        self._trade_sent: dict[str, float] = {}
+        self._trade_dedup_s: float = 300.0
 
     def notify(
         self,
@@ -179,7 +184,14 @@ class Notifier:
 
         if not (self._token and self._chat_id):
             return
-        if not self._rate_limit_ok(f"trade:{symbol}"):
+        # Trade closes are the user's only real-time record that money moved, and
+        # they are infrequent (a few per day). A blanket time throttle here could
+        # swallow a genuine second close on the same symbol, which is
+        # indistinguishable from the bot hiding a losing trade. Dedup on message
+        # CONTENT instead: identical repeats (a resend bug) are suppressed, but a
+        # distinct close always sends no matter how soon it follows.
+        if not self._trade_content_ok(text):
+            logger.info(f"Duplicate trade-close notification suppressed for {symbol}")
             return
         try:
             self._send_telegram(text)
@@ -214,6 +226,23 @@ class Notifier:
             return False, str(exc)
 
     # ------------------------------------------------------------------ #
+
+    def _trade_content_ok(self, text: str) -> bool:
+        """True unless this exact trade-close message was already sent recently.
+
+        Keyed on full message content, so two closes differing in PnL, price or
+        balance both send. Only a byte-identical repeat is dropped.
+        """
+        key = hashlib.md5(text.encode()).hexdigest()
+        now = time.monotonic()
+        last = self._trade_sent.get(key, 0.0)
+        if now - last < self._trade_dedup_s:
+            return False
+        self._trade_sent[key] = now
+        if len(self._trade_sent) > 200:      # bound memory on a long-running bot
+            cutoff = now - self._trade_dedup_s
+            self._trade_sent = {k: v for k, v in self._trade_sent.items() if v >= cutoff}
+        return True
 
     def _rate_limit_ok(self, category: str) -> bool:
         now = time.monotonic()

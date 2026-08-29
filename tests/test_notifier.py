@@ -112,21 +112,25 @@ def _mock_resp():
     return m
 
 
-def test_rate_limit_drops_second_trade_message(tmp_path):
+def test_closes_on_different_symbols_both_send(tmp_path):
+    """Session 42 moved trade closes to per-symbol keys; session 63 replaced the
+    time throttle with content dedup. Either way, two different symbols closing
+    together must both notify — this previously asserted the opposite."""
     n = _make_notifier_with_creds(tmp_path)
     with patch("requests.post", return_value=_mock_resp()) as mock_post:
         n.notify_trade_close("BTCUSDT", "BUY", 10.0, 68000.0, 68500.0, "preset_a", balance_after=100.0)
-        n.notify_trade_close("ETHUSDT", "SELL", -5.0, 3200.0, 3250.0, "preset_b", balance_after=95.0)
-    assert mock_post.call_count == 1
-
-
-def test_rate_limit_allows_after_interval(tmp_path):
-    n = _make_notifier_with_creds(tmp_path)
-    with patch("requests.post", return_value=_mock_resp()) as mock_post:
-        n.notify_trade_close("BTCUSDT", "BUY", 10.0, 68000.0, 68500.0, "preset_a", balance_after=100.0)
-        n._last_sent["trade"] = 0.0  # simulate interval elapsed
         n.notify_trade_close("ETHUSDT", "SELL", -5.0, 3200.0, 3250.0, "preset_b", balance_after=95.0)
     assert mock_post.call_count == 2
+
+
+def test_non_trade_alerts_still_rate_limited(tmp_path):
+    """The generic time throttle still applies to ordinary warnings, which can
+    repeat every candle; only trade closes are exempt."""
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify("warning", "Same warning", "same body", "test")
+        n.notify("warning", "Same warning", "same body", "test")
+    assert mock_post.call_count == 1
 
 
 def test_emergency_bypasses_rate_limit(tmp_path):
@@ -260,3 +264,38 @@ def test_send_test_bypasses_rate_limit(tmp_path):
         ok, _ = n.send_test("trade_win")
     assert ok is True
     assert mock_post.call_count == 1
+
+
+# ── Trade closes must never be silently dropped ──────────────────────── #
+# A close notification is the user's only real-time record that money moved.
+# The 120s per-symbol throttle could swallow a genuine second close on the same
+# symbol, which reads exactly like "the bot is hiding losing trades".
+
+def test_two_distinct_closes_on_same_symbol_both_send(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        n.notify_trade_close("INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+                             balance_before=3050.18, balance_after=3068.06, fee_usdt=1.21)
+        n.notify_trade_close("INJUSDT", "BUY", -5.40, 4.134, 4.100, "oscillating_zone",
+                             balance_before=3068.06, balance_after=3062.66, fee_usdt=1.21)
+    assert mock_post.call_count == 2, "second distinct close on same symbol was dropped"
+
+
+def test_identical_duplicate_close_is_still_suppressed(tmp_path):
+    """Protects against a repeat-send bug spamming the channel."""
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()) as mock_post:
+        for _ in range(3):
+            n.notify_trade_close("INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+                                 balance_before=3050.18, balance_after=3068.06, fee_usdt=1.21)
+    assert mock_post.call_count == 1
+
+
+def test_close_is_logged_even_if_telegram_send_is_suppressed(tmp_path):
+    n = _make_notifier_with_creds(tmp_path)
+    with patch("requests.post", return_value=_mock_resp()):
+        for _ in range(2):
+            n.notify_trade_close("INJUSDT", "BUY", 18.03, 4.082, 4.134, "oscillating_zone",
+                                 balance_before=3050.18, balance_after=3068.06, fee_usdt=1.21)
+    log = json.loads((tmp_path / "system_log.json").read_text())
+    assert sum(1 for e in log if "INJUSDT" in e.get("title", "")) == 2

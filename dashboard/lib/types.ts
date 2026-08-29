@@ -27,8 +27,10 @@ export interface Signal {
   entry: number;
   target: number;        // suggested take-profit price
   stop: number | null;   // suggested stop-loss price (null if not calculated)
-  rr: number;
-  precision: number;
+  // rr and precision are Optional[float] in bot/recommendation.py — they stay None
+  // on candidates that were never scored, and the bot exports that as null.
+  rr: number | null;
+  precision: number | null;
 }
 
 // One 15-minute OHLCV candle exported from the bot's kline buffer.

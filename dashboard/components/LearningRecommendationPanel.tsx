@@ -203,7 +203,7 @@ export default function LearningRecommendationPanel({
             <div><span className="text-gray-500">Entry</span><br />{formatPrice(signal.entry)}</div>
             <div><span className="text-gray-500">TP</span><br />{formatPrice(signal.target)}</div>
             <div><span className="text-gray-500">SL</span><br />{signal.stop ? formatPrice(signal.stop) : '—'}</div>
-            <div><span className="text-gray-500">RR</span><br />{signal.rr.toFixed(2)}x</div>
+            <div><span className="text-gray-500">RR</span><br />{signal.rr != null ? `${signal.rr.toFixed(2)}x` : '—'}</div>
           </div>
           <div className="flex gap-2 flex-wrap">
             <button onClick={handleAccept} className={btnPrimary}>Accept ✓</button>

@@ -4,6 +4,51 @@
 
 ---
 
+## ⟳ DEPLOYED 2026-08-30 19:12 UTC — commit `4553598`
+
+Graceful stop → rebuild → restart. The open **INJUSDT SELL was saved and restored**
+(`close_positions_on_stop=false`), reconciliation found no orphans, stream connected,
+**zero errors** since. Balance seeded 3114.20.
+
+Shipped: analysis log · tier-aware rank key · per-symbol substitution (off) ·
+stale-entry abort (off) · discard-logging dedup · 8 dashboard changes.
+
+Verified live after restart:
+- `analysis.jsonl` writing — **223 `virtual_open` records in the first candle**, the
+  exact gap that blocked this session's analysis.
+- `no_recommendation`: max **1 per symbol per candle** (dedup working).
+- bot.log discard lines: max **1 per symbol per candle**, was 8.
+
+### BIGGEST FINDING — entry slippage PREDICTS the loss, it is not just a cost
+Over every trade with a reconciled fill since Aug 19 (n=33):
+
+| adverse slip | n | net PnL | avg | win% |
+|---|---|---|---|---|
+| <0.05% | 22 | **+139.17** | +6.33 | 36% |
+| 0.05–0.30% | 7 | −32.58 | −4.65 | 14% |
+| **≥0.30%** | **4** | **−142.28** | −35.57 | **0%** |
+
+`correlation(adverse slip, PnL) = −0.59`, monotonic, negative in both halves.
+Total slippage cost **−46.25 USDT** against **−35.69** net PnL on those trades — i.e.
+**130% of the loss**; without it the book was net positive.
+
+Ruled out: order size (`correlation(notional, |slip%|) = −0.01`; notional is flat at
+1526–1595 and **unchanged by the Aug 29 weight change**, confirming that change had
+almost no sizing effect, as predicted).
+
+All four large-slip trades were INJUSDT BUYs. Mechanism: price moved 0.3%+ between
+signal and fill, so the move started without us and the entry premise is stale.
+`max_entry_slippage_pct` implements the abort; **ships at 0.0 (off)** because n=4.
+**Suggested first value 0.30–0.50 once more fills accumulate.**
+
+### Also observed (not acted on)
+`l2_regime_aware_strict` on INJUSDT: 4 real trades, 50% WR, net **−43.17**.
+Avg win +32.82 vs avg loss −54.41 → payoff **0.60** where 50% WR needs 1.00.
+Both losses were the full stop distance and both carried ~0.7% entry slippage.
+n=4 — watch, do not act.
+
+---
+
 ## ⟳ RESUME POINT — session 64 (2026-08-30) — preset selection investigated end-to-end; selector is SOUND, one real bug found
 
 **Window:** selection logic unchanged since `f0323a1` (2026-06-14); 85 switch events

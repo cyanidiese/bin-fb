@@ -4,6 +4,28 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 64 (2026-08-30) — deployed; slippage identified as a loss predictor
+
+- [x] **Deployed `4553598`** — analysis log, tier fix, substitution (off), slippage
+      guard (off), logging dedup, 8 dashboard changes. Open position restored, 0 errors.
+- [x] **Fixed my own logging regression** — discard lines were 72% of bot.log (8x per
+      candle); now 1 per symbol per candle.
+- [x] **Preset selection investigated exhaustively** — selector runs at 7–9x baseline;
+      six improvement candidates all rejected. Do NOT raise `preset_cooldown_trades`.
+- [x] **Tier bug fixed** — rank pools now order by `(tier, value)` like `best_preset`.
+
+- [ ] **Enable `max_entry_slippage_pct` at 0.30–0.50** once there are ~10+ trades in
+      the ≥0.30% band. Currently n=4 (all INJUSDT), all losers, avg −35.57.
+      This is the highest-expected-value pending change.
+- [ ] **Enable substitution per symbol** — start with INJUSDT alone (+12.22/trade,
+      lowest fire rate = cheapest to be wrong about) once `no_recommendation` gives a
+      true fire rate. Do NOT enable globally; value spans +12.22 to −0.03 by symbol.
+- [ ] **Watch `l2_regime_aware_strict` on INJUSDT** — payoff 0.60, net −43.17 over 4
+      trades. Revisit at n≥10.
+- [ ] Learning Mode end-to-end run — `docs/learning/hypotheses.md` is still an empty stub.
+
+---
+
 ## Session 63 (2026-08-29) — Allocation corrected; 3 real defects fixed and DEPLOYED
 
 - [x] **DEPLOYED `fecc6bd`** — trade-close notifications, unknown-symbol leverage,

@@ -8,6 +8,8 @@ export interface RiskConfig {
   /** When the best preset yields no recommendation, fall back ONE rank to the next
    *  live-proven, currently-profitable preset. Off by default. */
   substitution_enabled?: boolean
+  /** Per-symbol override for substitution; falls back to substitution_enabled. */
+  substitution_enabled_per_symbol?: Record<string, boolean>
   balance_tiers: BalanceTier[]
   base_leverage: number
   max_leverage: number

@@ -41,6 +41,7 @@ const DEFAULT_CONFIG = {
   max_loss_tp_ratio: 0,
   locked_presets: {} as Record<string, string>,
   substitution_enabled: false,
+  substitution_enabled_per_symbol: {} as Record<string, boolean>,
 }
 
 function readJson(filePath: string, fallback: unknown) {

@@ -71,7 +71,7 @@ export default function PresetRankingSection({ config, availableSymbols, patchCo
         </div>
 
         {/* Substitution — one rank down when the best preset is silent */}
-        <div className="flex flex-col gap-1 pt-1 border-t border-gray-800">
+        <div className="flex flex-col gap-2 pt-1 border-t border-gray-800">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -79,14 +79,59 @@ export default function PresetRankingSection({ config, availableSymbols, patchCo
               onChange={e => patchConfig({ substitution_enabled: e.target.checked })}
               className="rounded accent-indigo-500"
             />
-            <span className="text-xs text-gray-300">Substitute one rank when best preset has no signal</span>
+            <span className="text-xs text-gray-300">
+              Substitute one rank when best preset has no signal <span className="text-gray-500">(default for all symbols)</span>
+            </span>
           </label>
           <p className="text-[11px] text-gray-500 leading-snug">
             When the best preset produces no recommendation, place the order using the next
             preset down that is both live-proven and currently profitable. Exactly one rank —
             measured on real data, one rank was positive while two or more were not.
-            Off by default.
           </p>
+
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] text-gray-400">
+              Per-symbol override — measured value varies widely
+              (INJUSDT +12.22/trade vs MEMEUSDT −0.03), so enable it where it pays rather than globally.
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {availableSymbols.map(sym => {
+                const per = config.substitution_enabled_per_symbol ?? {}
+                const explicit = sym in per
+                const effective = explicit ? per[sym] : (config.substitution_enabled ?? false)
+                return (
+                  <label key={sym} className="flex items-center gap-1.5 cursor-pointer" title={
+                    explicit ? `${sym}: explicitly ${per[sym] ? 'on' : 'off'}` : `${sym}: following the default`
+                  }>
+                    <input
+                      type="checkbox"
+                      checked={effective}
+                      onChange={e => patchConfig({
+                        substitution_enabled_per_symbol: { ...per, [sym]: e.target.checked },
+                      })}
+                      className="rounded accent-indigo-500"
+                    />
+                    <span className={`text-[11px] font-mono ${explicit ? 'text-gray-200' : 'text-gray-500'}`}>
+                      {sym}
+                    </span>
+                    {explicit && (
+                      <button
+                        onClick={ev => {
+                          ev.preventDefault()
+                          const next = { ...per }; delete next[sym]
+                          patchConfig({ substitution_enabled_per_symbol: next })
+                        }}
+                        className="text-gray-600 hover:text-red-400 transition-colors leading-none"
+                        title={`Clear override — follow the default`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+          </div>
         </div>
 
         {/* Per-symbol overrides table */}

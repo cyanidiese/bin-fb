@@ -115,3 +115,43 @@ def test_substitute_honours_the_blocklist(tracker, monkeypatch):
 
 def test_substitute_on_unknown_symbol_is_none(tracker):
     assert tracker.substitute_preset("NOPEUSDT", exclude=None) is None
+
+
+# ── per-symbol enablement resolution ───────────────────────────────────── #
+# Substitution value varies ~400x across symbols (+12.22/trade on INJUSDT vs
+# -0.03 on MEMEUSDT measured over Jul-Aug), so it resolves per symbol with the
+# global flag as the fallback — the same shape as max_loss_usdt_per_symbol.
+
+def _resolve(cfg, symbol):
+    """Mirrors the resolution in main.py's candidate loop."""
+    return cfg.get("substitution_enabled_per_symbol", {}).get(
+        symbol, cfg.get("substitution_enabled", False))
+
+
+def test_defaults_to_off_when_nothing_is_configured():
+    assert _resolve({}, "INJUSDT") is False
+
+
+def test_global_flag_applies_when_no_override():
+    assert _resolve({"substitution_enabled": True}, "INJUSDT") is True
+
+
+def test_per_symbol_override_beats_the_global_default():
+    cfg = {"substitution_enabled": False,
+           "substitution_enabled_per_symbol": {"INJUSDT": True}}
+    assert _resolve(cfg, "INJUSDT") is True
+    assert _resolve(cfg, "MEMEUSDT") is False      # untouched symbols stay off
+
+
+def test_per_symbol_can_disable_against_a_global_on():
+    """The measured case: enable broadly but keep it off where it adds noise."""
+    cfg = {"substitution_enabled": True,
+           "substitution_enabled_per_symbol": {"MEMEUSDT": False}}
+    assert _resolve(cfg, "MEMEUSDT") is False
+    assert _resolve(cfg, "INJUSDT") is True
+
+
+def test_only_the_named_symbols_are_affected():
+    cfg = {"substitution_enabled_per_symbol": {"INJUSDT": True, "TIAUSDT": True}}
+    assert [_resolve(cfg, s) for s in ("INJUSDT", "TIAUSDT")] == [True, True]
+    assert [_resolve(cfg, s) for s in ("EIGENUSDT", "DOGEUSDT", "SOLUSDT")] == [False, False, False]

@@ -356,6 +356,22 @@ next preset down. **Off by default** (`substitution_enabled: false`).
 Tests: `tests/test_preset_substitution.py`.
 
 **Key details**:
+- **Per-symbol**, with the global flag as the default
+  (`substitution_enabled_per_symbol`, same shape as `max_loss_usdt_per_symbol`).
+  Measured value differs ~400x across symbols over Jul–Aug:
+
+  | symbol | fires | avg/trade | win% | OOS |
+  |---|---|---|---|---|
+  | INJUSDT | 11 | **+12.22** | 64% | thin halves |
+  | TIAUSDT | 10 | **+6.61** | 80% | thin halves |
+  | EIGENUSDT | 42 | +0.94 | 48% | reverses |
+  | DOGEUSDT | 55 | +0.21 | 60% | reverses |
+  | 1000PEPEUSDT | 14 | +0.03 | 50% | both positive (trivial) |
+  | MEMEUSDT | 16 | −0.03 | 44% | reverses |
+
+  A single global switch would therefore be wrong for most of the book either way.
+  In the UI each symbol shows its *effective* state; explicitly-set symbols render
+  bright with an `x` to clear the override and fall back to the default.
 - **Exactly one rank, by design** — a checkbox, not a depth setting. Measured on real
   data: one rank down was +173.82 USDT over 53 extra orders; two ranks was −10.28 and
   three was −53.43, dragged down by EIGENUSDT's rank 3 at −259.54.

@@ -1109,7 +1109,13 @@ async def run() -> None:
                 if _bp_ovr:
                     best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)
             _substituted_from = None
-            if best_sym is None and risk_cfg.get("substitution_enabled", False):
+            # Per-symbol override, falling back to the global default — same pattern as
+            # max_loss_usdt_per_symbol. Substitution value varies enormously by symbol
+            # (measured +12.22/trade on INJUSDT vs -0.03 on MEMEUSDT), so a single
+            # global switch would be wrong for most of the book either way.
+            _sub_on = risk_cfg.get("substitution_enabled_per_symbol", {}).get(
+                sym, risk_cfg.get("substitution_enabled", False))
+            if best_sym is None and _sub_on:
                 # The best preset produced no recommendation. Fall back to ONE rank
                 # down — the next preset that is both live-proven (tier 1) and
                 # currently profitable. Deliberately a single rank: measured on real
@@ -1141,7 +1147,7 @@ async def run() -> None:
                 analysis_log.record(
                     'no_recommendation', symbol=sym, best_preset=_bp,
                     candle_ts=candle_ts, scenario=_active_scenario_name,
-                    substitution_enabled=bool(risk_cfg.get("substitution_enabled", False)),
+                    substitution_enabled=bool(_sub_on),
                 )
                 continue
             raw_score = virtual_tracker.get_efficiency_score(sym)

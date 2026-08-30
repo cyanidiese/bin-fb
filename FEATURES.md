@@ -296,7 +296,31 @@ Places actual orders on Binance Futures (testnet or live based on mode). Wired t
   (+5.9%); with reconciliation the same four report +109.40 (+0.12%, the residual
   being funding fees, which PnL still does not model).
 
-**Real order persistence**:
+**Stale-entry abort** (session 64, off by default):
+`max_entry_slippage_pct` — when the reconciled fill is worse than the signalled entry
+by more than this, the position is closed immediately at market instead of being
+traded. `0.0` disables it (the shipped default).
+
+- **Directional**: a BUY filled above the signal, or a SELL filled below it. A
+  favourable fill never triggers it. (The pre-existing slippage *log* line used
+  `abs()`, which could not tell the two apart; that is now directional too.)
+- **Why**: measured Aug 19–30 over all trades with reconciled fills (n=33) —
+
+  | adverse slip | n | net PnL | avg | win% |
+  |---|---|---|---|---|
+  | <0.05% | 22 | **+139.17** | +6.33 | 36% |
+  | 0.05–0.30% | 7 | −32.58 | −4.65 | 14% |
+  | **≥0.30%** | **4** | **−142.28** | −35.57 | **0%** |
+
+  `correlation(adverse slip, PnL) = −0.59`, monotonic across bands, negative in both
+  halves. A fill that far from the signal means the move started without us, so the
+  entry premise is stale. Closing costs a round-trip fee (~0.08%, ~1.3 USDT on a 1,570
+  notional) against an average −35.57 for riding it out.
+- **Not enabled**: n=4 in the decisive band, all on INJUSDT. Ships inert; turn it on
+  (suggested 0.30–0.50) once more fills accumulate.
+- Emits a warning-level Telegram alert naming both prices when it fires.
+
+**Real order persistence**:**Real order persistence**:
 - Stored in `data/real_orders_{SYMBOL}_{MODE}.json` (one file per symbol per mode)
 - Includes: entry price, **actual fill entry price**, TP, SL, quantity, filled PnL,
   fee, result, signal metadata, balance at open, **wallet at open**

@@ -288,14 +288,43 @@ class OrderExecutor:
                 _fill = await self._reconcile_entry_fill(symbol, order_id)
                 if _fill > 0:
                     self._open_orders[symbol].fill_entry_price = _fill
-                    _slip_pct = abs(_fill - entry) / entry * 100 if entry > 0 else 0.0
-                    if _slip_pct >= 0.05:
+                    # DIRECTIONAL slippage: only an adverse fill matters. A BUY filled
+                    # above the signal (or a SELL below it) means price moved away
+                    # between signal and fill.
+                    _adverse_pct = (
+                        (_fill - entry) / entry * 100 if side == 'BUY'
+                        else (entry - _fill) / entry * 100
+                    ) if entry > 0 else 0.0
+                    if abs(_adverse_pct) >= 0.05:
                         logger.warning(
                             f"[{symbol}] Entry slippage: signalled {entry} → filled {_fill:.6f} "
-                            f"({_slip_pct:.3f}%) — PnL computed off the fill"
+                            f"({_adverse_pct:+.3f}% {'adverse' if _adverse_pct > 0 else 'favourable'}) "
+                            f"— PnL computed off the fill"
                         )
                     else:
                         logger.info(f"[{symbol}] Entry fill reconciled: {_fill:.6f}")
+
+                    # Stale-entry abort. A fill materially worse than the signal means
+                    # the move we wanted to catch already started without us, so the
+                    # entry premise is gone. Measured over Aug 19-30: every trade with
+                    # >=0.30% adverse slippage lost (4/4, -142.28 USDT, avg -35.57),
+                    # while trades filling within 0.05% netted +139.17. Closing here
+                    # costs a round-trip fee (~0.08%) instead of riding it to the stop.
+                    # Off by default (0.0); n=4 is thin, so this must be opted into.
+                    _max_slip = float(load_risk_config().get("max_entry_slippage_pct", 0.0))
+                    if _max_slip > 0 and _adverse_pct > _max_slip:
+                        logger.warning(
+                            f"[{symbol}] ABORTING — entry slipped {_adverse_pct:.3f}% "
+                            f"(limit {_max_slip}%): signalled {entry}, filled {_fill:.6f}. "
+                            f"Closing immediately rather than trading a stale entry."
+                        )
+                        self._notifier.notify(
+                            "warning", f"{symbol} entry aborted on slippage",
+                            f"filled {_fill:.6f} vs signalled {entry} "
+                            f"({_adverse_pct:.3f}% > {_max_slip}%)", "order_executor",
+                        )
+                        await self.close_order(symbol)
+                        return False
                 else:
                     logger.info(
                         f"[{symbol}] Entry fill unavailable — PnL falls back to signalled entry {entry}"

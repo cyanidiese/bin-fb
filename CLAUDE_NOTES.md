@@ -4,6 +4,93 @@
 
 ---
 
+## ⟳ RESUME POINT — session 64 (2026-08-30) — preset selection investigated end-to-end; selector is SOUND, one real bug found
+
+**Window:** selection logic unchanged since `f0323a1` (2026-06-14); 85 switch events
+Jul 6 – Aug 29 across all symbols, 6,337 virtual trades for INJ+EIGEN.
+
+### The selector is NOT broken — it is running at 7-9x baseline
+Event-driven replay of the real virtual-trade stream, attributing each preset's next
+trade to whichever rule would have picked it:
+
+| | current rule `sum(last 10)` | any-trade baseline |
+|---|---|---|
+| INJUSDT | **+6.89**/trade | +0.90 (**7.7x**) |
+| EIGENUSDT | **+10.90**/trade | +1.19 (**9.1x**) |
+
+No alternative beat it consistently: `sum(last 20/30)`, cumulative, `mean(20)`,
+`win_rate(20)`, `median(20)` and `sum20 x winrate20` all reverse between symbols.
+
+### The "abandoned a better preset" pattern is real but NOT the harm it looks like
+48% of swaps (36/75) go to a preset with worse **cumulative** PnL — including leaving
+`l2_bos_trend` on EIGEN at **+558 cumulative** for one at **-127**, on a 6-point window
+difference. Total cumulative "given up": +4,973 USDT.
+**But cumulative is a historical stock, not a predictor.** Measured post-switch:
+regret is **-37.34** (switching was net slightly *beneficial*), 43% vs 57% — a coin flip.
+
+The literal case asked about — a real order on a freshly-chosen preset losing while the
+abandoned preset won — occurs **11/112 times (10%), costing -154.77 USDT real**.
+
+### Nothing improves the selection flow (all tested, all rejected)
+- **Hysteresis sweep** (0/10/25/50/100%): every setting is OOS "both +", but the best
+  value differs by symbol (INJ likes 100%, EIGEN 25%) — noise-fitting.
+- **Cooldown sweep** (0/5/15/30): the one *consistent* signal — longer cooldowns are
+  clearly harmful on both symbols (cd=30 roughly a third of current performance).
+  **Do not raise `preset_cooldown_trades`.**
+- **Settling period** (don't trade a freshly-promoted preset): fails OOS, 0-2h and
+  2-6h both flip sign between halves.
+- **Cumulative blend** `score = sum(last10) + k*cumulative`: looked strong on a 2-half
+  split (EIGEN +8.48 -> +15.48) but a **3-fold split produced identical picks in every
+  fold** — the effect only appears when cumulative has grown large over a full window,
+  and rests on very few decision changes. Not reproducible.
+- **Cumulative guard** (never leave a positive-cumulative preset for a negative one):
+  never fired in simulation.
+
+**Conclusion: leave the selection rule alone.** The 10% bad-switch rate is the price of
+a selector otherwise running at 8x baseline; suppressing it also suppresses the 57% of
+switches that help.
+
+### REAL BUG FOUND — rank pools do not mirror the selection order
+`best_preset` ranks by the **tuple** `_score(...)` = `(tier, value)`, so any live-proven
+(Tier 1) preset outranks any seed-only (Tier 0) one. But
+`get_preset_efficiency` (`bot/virtual_tracker.py`) returns **only `_score(...)[1]`**,
+discarding the tier — and `VirtualOrderSimulator.on_candle_close` sorts the rank pools
+with it.
+
+Measured impact: top 6 positions are **identical** (so real order selection is
+unaffected), but 21/65 positions differ on INJ and 52/65 on EIGEN, with **54 and 192
+tier inversions** — seed-only presets sitting above live-proven ones deep in the table.
+This distorts which presets get simulated at which rank, and would distort any
+substitution at N>=2. **Fix before implementing substitutional ranks.**
+
+### Substitutional ranks — feasible, measured, but does NOT survive OOS
+Gate is one line: `main.py:1103` `if best_sym is None: continue` — only the best preset
+is ever consulted. Rank pool N already runs the Nth-best preset (`rank_idx = rank - 1`).
+
+Measured from persisted `data/virtual_orders_rank{N}_{SYM}_test.json` (these carry
+`open_time`, so the fire rate was measurable immediately — no waiting needed):
+
+| N | extra orders | extra USDT | orders/day |
+|---|---|---|---|
+| 0 (today) | – | – | 2.30 |
+| 1 (rank 2) | +53 | **+173.82** | 3.25 |
+| 2 (ranks 2-3) | +109 | **-10.28** | 4.25 |
+| 3 | +154 | -53.43 | 5.05 |
+
+**But OOS kills it**: rank 2 pooled is H1 **-94.48** / H2 **+268.30** — the entire gain
+sits in the second half. Only INJ rank 3 is "both +" (n=3, n=9 — far too thin).
+Symbols are idle 69% (INJ) / 80% (EIGEN) of the time, so there is no collision risk.
+
+**Caveat on the fire rate**: "rank 1 idle" was used as the proxy, but the feature only
+fires when rank 1 has NO RECOMMENDATION. Orders blocked by RR/SL/blackout/streak gates
+are counted in the proxy, so +53 is an **upper bound**. The new `no_recommendation`
+event measures this exactly.
+
+**Recommendation: implement behind `substitutional_ranks` defaulting to 0 (inert), fix
+the tier bug first, and enable only once `no_recommendation` data supports a value.**
+
+---
+
 ## ⟳ RESUME POINT — session 63 (2026-08-29) — symbol_weights was inverted vs evidence; corrected. Do NOT tune trade geometry.
 
 **Applied (hot-reload, no deploy):** `risk_config.symbol_weights`

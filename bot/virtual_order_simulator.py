@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config
+from bot import analysis_log
 
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
@@ -247,6 +248,12 @@ class VirtualOrderSimulator:
             f"[{symbol}] Rank-{rank} evicted ({reason}): "
             f"{record['preset_name']} pnl={pnl:.2f} bal={self._rank_balance[rank]:.2f}"
         )
+        analysis_log.record(
+            'virtual_close', symbol=symbol, rank=rank, preset=record.get('preset_name'),
+            side=record.get('side'), entry=record.get('entry'), close_price=close_price,
+            pnl=pnl, result=reason, open_time=record.get('open_time'),
+            rank_balance=self._rank_balance[rank],
+        )
 
     async def _try_open(
         self,
@@ -446,6 +453,13 @@ class VirtualOrderSimulator:
             'result': None,
         }
         self._rank_open[rank][symbol] = record
+        # Opens were previously unlogged while closes were, so it was impossible to
+        # tell afterwards WHEN a preset held a position — only that one ended.
+        analysis_log.record(
+            'virtual_open', symbol=symbol, rank=rank, preset=preset_name,
+            side=side, entry=entry, tp=tp, sl=sl, quantity=quantity, leverage=lev,
+            rank_balance=self._rank_balance[rank],
+        )
 
         # Apply max_loss_usdt from risk config (matches backtester and order_executor).
         _global_cap = _risk_cfg.get("max_loss_usdt", 0.0)

@@ -976,6 +976,34 @@ Transient API errors (Binance -4131 PERCENT_PRICE filter violations) are caught 
 - Candidate filtering skips price-checking logic to allow retry
 - No symbol auto-disable, no cascading failures
 
+### Analysis Log (structured JSONL, session 64)
+Machine-parseable event log at `logs/analysis.jsonl`, separate from `bot.log` so
+operational logs stay readable and this file carries its own rotation budget.
+
+**Files**: `bot/analysis_log.py`; wired in `bot/virtual_order_simulator.py`,
+`bot/virtual_tracker.py`, `main.py`. Tests: `tests/test_analysis_log.py`.
+
+**Events**:
+| event | emitted when | why it exists |
+|---|---|---|
+| `virtual_open` | a rank pool opens a virtual position | **closes were logged, opens were not** — a preset's activity window could not be reconstructed afterwards |
+| `virtual_close` | a rank pool position closes | structured twin of the existing text line, with close price and result |
+| `preset_switch` | the best preset changes | carries the **whole top-5 rank table** with tier/score/trade-count/cumulative, so runners-up at the moment of a swap are known |
+| `no_recommendation` | a symbol is skipped because neither base settings nor the best preset produced a signal | the exact population a "substitutional ranks" feature would serve; previously invisible, so the opportunity could not be sized |
+
+**Key details**:
+- **Never raises.** It runs inside the trading loop; the emit path is wrapped and
+  deliberately silent on failure (a logger call there could itself fail and recurse).
+  A bad path disables the log rather than throwing.
+- **Size-capped** by `RotatingFileHandler`: default 20 MB x 5 backups = 120 MB.
+  Measured rate is ~3.9 MB/week across 15 symbols (242 bytes/record), so the cap
+  holds roughly 30 weeks before the oldest rotates out — 1.8% of the VPS's free space.
+- Config (all optional, sensible defaults): `analysis_log_enabled` (true),
+  `analysis_log_max_mb` (20), `analysis_log_backups` (5).
+- `no_recommendation` is at most one record per symbol per candle and only fires on
+  the skip path, so it cannot blow up. Per-preset `rec is None` is deliberately NOT
+  logged — that would be ~125k records/day (87 ranks x 15 symbols x 96 candles).
+
 ### System Logging
 Rolling 100-entry JSON log. Atomic writes via tmp→rename. All events (orders, errors, alerts, leverage advances) logged with timestamp, level, title, body.
 

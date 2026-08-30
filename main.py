@@ -15,6 +15,7 @@ from pathlib import Path
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import load_settings, Settings
 from bot.analyzer import Analyzer
+from bot import analysis_log
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
@@ -297,6 +298,12 @@ async def run() -> None:
     for sym in symbols:
         min_notionals[sym] = await order_executor.get_min_notional(sym)
 
+    analysis_log.configure(
+        _PROJECT_ROOT / 'logs' / 'analysis.jsonl',
+        enabled=bool(risk_cfg.get('analysis_log_enabled', True)),
+        max_bytes=int(risk_cfg.get('analysis_log_max_mb', 20)) * 1024 * 1024,
+        backups=int(risk_cfg.get('analysis_log_backups', 5)),
+    )
     bh_path = _PROJECT_ROOT / 'data' / f'balance_history_{current_mode}.json'
     dl_path = _PROJECT_ROOT / 'data' / f'decision_log_{current_mode}.json'
 
@@ -1084,6 +1091,7 @@ async def run() -> None:
             if _sym_az is None:
                 continue
             best_sym = _sym_az.get_best_recommendation()
+            _bp = None
             if best_sym is None:
                 # Base-settings engine lacks hl_buy/lh_sell flags — fall back to the symbol's
                 # best preset's own overrides so those signal types are not silently missed.
@@ -1093,6 +1101,16 @@ async def run() -> None:
                 if _bp_ovr:
                     best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)
             if best_sym is None:
+                # The symbol is dropped here because neither base settings nor the
+                # BEST preset produced a recommendation — lower-ranked presets are
+                # never consulted. This is the exact population a "substitutional
+                # ranks" feature would serve, and it was previously invisible, so
+                # the opportunity could not be sized. One record per symbol per
+                # candle at most, and only in this case.
+                analysis_log.record(
+                    'no_recommendation', symbol=sym, best_preset=_bp,
+                    candle_ts=candle_ts, scenario=_active_scenario_name,
+                )
                 continue
             raw_score = virtual_tracker.get_efficiency_score(sym)
             # In BGF, apply symbol_weights as a multiplier so the rebalancer

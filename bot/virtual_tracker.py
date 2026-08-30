@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from config.risk_config import load_risk_config
+from bot import analysis_log
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,22 @@ class VirtualTracker:
         result = candidate
 
         if prev is not _SENTINEL and prev != result:
+            # Capture the whole top of the rank table, not just the winner. Post-hoc
+            # analysis needs to know what the runners-up looked like at the moment of
+            # a swap — reconstructing that from trade history alone is unreliable.
+            _ranked = sorted(
+                eligible_data, key=lambda n: _score(eligible_data[n], min_t, window_size), reverse=True
+            )[:5]
+            analysis_log.record(
+                'preset_switch', symbol=symbol, prev=prev, new=result,
+                top=[{
+                    'preset': n,
+                    'tier': _score(eligible_data[n], min_t, window_size)[0],
+                    'score': round(_score(eligible_data[n], min_t, window_size)[1], 4),
+                    'trades': eligible_data[n].get('trade_count', 0),
+                    'cumulative': round(eligible_data[n].get('total_winning_usdt', 0.0), 2),
+                } for n in _ranked],
+            )
             prev_stats = symbol_data.get(prev or '', {})
             new_stats = symbol_data.get(result or '', {})
             logger.info(

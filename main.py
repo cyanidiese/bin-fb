@@ -401,6 +401,8 @@ async def run() -> None:
     _kline_refresh_counters: dict[str, int] = {}
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
     _substituted_preset: dict[str, str] = {}  # symbol → substituted preset, per candle
+    _discard_logged: dict[str, int] = {}     # symbol → candle_ts of last discard log
+    _norec_logged: dict[str, int] = {}       # symbol → candle_ts of last no_recommendation event
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
     _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
     # Loss-streak directional cooldown state (mirrors backtester implementation)
@@ -1144,11 +1146,16 @@ async def run() -> None:
                 # disabled or also found nothing). This is the population the
                 # substitution feature serves; logging it is what makes the
                 # opportunity measurable. At most one record per symbol per candle.
-                analysis_log.record(
-                    'no_recommendation', symbol=sym, best_preset=_bp,
-                    candle_ts=candle_ts, scenario=_active_scenario_name,
-                    substitution_enabled=bool(_sub_on),
-                )
+                # Same per-candle guard as the discard log above: the candidate loop
+                # re-runs per closing symbol, so without this the event would be
+                # written ~8x per symbol per candle and inflate the analysis log.
+                if _norec_logged.get(sym) != candle_ts:
+                    _norec_logged[sym] = candle_ts
+                    analysis_log.record(
+                        'no_recommendation', symbol=sym, best_preset=_bp,
+                        candle_ts=candle_ts, scenario=_active_scenario_name,
+                        substitution_enabled=bool(_sub_on),
+                    )
                 continue
             raw_score = virtual_tracker.get_efficiency_score(sym)
             # In BGF, apply symbol_weights as a multiplier so the rebalancer
@@ -1168,6 +1175,13 @@ async def run() -> None:
             _dropped = [c for c in candidates if c[3] <= 0.0]
             candidates = [c for c in candidates if c[3] > 0.0]
             for _sym, _best, _s, _score in _dropped:
+                # This loop re-runs for EVERY symbol whose candle closed, so without a
+                # guard each discarded symbol is logged once per active symbol per
+                # candle — 8x in practice, which made discard lines 72% of bot.log.
+                # Log once per symbol per candle; the information is identical.
+                if _discard_logged.get(_sym) == candle_ts:
+                    continue
+                _discard_logged[_sym] = candle_ts
                 _w = risk_cfg.get("symbol_weights", {}).get(_sym, 1.0)
                 _why = (f"symbol_weights={_w} zeroes the score" if _w == 0
                         else f"efficiency score {_score:.2f} <= 0")

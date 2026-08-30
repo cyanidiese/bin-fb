@@ -189,7 +189,9 @@ class VirtualOrderSimulator:
         )
         sorted_presets = sorted(
             preset_items,
-            key=lambda kv: self._virtual_tracker.get_preset_efficiency(symbol, kv[0]),
+            # Tier-aware key: a preset with real trading history must outrank one
+            # that only has a backtest seed, regardless of the raw numbers.
+            key=lambda kv: self._virtual_tracker.get_preset_rank_key(symbol, kv[0]),
             reverse=True,
         )
         current_price = analyzer.get_current_price()

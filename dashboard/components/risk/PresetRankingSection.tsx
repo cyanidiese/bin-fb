@@ -70,6 +70,25 @@ export default function PresetRankingSection({ config, availableSymbols, patchCo
           </p>
         </div>
 
+        {/* Substitution — one rank down when the best preset is silent */}
+        <div className="flex flex-col gap-1 pt-1 border-t border-gray-800">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.substitution_enabled ?? false}
+              onChange={e => patchConfig({ substitution_enabled: e.target.checked })}
+              className="rounded accent-indigo-500"
+            />
+            <span className="text-xs text-gray-300">Substitute one rank when best preset has no signal</span>
+          </label>
+          <p className="text-[11px] text-gray-500 leading-snug">
+            When the best preset produces no recommendation, place the order using the next
+            preset down that is both live-proven and currently profitable. Exactly one rank —
+            measured on real data, one rank was positive while two or more were not.
+            Off by default.
+          </p>
+        </div>
+
         {/* Per-symbol overrides table */}
         {Object.keys(overrides).length > 0 && (
           <div>

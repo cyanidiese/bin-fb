@@ -400,6 +400,7 @@ async def run() -> None:
     _last_refresh_candle_open: list[int] = [0]
     _kline_refresh_counters: dict[str, int] = {}
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
+    _substituted_preset: dict[str, str] = {}  # symbol → substituted preset, per candle
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
     _recent_sl_hit: dict[str, dict] = {}     # "symbol:preset" → signal from last SL-hit order
     # Loss-streak directional cooldown state (mirrors backtester implementation)
@@ -480,7 +481,9 @@ async def run() -> None:
             preset_name = _locked_presets[symbol]
             logger.info(f"[{symbol}] Using manually locked preset: {preset_name}")
         else:
-            preset_name = virtual_tracker.best_preset(symbol)
+            preset_name = _substituted_preset.get(symbol) or virtual_tracker.best_preset(symbol)
+            if symbol in _substituted_preset:
+                logger.info(f"[{symbol}] Order uses substituted preset: {preset_name}")
             if _active_scenario_name != "tats" and virtual_tracker.is_virtual_only(symbol):
                 logger.info(f"[{symbol}] Virtual-only floor active — skipping real order")
                 return 0.0
@@ -1075,6 +1078,11 @@ async def run() -> None:
 
         # Efficiency-ranked cross-symbol placement loop
         candle_ts = int(kline[0]) if kline else 0
+        # symbol -> preset chosen by substitution this candle. Cleared every candle so
+        # a stale entry can never leak into a later order. _try_place_order reads this
+        # instead of re-deriving best_preset, which would silently discard the
+        # substitution and place the order on the WRONG preset's settings.
+        _substituted_preset.clear()
         candidates = []
         for sym in symbol_registry.get_symbols():
             if symbol_registry.is_disabled(sym):
@@ -1100,16 +1108,40 @@ async def run() -> None:
                 _bp_ovr = all_presets.get(_bp or '', {})
                 if _bp_ovr:
                     best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)
+            _substituted_from = None
+            if best_sym is None and risk_cfg.get("substitution_enabled", False):
+                # The best preset produced no recommendation. Fall back to ONE rank
+                # down — the next preset that is both live-proven (tier 1) and
+                # currently profitable. Deliberately a single rank: measured on real
+                # data, substituting one rank was positive (+173.82 USDT over 53
+                # extra orders) while going two or more was destructive (-10.28,
+                # then -53.43), driven by EIGENUSDT's rank 3 at -259.
+                _sub = virtual_tracker.substitute_preset(sym, _bp)
+                if _sub:
+                    _sub_ovr = all_presets.get(_sub, {})
+                    if _sub_ovr:
+                        best_sym = _sym_az.get_recommendation_for_preset(_sub_ovr)
+                        if best_sym is not None:
+                            _substituted_from, _bp = _bp, _sub
+                            _substituted_preset[sym] = _sub
+                            logger.info(
+                                f"[{sym}] Substituted preset {_substituted_from!r} -> {_sub!r} "
+                                f"(best had no recommendation)"
+                            )
+                            analysis_log.record(
+                                'preset_substituted', symbol=sym, best_preset=_substituted_from,
+                                used_preset=_sub, candle_ts=candle_ts,
+                            )
             if best_sym is None:
                 # The symbol is dropped here because neither base settings nor the
-                # BEST preset produced a recommendation — lower-ranked presets are
-                # never consulted. This is the exact population a "substitutional
-                # ranks" feature would serve, and it was previously invisible, so
-                # the opportunity could not be sized. One record per symbol per
-                # candle at most, and only in this case.
+                # BEST preset produced a recommendation (and substitution either is
+                # disabled or also found nothing). This is the population the
+                # substitution feature serves; logging it is what makes the
+                # opportunity measurable. At most one record per symbol per candle.
                 analysis_log.record(
                     'no_recommendation', symbol=sym, best_preset=_bp,
                     candle_ts=candle_ts, scenario=_active_scenario_name,
+                    substitution_enabled=bool(risk_cfg.get("substitution_enabled", False)),
                 )
                 continue
             raw_score = virtual_tracker.get_efficiency_score(sym)

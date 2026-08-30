@@ -331,6 +331,47 @@ the bot log and the decision log (`decision='skip_zero_score'`).
 by a filter with no logging. Diagnosing an idle day required correlating `trades.log`
 against `risk_config` by hand.
 
+### Tier-aware preset ranking (session 64)
+`VirtualTracker.get_preset_rank_key()` returns the full `(tier, value)` score — the
+same ordering `best_preset()` uses — and `VirtualOrderSimulator` now sorts rank pools
+with it.
+
+**Why**: `get_preset_efficiency()` returns only the *value* half. Ranking with it let a
+preset with **no trading history** (tier 0, seeded 0.00) outrank a live-proven one whose
+recent value was negative, purely because `0.00 > -2.40`. Observed live on EIGENUSDT:
+four 0-trade presets sat at positions 14–17, ahead of 48 presets with 50–169 trades.
+Real orders were never affected (`best_preset` was always tier-aware), but the virtual
+pool order was wrong and substitution would have inherited it.
+
+**Rule**: a preset with real trading history always outranks one with only a backtest
+seed, however large the seed. Seeds still order untested presets among themselves.
+
+### Preset substitution — one rank (session 64)
+When the best preset produces no recommendation, optionally place the order using the
+next preset down. **Off by default** (`substitution_enabled: false`).
+
+**Files**: `bot/virtual_tracker.py` (`ranked_presets`, `substitute_preset`), `main.py`
+(candidate loop + `_try_place_order`), `components/risk/PresetRankingSection.tsx`
+(checkbox), `app/api/risk/route.ts`, `lib/risk-types.ts`.
+Tests: `tests/test_preset_substitution.py`.
+
+**Key details**:
+- **Exactly one rank, by design** — a checkbox, not a depth setting. Measured on real
+  data: one rank down was +173.82 USDT over 53 extra orders; two ranks was −10.28 and
+  three was −53.43, dragged down by EIGENUSDT's rank 3 at −259.54.
+- The substitute must be **tier 1 (live-proven) and currently profitable** (score > 0),
+  so real money can never land on an untested preset or a merely least-bad one.
+  Returns `None` rather than descending further.
+- Honours `preset_blocklist`.
+- The chosen preset is carried in a per-candle map consumed by `_try_place_order`,
+  which otherwise re-derives `best_preset()` and would place the order on the **wrong
+  preset's settings** while using the substitute's recommendation. The map is cleared
+  every candle so a stale entry cannot leak into a later order.
+- Emits a `preset_substituted` analysis-log event and an INFO line naming both presets.
+- **Not validated for enabling yet**: the +173.82 does not survive an OOS split
+  (H1 −94.48 / H2 +268.30). Ships inert; turn it on once `no_recommendation` data
+  gives a true fire rate.
+
 ### Weight=0 Symbol Trading Gate
 Symbols with allocation weight set to 0 are excluded from both real order placement and virtual order simulation. Enforced at two points: candidate filtering before real orders, and guard before virtual simulator processing.
 

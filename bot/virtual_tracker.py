@@ -216,6 +216,47 @@ class VirtualTracker:
         window_size = int(cfg.get("ranking_window_size", 10))
         return _score(stats, self._get_min_trades(symbol), window_size)[1]
 
+    def get_preset_rank_key(self, symbol: str, preset_name: str) -> tuple[int, float]:
+        """Full (tier, value) ranking key — the same ordering best_preset() uses.
+
+        get_preset_efficiency() returns only the value half for display and legacy
+        callers. Ranking must use this instead: dropping the tier lets a preset with
+        NO trading history (tier 0, seeded value 0.00) outrank a live-proven one whose
+        recent value happens to be negative, purely because 0.00 > -2.40. Real trading
+        results must always outrank a backtest guess, however small.
+        """
+        stats = self._efficiency.get(symbol, {}).get(preset_name, {})
+        cfg = load_risk_config()
+        window_size = int(cfg.get("ranking_window_size", 10))
+        return _score(stats, self._get_min_trades(symbol), window_size)
+
+    def ranked_presets(self, symbol: str, limit: int | None = None) -> list[str]:
+        """Eligible presets for this symbol, best first, blocklisted ones removed."""
+        cfg = load_risk_config()
+        blocklist = set(cfg.get("preset_blocklist", []))
+        names = [n for n in self._efficiency.get(symbol, {}) if n not in blocklist]
+        names.sort(key=lambda n: self.get_preset_rank_key(symbol, n), reverse=True)
+        return names[:limit] if limit is not None else names
+
+    def substitute_preset(self, symbol: str, exclude: str | None) -> str | None:
+        """Highest-ranked profitable preset other than `exclude`, or None.
+
+        Used when the best preset produces no recommendation. Requires a POSITIVE
+        score so substitution never falls through to a preset that is merely
+        least-bad, and requires tier 1 so it can never place real money on a preset
+        with no trading history at all.
+        """
+        for name in self.ranked_presets(symbol):
+            if name == exclude:
+                continue
+            tier, value = self.get_preset_rank_key(symbol, name)
+            if tier >= 1 and value > 0:
+                return name
+            # ranked_presets is sorted, so the first non-qualifying entry means
+            # nothing below it qualifies either.
+            return None
+        return None
+
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)
         cfg = load_risk_config()

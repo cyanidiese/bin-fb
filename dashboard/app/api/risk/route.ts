@@ -40,6 +40,7 @@ const DEFAULT_CONFIG = {
   max_loss_usdt_per_symbol: {} as Record<string, number>,
   max_loss_tp_ratio: 0,
   locked_presets: {} as Record<string, string>,
+  substitution_enabled: false,
 }
 
 function readJson(filePath: string, fallback: unknown) {

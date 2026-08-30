@@ -89,6 +89,8 @@ def make_vt_with_scores(scores: dict):
     """Return a VirtualTracker mock that returns per-preset efficiency scores."""
     vt = MagicMock()
     vt.get_preset_efficiency.side_effect = lambda symbol, name: scores.get(name, 0.0)
+    # Ranking uses the tier-aware key; tier 1 for all keeps value as the tiebreaker.
+    vt.get_preset_rank_key.side_effect = lambda symbol, name: (1, scores.get(name, 0.0))
     return vt
 
 
@@ -366,6 +368,7 @@ async def test_rank_change_evicts_old_preset(tmp_path):
 
     # Rankings shift: preset_c now rank-2
     vt.get_preset_efficiency.side_effect = lambda s, n: {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0)
+    vt.get_preset_rank_key.side_effect = lambda s, n: (1, {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0))
 
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
@@ -402,6 +405,7 @@ async def test_evicted_order_written_to_rank_file(tmp_path):
 
     # Shift rankings to trigger eviction
     vt.get_preset_efficiency.side_effect = lambda s, n: {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0)
+    vt.get_preset_rank_key.side_effect = lambda s, n: (1, {'preset_a': 3.0, 'preset_b': 1.0, 'preset_c': 2.0}.get(n, 0.0))
     with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
          patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
         MockEng.return_value.generate.return_value = rec

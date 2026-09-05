@@ -4,6 +4,48 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 65 (2026-09-05) — Level-scoped TP cap deployed; L column added
+
+- [x] **Deployed `abb1ed3`** — level-scoped `max_profit_pct`, page-wide date range on
+      Trades, locked-preset substitution guard. Bot reconnected 09:40:49, 0 errors,
+      no open positions during the restart.
+- [~] **Apply `per_symbol_settings.EIGENUSDT.max_profit_pct = 8` + `max_profit_pct_levels = [3]`**
+      — code deployed, config not yet written. MUST be applied only on a build that has
+      the field, or the merge drops it and the cap hits every level.
+- [x] **L column** in the Trades orders table; virtual orders now record `signal_level`.
+
+### Ideas to implement next
+
+- [ ] **Always collect virtual orders, for every symbol, in every state.**
+      Rationale: virtual orders are the training data. Any symbol that stops producing
+      them stops informing preset selection, and we lose the evidence needed to decide
+      whether to re-enable it.
+      **Already done**: `is_disabled` symbols DO run virtual-only (`main.py:1042-1054`,
+      `virtual_only=True`).
+      **Gaps to close**:
+        - `is_symbol_paused(sym)` → `continue` at `main.py:1094` skips the symbol
+          entirely, virtual included.
+        - `weight == 0.0` in non-TATS → `continue` at `main.py:1096` does the same.
+          (Harmless while `scenario = tats`, which ignores weights — but it is a trap
+          waiting for whoever switches scenario.)
+      Both should fall through to the virtual-only branch instead of `continue`.
+
+- [ ] **Explicit "real orders off" switch — per symbol AND global — with virtual always on.**
+      Rationale (for the live-money transition): testnet charts are not live charts, so
+      preset statistics gathered on testnet do not transfer. The plan is to run live in
+      virtual-only mode first, collect real-market statistics for every symbol, and only
+      then turn real orders on — symbol by symbol.
+      **Already exists in pieces, but not as one clean control**:
+        - per-symbol "no real, yes virtual" ≈ today's `disabled` state
+        - `virtual_only_floor` — automatic and score-based, and only consulted in
+          non-TATS (`main.py:489`), so it does nothing in the current scenario
+        - the STOP file halts *everything*, virtual included — not what we want
+      **What is missing**: a deliberate `real_orders_enabled` flag (global + per-symbol)
+      that is independent of weights, scenario and preset scores, and that never
+      suppresses virtual collection. Should be visible and toggleable from the dashboard.
+
+---
+
 ## Session 64 (2026-08-30) — deployed; slippage identified as a loss predictor
 
 - [x] **Deployed `4553598`** — analysis log, tier fix, substitution (off), slippage

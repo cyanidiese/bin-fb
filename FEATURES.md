@@ -576,7 +576,12 @@ suppressed the levels that were working. L4 is in fact the only net-positive lev
   be confirmed, so it is not applied
 - Accepts a JSON list (from `per_symbol_settings`) as well as a tuple
 - Env default: `MAX_PROFIT_PCT_LEVELS` (comma-separated, empty = all levels)
-- Config example: `per_symbol_settings.EIGENUSDT = {"max_profit_pct": 8, "max_profit_pct_levels": [3]}`
+- **LIVE since 2026-09-05**: `per_symbol_settings.EIGENUSDT = {"max_sl_pct": 8, "max_profit_pct": 8, "max_profit_pct_levels": [3]}` — L3 signals on EIGENUSDT whose
+  TP projects further than 8% are skipped. L2 and L4 are unaffected, as is every other
+  symbol. Backup of the prior config: `/opt/bot/risk_config.json.bak-s65`.
+  Measured on 97 real orders: rejects 6 (4 losers −387, 2 winners +139), net +247.66,
+  positive in both halves (H1 +107.47 / H2 +140.19). Expect ~6% fewer EIGENUSDT orders
+  (about 1 skipped per 12 days) and ~1.5% fewer across all symbols.
 - **Deploy ordering matters**: the config key only takes effect once the code is deployed. On an
   older build `max_profit_pct_levels` is not a valid Settings field, so the merge silently drops
   it and `max_profit_pct` would apply at EVERY level. Deploy the code before setting the config.

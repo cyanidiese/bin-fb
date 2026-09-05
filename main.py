@@ -1117,7 +1117,13 @@ async def run() -> None:
             # global switch would be wrong for most of the book either way.
             _sub_on = risk_cfg.get("substitution_enabled_per_symbol", {}).get(
                 sym, risk_cfg.get("substitution_enabled", False))
-            if best_sym is None and _sub_on:
+            # A manual lock means "use exactly this preset" — never substitute away
+            # from it. Without this guard the recommendation would come from the
+            # substitute while _try_place_order (which takes the locked branch) would
+            # size and manage the order with the LOCKED preset's settings, so entry/TP/SL
+            # and the trail/partial rules would come from two different presets.
+            _is_locked_sym = sym in risk_cfg.get("locked_presets", {})
+            if best_sym is None and _sub_on and not _is_locked_sym:
                 # The best preset produced no recommendation. Fall back to ONE rank
                 # down — the next preset that is both live-proven (tier 1) and
                 # currently profitable. Deliberately a single rank: measured on real

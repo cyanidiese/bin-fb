@@ -155,3 +155,37 @@ def test_only_the_named_symbols_are_affected():
     cfg = {"substitution_enabled_per_symbol": {"INJUSDT": True, "TIAUSDT": True}}
     assert [_resolve(cfg, s) for s in ("INJUSDT", "TIAUSDT")] == [True, True]
     assert [_resolve(cfg, s) for s in ("EIGENUSDT", "DOGEUSDT", "SOLUSDT")] == [False, False, False]
+
+
+# ── a manual lock must never be substituted away ────────────────────────── #
+# _try_place_order takes the locked branch and uses the LOCKED preset's settings.
+# If substitution had already replaced the recommendation, entry/TP/SL would come
+# from one preset while the trail/partial rules came from another.
+
+def _should_substitute(cfg, symbol, best_is_none=True):
+    """Mirrors the guard in main.py's candidate loop."""
+    on = cfg.get("substitution_enabled_per_symbol", {}).get(
+        symbol, cfg.get("substitution_enabled", False))
+    locked = symbol in cfg.get("locked_presets", {})
+    return best_is_none and on and not locked
+
+
+def test_locked_symbol_is_never_substituted():
+    cfg = {"substitution_enabled": True, "locked_presets": {"INJUSDT": "oscillating_zone"}}
+    assert _should_substitute(cfg, "INJUSDT") is False
+
+
+def test_lock_beats_a_per_symbol_enable():
+    cfg = {"substitution_enabled_per_symbol": {"INJUSDT": True},
+           "locked_presets": {"INJUSDT": "oscillating_zone"}}
+    assert _should_substitute(cfg, "INJUSDT") is False
+
+
+def test_unlocked_symbols_still_substitute_normally():
+    cfg = {"substitution_enabled": True, "locked_presets": {"INJUSDT": "oscillating_zone"}}
+    assert _should_substitute(cfg, "EIGENUSDT") is True
+
+
+def test_removing_the_lock_restores_substitution():
+    cfg = {"substitution_enabled": True, "locked_presets": {}}
+    assert _should_substitute(cfg, "INJUSDT") is True

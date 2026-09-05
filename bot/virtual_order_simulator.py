@@ -12,6 +12,7 @@ from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config
 from bot import analysis_log
+from config.settings import max_profit_cap_applies
 
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
@@ -317,7 +318,8 @@ class VirtualOrderSimulator:
         if abs(sl - entry) < entry * 0.0001:
             return
 
-        if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
+        if (max_profit_cap_applies(preset_settings, rec.getLevel())
+                and profit_dist_pct > preset_settings.max_profit_pct):
             return
         # SL floor: widen to the higher of the preset's own floor and the global floor
         # (mirrors _try_place_order so virtual and real orders evaluate the same signals).
@@ -446,6 +448,10 @@ class VirtualOrderSimulator:
             'quantity': quantity,
             'leverage': lev,
             'scenario': self._get_scenario() if self._get_scenario else '',
+            # Which trend level produced the recommendation. Real orders have always
+            # recorded this; virtual orders did not, so a preset's behaviour per level
+            # could not be compared between the two.
+            'signal_level': rec.getLevel() or 0,
             'rank_balance_at_open': self._rank_balance[rank],
             'open_time': datetime.now(timezone.utc).isoformat(),
             'status': 'open',

@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from bot.analyzer import Analyzer
 from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
-from config.settings import Settings
+from config.settings import Settings, max_profit_cap_applies
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +350,8 @@ class Backtester:
                     if abs(sl - entry_price) < entry_price * 0.0001:
                         continue
 
-                    if settings.max_profit_pct > 0 and profit_dist_pct > settings.max_profit_pct:
+                    if (max_profit_cap_applies(settings, rec.getLevel())
+                            and profit_dist_pct > settings.max_profit_pct):
                         continue
                     # SL floor: widen any SL below the effective floor (mirrors live bot).
                     # The floor is the higher of the preset's own min_sl_pct and the global floor.

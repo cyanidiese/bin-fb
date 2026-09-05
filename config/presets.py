@@ -34,6 +34,8 @@ class PresetOverrides(TypedDict, total=False):
     sl_adjust_to_rr: bool
     # TP distance cap (0.0 = disabled)
     max_profit_pct: float
+    # Levels the TP cap applies to (empty = all levels)
+    max_profit_pct_levels: tuple[int, ...]
     # Correction quality bonus (0.0 = disabled)
     correction_weight: float
     # Candle-based cooldown (0 = disabled)

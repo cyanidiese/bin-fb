@@ -427,6 +427,14 @@ export default function TradesPage() {
     ? `Trading Orders — ${selectedPreset} (${tradingOrders.length}${totalOpen > 0 ? ` · ${totalOpen} live` : ''})`
     : `Trading Orders (${fdata.real_orders.length} real · ${allRankOrdersFlat.length} rank virtual${totalOpen > 0 ? ` · ${totalOpen} live` : ''})`
 
+  // Trend level of the originating recommendation. Orders recorded before the field
+  // existed have no level — show a dash rather than inventing one.
+  const levelCell = (lvl: number | null | undefined) => (
+    <td className="py-1.5 pr-2 text-center font-mono text-xs text-gray-400">
+      {lvl ? lvl : <span className="text-gray-700">—</span>}
+    </td>
+  )
+
   const thProps = { sortKey, sortDir, onSort: handleSort }
 
   // Cast rank orders to the shape TradesChart expects for virtual orders
@@ -732,6 +740,7 @@ export default function TradesPage() {
                   <th className="py-2 pr-3">Preset</th>
                   <th className="py-2 pr-3">Type</th>
                   <th className="py-2 pr-3">Side</th>
+                  <th className="py-2 pr-2 text-center w-8" title="Trend level of the recommendation this order came from">L</th>
                   <th className="py-2 pr-3 text-right">Lev</th>
                   <th className="py-2 pr-3">Scenario</th>
                   <th className="py-2 pr-3 text-right">Qty</th>
@@ -754,6 +763,7 @@ export default function TradesPage() {
                       </span>
                     </td>
                     <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>
+                    {levelCell(order.signal_level)}
                     <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{order.leverage != null ? `${order.leverage}×` : '—'}</td>
                     <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">{order.scenario || '—'}</td>
                     <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{fmtQty(order.quantity)}</td>
@@ -777,6 +787,7 @@ export default function TradesPage() {
                       </span>
                     </td>
                     <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>
+                    {levelCell(order.signal_level)}
                     <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{order.leverage != null ? `${order.leverage}×` : '—'}</td>
                     <td className="py-1.5 pr-3 text-gray-500 font-mono text-xs">{order.scenario || '—'}</td>
                     <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{fmtQty(order.quantity)}</td>
@@ -812,6 +823,7 @@ export default function TradesPage() {
                       <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>
                         {order.side}
                       </td>
+                      {levelCell(realOrder?.signal_level ?? rankOrder?.signal_level)}
                       <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">
                         {leverage != null ? `${leverage}×` : '—'}
                       </td>

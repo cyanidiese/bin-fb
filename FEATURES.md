@@ -119,6 +119,7 @@ Analyzes trend state at candle open and generates a single best trading signal (
 - `sl_filter_min/max_pct`: skip if SL is too tight/loose relative to entry
 - `min_sl_atr_mult`: skip if structure SL < ATR × multiplier (volatility-aware)
 - `max_profit_pct`: skip if TP target > % threshold
+- `max_profit_pct_levels`: restrict that cap to specific trend levels (empty = all levels)
 - `correction_weight`: bonus precision if signal follows a well-formed pullback/correction (0.0 = disabled)
 - `higher_low_buy` / `lower_high_sell`: enable pre-confirmation entry signals
 - `trailing_stop_pct`, `partial_take_pct`: order exit mechanics (see Order Execution)
@@ -554,6 +555,45 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Colors**: Text changed to `text-xs` and `gray-*` palette to match peer sections
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
+
+### Level-Scoped TP Cap — `max_profit_pct_levels` (Session 65)
+Restricts `max_profit_pct` to specific trend levels instead of applying it at every level.
+Empty (the default) means the cap applies everywhere, so every existing preset is unchanged.
+
+**Why**: the TP is projected from the swing structure (`raw_tp = rec.getTarget()`), so how far
+it lands depends on which level produced the signal. On EIGENUSDT the L3 projections asked for
+targets the instrument does not reach — 13 of 97 real orders had a TP more than 8% away and not
+one closed at TP — while its L2 and L4 signals showed no such problem. A flat cap would have
+suppressed the levels that were working. L4 is in fact the only net-positive level book-wide
+(12 orders, +42.40) against L2 (250 orders, −609.45).
+
+**Files**: `config/settings.py` (field + `max_profit_cap_applies()` helper), `config/presets.py`
+(PresetOverrides), `main.py` (live path), `bot/virtual_order_simulator.py`, `bot/backtester.py`
+**Key details**:
+- Single shared helper `max_profit_cap_applies(settings, level)` used by all three enforcement
+  sites so live / virtual / backtest cannot drift apart
+- A signal whose level is unknown is left UNCAPPED — the cap is scoped to a level that could not
+  be confirmed, so it is not applied
+- Accepts a JSON list (from `per_symbol_settings`) as well as a tuple
+- Env default: `MAX_PROFIT_PCT_LEVELS` (comma-separated, empty = all levels)
+- Config example: `per_symbol_settings.EIGENUSDT = {"max_profit_pct": 8, "max_profit_pct_levels": [3]}`
+- **Deploy ordering matters**: the config key only takes effect once the code is deployed. On an
+  older build `max_profit_pct_levels` is not a valid Settings field, so the merge silently drops
+  it and `max_profit_pct` would apply at EVERY level. Deploy the code before setting the config.
+- Tests: `tests/test_max_profit_pct_levels.py` (7 cases)
+
+### Order Trend Level in the Dashboard (Session 65)
+Narrow **L** column in the Trades page Trading Orders table showing the trend level of the
+recommendation each order came from, for open and closed, real and rank-virtual rows.
+
+**Files**: `bot/virtual_order_simulator.py` (records `signal_level`), `dashboard/lib/types.ts`,
+`dashboard/app/trades/page.tsx`
+**Key details**:
+- Real orders have always recorded `signal_level`; virtual orders did not, so a preset's
+  behaviour per level could not be compared between real and virtual. Now both record it.
+- Orders written before the field existed render `—` rather than a guessed value. All 408
+  existing real orders already carry a level; existing rank-virtual orders show `—` until the
+  new build has been running.
 
 ### Per-Symbol Settings Overrides (Session 37)
 Override any preset setting for a specific symbol, allowing capital-unlock and fine-tuning without creating new presets. Applied at order placement time after preset selection.

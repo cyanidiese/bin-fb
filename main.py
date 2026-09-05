@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
-from config.settings import load_settings, Settings
+from config.settings import load_settings, Settings, max_profit_cap_applies
 from bot.analyzer import Analyzer
 from bot import analysis_log
 from bot.data_feed import DataFeed
@@ -559,12 +559,14 @@ async def run() -> None:
         _eff_for_dl = virtual_tracker.get_efficiency_score(symbol)
         _global_min_sl = risk_cfg.get("global_min_sl_pct", 0.0)
 
-        # max_profit_pct filter
-        if preset_settings.max_profit_pct > 0 and profit_dist_pct > preset_settings.max_profit_pct:
+        # max_profit_pct filter (optionally scoped to specific trend levels)
+        _sig_level = best.getLevel()
+        if max_profit_cap_applies(preset_settings, _sig_level) and profit_dist_pct > preset_settings.max_profit_pct:
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
                 decision='skip_max_profit_pct',
-                reason=f'profit={profit_dist_pct:.2f}% > max={preset_settings.max_profit_pct}%',
+                reason=(f'profit={profit_dist_pct:.2f}% > max={preset_settings.max_profit_pct}% '
+                        f'(L{_sig_level})'),
                 balance=balance, leverage=0, efficiency_score=_eff_for_dl,
                 preset_name=preset_name, scenario=_active_scenario_name,
             )

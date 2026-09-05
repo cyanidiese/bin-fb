@@ -227,6 +227,9 @@ export interface RealOrder {
   sl: number;
   quantity: number;
   leverage: number;
+  /** Trend level of the recommendation this order came from. Absent on orders
+   *  recorded before the field was added. */
+  signal_level?: number | null;
   scenario: string | null;
   open_time: string | null;
   close_time: string;
@@ -243,6 +246,9 @@ export interface VirtualOrder {
   quantity: number;
   leverage: number;
   virtual_margin: number | null;
+  /** Trend level of the recommendation this order came from. Absent on orders
+   *  recorded before the field was added. */
+  signal_level?: number | null;
   scenario: string | null;
   open_time: string;
   status: 'open' | 'closed';
@@ -266,6 +272,9 @@ export interface RankOrder {
   sl: number;
   quantity: number;
   leverage: number;
+  /** Trend level of the recommendation this order came from. Absent on orders
+   *  recorded before the field was added. */
+  signal_level?: number | null;
   scenario: string | null;
   open_time: string;
   status: 'open' | 'closed';
@@ -291,6 +300,9 @@ export interface OpenRealPosition {
   sl: number;
   quantity: number;
   leverage: number;
+  /** Trend level of the recommendation this order came from. Absent on orders
+   *  recorded before the field was added. */
+  signal_level?: number | null;
   scenario: string | null;
   open_time: string | null;
   status: 'open';
@@ -306,6 +318,9 @@ export interface OpenVirtualPosition {
   sl: number;
   quantity: number;
   leverage: number;
+  /** Trend level of the recommendation this order came from. Absent on orders
+   *  recorded before the field was added. */
+  signal_level?: number | null;
   scenario: string | null;
   open_time: string;
   rank_balance_at_open: number | null;

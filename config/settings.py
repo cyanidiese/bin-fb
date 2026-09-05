@@ -48,6 +48,10 @@ class Settings:
     sl_adjust_to_rr: bool
     # Max TP distance as % of entry. Trades with wider TP targets are skipped. 0.0 = disabled.
     max_profit_pct: float
+    # Restrict max_profit_pct to specific trend levels. Empty = apply to every level.
+    # The TP is projected from the swing structure, so how far it lands depends on which
+    # level produced the signal; a cap that is right for one level can be wrong for another.
+    max_profit_pct_levels: tuple[int, ...]
     # Correction quality bonus weight in precision scoring. 0.0 = disabled (no change to scoring).
     # When > 0, signals that follow a well-formed correction get a precision boost up to this value.
     correction_weight: float
@@ -201,6 +205,9 @@ def load_settings(symbol: str | None = None) -> Settings:
         atr_lookback=int(os.getenv('ATR_LOOKBACK', '20')),
         sl_adjust_to_rr=os.getenv('SL_ADJUST_TO_RR', 'false').lower() in ('1', 'true', 'yes'),
         max_profit_pct=float(os.getenv('MAX_PROFIT_PCT', '0.0')),
+        max_profit_pct_levels=tuple(
+            int(x) for x in os.getenv('MAX_PROFIT_PCT_LEVELS', '').replace(' ', '').split(',') if x
+        ),
         correction_weight=float(os.getenv('CORRECTION_WEIGHT', '0.0')),
         loss_streak_max=int(os.getenv('LOSS_STREAK_MAX', '0')),
         loss_streak_cooldown_candles=int(os.getenv('LOSS_STREAK_COOLDOWN_CANDLES', '5')),
@@ -285,3 +292,22 @@ def _apply_symbol_overrides(settings: Settings, symbol: str) -> Settings:
         except (ValueError, TypeError):
             pass
     return dataclasses.replace(settings, **overrides) if overrides else settings
+
+
+def max_profit_cap_applies(settings: "Settings", level: "int | None") -> bool:
+    """Whether the max_profit_pct cap governs a signal at this trend level.
+
+    An empty ``max_profit_pct_levels`` means the cap applies at every level, which
+    keeps every existing preset behaving exactly as before. When specific levels are
+    listed, a signal whose level is unknown is left UNCAPPED rather than guessed at —
+    the cap is scoped to a level we could not confirm, so it is not ours to apply.
+
+    Shared by the live path, the virtual simulator and the backtester so the three
+    cannot drift apart.
+    """
+    if settings.max_profit_pct <= 0:
+        return False
+    levels = settings.max_profit_pct_levels
+    if not levels:
+        return True
+    return level is not None and level in levels

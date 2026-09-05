@@ -23,12 +23,16 @@ Legend: [ ] pending  [~] in progress  [x] done
       **Already done**: `is_disabled` symbols DO run virtual-only (`main.py:1042-1054`,
       `virtual_only=True`).
       **Gaps to close**:
-        - `is_symbol_paused(sym)` → `continue` at `main.py:1094` skips the symbol
-          entirely, virtual included.
+        - **PAUSED symbols must still run virtual orders.** `is_symbol_paused(sym)` →
+          `continue` at `main.py:1094` skips the symbol entirely, virtual included. A
+          paused symbol is precisely the one we need statistics on, because the pause
+          is a decision we will later want to review with evidence — and today the
+          pause destroys the evidence that would inform it.
         - `weight == 0.0` in non-TATS → `continue` at `main.py:1096` does the same.
           (Harmless while `scenario = tats`, which ignores weights — but it is a trap
           waiting for whoever switches scenario.)
       Both should fall through to the virtual-only branch instead of `continue`.
+      No symbol, in any state, should ever stop producing virtual orders.
 
 - [ ] **Explicit "real orders off" switch — per symbol AND global — with virtual always on.**
       Rationale (for the live-money transition): testnet charts are not live charts, so
@@ -43,6 +47,18 @@ Legend: [ ] pending  [~] in progress  [x] done
       **What is missing**: a deliberate `real_orders_enabled` flag (global + per-symbol)
       that is independent of weights, scenario and preset scores, and that never
       suppresses virtual collection. Should be visible and toggleable from the dashboard.
+      **Separate order logs per mode.** Every kind of order record must be written to
+      its own file per trading mode, so test and live history never share a file.
+      Verified state today:
+        - `real_orders_<SYM>_test.json` — suffixed OK
+        - `virtual_orders_rank<N>_<SYM>_test.json` — suffixed OK
+        - `data/decision_log_<mode>.json` (`main.py:308`) — suffixed OK
+        - `logs/bot.log` (`main.py:91`) — **NOT suffixed**
+        - `logs/analysis.jsonl` (`main.py:302`) — **NOT suffixed**
+      The last two would append live runs straight into testnet history. That would
+      corrupt exactly the statistics this transition depends on, and the records cannot
+      be unmixed afterwards. Fix both before the first live run, and re-audit every
+      writer at that point rather than trusting this list.
 
 ---
 

@@ -1318,16 +1318,30 @@ Visual indicators on SymbolSwitcher showing symbol health status. Red = disabled
 - Disabled list fetched from `/api/symbols` every 30s
 - Live orders source (Session 29): `/api/open-positions` (reads `data/bot_mode.json` + `data/open_positions_{mode}.json`; returns `{ symbols: string[] }` of symbols with open orders; empty list if bot not running)
 
-### Chart DateTime Range Pickers (Dashboard Trades Page)
-Filter chart klines by date range. Two `datetime-local` inputs with in-memory filtering (no re-fetch) and reset button.
+### Page-Wide DateTime Range (Dashboard Trades Page) — Session 65
+One From/To range at the top of the Trades page drives **every** widget on it: Preset
+Efficiency rows and their counts, the price chart, the Trading Orders table, and all
+order counts in section headings. In-memory filtering only — no re-fetch.
 
-**Files**: `dashboard/app/trades/page.tsx`
+Previously these pickers lived inside the chart widget and filtered klines alone, so
+Preset Efficiency counts always reflected all history regardless of the chart range.
+
+**Files**: `dashboard/lib/tradesDateRange.ts` (helpers), `dashboard/app/trades/page.tsx`
 **Key details**:
-- From / To pickers on chart widget
-- Filters already-loaded klines array in memory
-- Shows "N of M candles" when filtered
-- Reset button clears both pickers
-- Charts update immediately without server round-trip
+- Toolbar sits directly above the Preset Efficiency widget
+- Default range: `from = max(now − 1 month, earliest data for the symbol)`, `to = now`.
+  Clamping to the earliest data means a symbol with a week of history opens on that
+  week, not three empty weeks before it.
+- Re-defaults when the symbol changes; user edits persist until then
+- "Last month" button restores the default; "All history" widens to the full dataset
+- `TradesData` is filtered **once** (`filterTradesData`) near the top of the component,
+  so a widget added later inherits the range instead of silently showing all history
+- An order is in range if it was OPEN at any point in the window (overlap test, not
+  `open_time` alone) — a trade that opened before the window and closed inside it is
+  kept. Undated orders are never hidden.
+- **Deliberately NOT filtered** (current state, not history): `preset_ranks` (the Rank
+  column), `rank_balances`, `best_preset`, and open real/virtual positions
+- Chart shows "N of M candles in range" when narrowed
 
 ### Strategy Page Time Travel (Session 39)
 Replay bot's trend analysis state at any historical candle index. Users can scrub backward through the strategy timeline to see what signals were active at past moments, including swing points, trend levels, and indicators at that candle.

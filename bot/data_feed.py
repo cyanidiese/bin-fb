@@ -10,6 +10,8 @@ from binance.client import Client
 
 from config.settings import Settings
 
+from bot.rate_limit_guard import guard as rl_guard, RateLimited
+
 logger = logging.getLogger(__name__)
 
 # REST endpoints
@@ -161,9 +163,16 @@ class DataFeed:
         params = {'symbol': symbol, 'interval': timeframe, 'limit': limit}
         if start_ms is not None:
             params['startTime'] = start_ms
+        _key = self._klines_source
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            raise RateLimited(_key, _wait)
         try:
             return self._klines_client.futures_klines(**params)
         except Exception as e:
+            # Arm the guard before re-raising so the next scheduled fetch skips the
+            # network entirely instead of extending the ban.
+            rl_guard.note_exception(_key, e)
             logger.error(f"Failed to fetch klines: {e}")
             raise
 

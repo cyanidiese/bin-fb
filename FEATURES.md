@@ -556,6 +556,35 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
 
+### Rate-Limit Circuit Breaker (Session 66)
+When Binance answers `-1003` / HTTP 418, it states when the ban lifts. The guard reads
+that, and suppresses further requests to that endpoint until it expires.
+
+**Why**: calling while banned *extends* the ban. From the 2026-09-06 log —
+`04:30:00 banned until 05:09`, then `04:30:01 banned until 05:35`: one second later,
+26 minutes worse. Bans left alone lasted ~4 minutes; bans we kept knocking on ran to 82.
+
+**Files**: `bot/rate_limit_guard.py` (new), `bot/data_feed.py` (`_fetch`),
+`bot/order_executor.py` (`fetch_account_balance`)
+**Key details**:
+- Keyed per endpoint (`testnet` / `production`) so a ban on one never silences the other
+- Only rate-limit errors arm it — an ordinary `-2019` or connection error never
+  suppresses traffic
+- A missing expiry falls back to 60s; an absurd one is capped at 1h, so a malformed
+  message cannot silence an endpoint for days
+- A nearer expiry never shortens an active block
+- **Deliberately NOT applied to order placement** — placing an order is rare and
+  high-value, and it fails loudly through paths that already handle it. This guards the
+  two high-frequency read paths (klines, balance) that account for every ban error seen.
+- Clearing is logged, so recovery is visible
+- Tests: `tests/test_rate_limit_guard.py` (19), `tests/test_rate_limit_integration.py` (4,
+  asserting the network call is actually skipped rather than just state being recorded)
+
+**This is damage control, not prevention.** Our own consumption is 1–3 request-weight
+against a 6000/min limit, and the IP Binance names (`15.158.242.x`) is a shared
+CloudFront edge, not our egress (`185.237.14.105`). We are not the cause and cannot
+prevent these bans — we can only stop making them worse.
+
 ### Balance Cache TTL (Session 66)
 `_BALANCE_TTL` raised 5s → 60s (`main.py:402`) so one balance read covers a whole
 candle batch.

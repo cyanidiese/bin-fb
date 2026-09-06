@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 from config.settings import Settings
 from config.risk_config import load_risk_config
+from bot.rate_limit_guard import guard as rl_guard
 from bot.risk_manager import RiskManager
 from bot.notifier import Notifier
 from bot.fake_order import FakeOrder
@@ -1069,6 +1070,17 @@ class OrderExecutor:
         """
         if self._feed is None:
             return 0.0
+        # futures_account is our most expensive call (weight 5). When the trading
+        # endpoint has banned us, skip the round-trip: it would fail anyway and each
+        # attempt while banned extends the ban.
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            logger.warning(
+                f"Skipping balance fetch: '{_key}' rate-limit banned for another "
+                f"{_wait:.0f}s"
+            )
+            return 0.0
         try:
             account = await asyncio.to_thread(self._feed.client.futures_account)
             for asset in account.get('assets', []) or []:
@@ -1081,6 +1093,7 @@ class OrderExecutor:
             )
             return total
         except Exception as exc:
+            rl_guard.note_exception(_key, exc)
             logger.warning(f"Failed to fetch account balance: {exc}")
             return 0.0
 

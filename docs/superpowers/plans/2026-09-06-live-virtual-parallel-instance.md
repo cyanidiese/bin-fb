@@ -18,6 +18,7 @@
 - Files keep their normal paths. Suffixes apply **only off test mode**, so existing filenames and every dashboard reader are untouched.
 - Baseline: **456 passing** (Tasks 1 and 1a already committed: `ffd965a`, `14db2f7`).
 - Never deploy without explicit user confirmation.
+- Resource headroom measured 2026-09-06: 1,998 MB RAM available, `bot` uses 138 MB at 0.44% CPU, 5.0 GB disk free with `data/` at 144 MB. A second instance is comfortable — but its logs must rotate (Task 6 Step 2b) or disk becomes the failure mode.
 
 ## The shared-state taxonomy
 
@@ -39,6 +40,7 @@ Suffixing these would break the handover, because the dashboard writes to the un
 | file | writer |
 |---|---|
 | `logs/bot.log` | compose redirect + `main.py:92` |
+| `logs/trades.log` | `main.py:101` — two `RotatingFileHandler`s on one file fight during rollover |
 | `logs/analysis.jsonl` | `main.py:306` |
 | `data/system_log.json` | `main.py:126` |
 | `dashboard/public/alert_state.json` | `main.py:127` |
@@ -500,7 +502,10 @@ def _mode_path(base: Path, name: str, mode: str) -> Path:
 ```
 
 Apply it to `analysis.jsonl`, `system_log.json` and `alert_state.json`, and pass a
-`state_path` into `RiskManager` for `risk_state.json`. For `bot.log`, the handler runs
+`state_path` into `RiskManager` for `risk_state.json`. `logs/trades.log`
+(`main.py:101`) needs the same treatment — two `RotatingFileHandler`s pointed at one
+file will collide during rollover even though the virtual instance logs no trades.
+For `bot.log`, the handler runs
 before `current_mode` exists — read the env there:
 
 ```python
@@ -542,7 +547,7 @@ python3 -c "
 from pathlib import Path
 from main import _mode_path
 from bot.exporter import _results_path
-for n in ('risk_state.json','alert_state.json','system_log.json','analysis.jsonl','bot.log'):
+for n in ('risk_state.json','alert_state.json','system_log.json','analysis.jsonl','bot.log','trades.log'):
     assert _mode_path(Path('x'), n, 'test') == Path('x')/n, n
 assert Path('dashboard/public/results_INJUSDT.json') in _results_path('INJUSDT','test')
 print('every test-mode path is unchanged')
@@ -558,6 +563,131 @@ git commit -m "feat(paths): mode-suffix per-instance files off test mode
 
 risk_state.json matters most: a virtual-only instance has balance 0 and would
 otherwise zero the trading bot's risk page. Test-mode paths are unchanged."
+```
+
+---
+
+### Task 4b: Make the registry write atomic and survive a read-only mount
+
+`SymbolRegistry._persist()` uses `write_text()` directly (`symbol_registry.py:235`),
+unlike `risk_config._atomic_write()` which does tmp+replace. With two processes reading
+the file, a reader can catch it mid-write and get truncated JSON. `_load()` then falls
+through its `except` to `_persist()` — a **write** — which on the `:ro` mount raises
+`PermissionError` and kills the instance at startup.
+
+So the `:ro` safety measure turns a transient read glitch into a hard crash. Fixing the
+write atomically removes the trigger; tolerating a failed persist removes the crash.
+Both improve the existing bot too.
+
+**Files:**
+- Modify: `bot/symbol_registry.py:235` (`_persist`)
+- Test: `tests/test_symbol_registry_atomic.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_symbol_registry_atomic.py
+"""The registry must be written atomically and must not die on a read-only mount.
+
+Two processes now read this file. A non-atomic write lets a reader see truncated
+JSON; _load() then falls through to _persist(), which on a read-only mount raises
+and takes the instance down at startup.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+from bot.symbol_registry import SymbolRegistry
+
+
+def test_persist_is_atomic(tmp_path, monkeypatch):
+    """A reader must never observe a partially written file."""
+    path = tmp_path / 'symbol_registry.json'
+    r = SymbolRegistry(seed_symbols=['INJUSDT'], path=path)
+    seen = {}
+
+    real_replace = Path.replace
+
+    def spy(self, target):
+        # At the moment of replace the destination is either absent or complete —
+        # never half-written.
+        if target.exists():
+            seen['valid_before_swap'] = json.loads(target.read_text()) is not None
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, 'replace', spy)
+    r.pause_symbol('INJUSDT')
+    assert json.loads(path.read_text())['paused']
+
+
+def test_read_only_mount_does_not_crash(tmp_path):
+    """A failed persist must be logged, not fatal."""
+    path = tmp_path / 'symbol_registry.json'
+    path.write_text('{ this is not valid json')
+    path.chmod(0o444)
+    try:
+        r = SymbolRegistry(seed_symbols=['INJUSDT'], path=path)
+        assert r.get_symbols() == ['INJUSDT'], 'must fall back to the seed, not die'
+    finally:
+        path.chmod(0o644)
+
+
+def test_corrupt_file_falls_back_to_seed(tmp_path):
+    path = tmp_path / 'symbol_registry.json'
+    path.write_text('{ truncated')
+    r = SymbolRegistry(seed_symbols=['INJUSDT', 'TIAUSDT'], path=path)
+    assert r.get_symbols() == ['INJUSDT', 'TIAUSDT']
+```
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `python3 -m pytest tests/test_symbol_registry_atomic.py -q`
+Expected: FAIL — `test_read_only_mount_does_not_crash` raises `PermissionError`. Check
+`SymbolRegistry.__init__`'s real parameter name for the path first and match the test to it.
+
+- [ ] **Step 3: Implement**
+
+```python
+    def _persist(self) -> None:
+        data = {
+            'symbols': self._symbols,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+            'status': self._status,
+            'weights': self._weights,
+            'disabled': self._disabled,
+            'disabled_ranks': self._disabled_ranks,
+            'paused': self._paused,
+            'leverage_overrides': self._leverage_overrides,
+        }
+        # Atomic: a second process now reads this file, and a direct write_text lets a
+        # reader observe truncated JSON. Matches config/risk_config.py::_atomic_write.
+        try:
+            tmp = self._path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.replace(self._path)
+        except OSError as exc:
+            # A read-only mount is a deliberate configuration for the virtual-only
+            # instance, not a fault. Losing an in-memory change is acceptable there;
+            # crashing at startup is not.
+            logger.warning(f"SymbolRegistry: cannot persist to {self._path}: {exc}")
+```
+
+- [ ] **Step 4: Run the tests and the full suite**
+
+Run: `python3 -m pytest tests/test_symbol_registry_atomic.py -q` → 3 passed
+Run: `python3 -m pytest tests/ -q` → 477 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bot/symbol_registry.py tests/test_symbol_registry_atomic.py
+git commit -m "fix(registry): atomic persist, and survive a read-only mount
+
+Two processes now read symbol_registry.json. write_text() is not atomic, so a
+reader could see truncated JSON; _load() then falls through to _persist(), which
+on the virtual instance's read-only mount would raise and kill it at startup.
+Also fixes a latent race for the existing bot."
 ```
 
 ---
@@ -700,6 +830,22 @@ assert sum(1 for v in c['volumes'] if v.endswith(':ro')) == 2, 'config must be r
 print('bot_live: no credentials, config read-only')
 "
 ```
+
+- [ ] **Step 2b: Extend logrotate to the live logs**
+
+logrotate lists **explicit paths** (`/opt/bot/logs/bot.log /opt/bot/logs/trades.log`), so
+the new files would never rotate. The compose stdout redirect appends to `bot_live.log`
+outside Python's `RotatingFileHandler` cap, so it grows without limit — and 5 GB of free
+disk is what both bots are living on.
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
+  "sed -i 's#^/opt/bot/logs/bot.log /opt/bot/logs/trades.log {#/opt/bot/logs/bot.log /opt/bot/logs/trades.log /opt/bot/logs/bot_live.log /opt/bot/logs/trades_live.log {#' /etc/logrotate.d/bot && \
+   head -1 /etc/logrotate.d/bot && logrotate -d /etc/logrotate.d/bot 2>&1 | grep -c 'considering log'"
+```
+
+Expected: the first line lists four paths, and the dry run considers four logs. Find the
+real config filename first with `ls /etc/logrotate.d/`.
 
 - [ ] **Step 3: Update FEATURES.md**
 

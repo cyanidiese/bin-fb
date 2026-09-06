@@ -306,6 +306,21 @@ def test_exchange_symbol_check_is_guarded():
     assert _guarded('check_symbols_on_exchange(')
 
 
+def test_reconcile_with_exchange_is_guarded():
+    """Startup call to futures_position_information — a private endpoint. Keyless it
+    logs an error every boot, and its whole purpose (closing positions the bot does
+    not know about) is meaningless for an instance that never opens any."""
+    assert _guarded('reconcile_with_exchange(')
+
+
+def test_telegram_menu_is_guarded():
+    """Both instances would poll getUpdates with the SAME bot token. Telegram
+    delivers each update exactly once, so commands would go to whichever instance
+    grabbed them first — including do_pause / do_resume / do_enable, which mutate the
+    shared symbol registry, and the allow/deny/revoke auth flow."""
+    assert _guarded('telegram_menu.run()')
+
+
 def test_flag_only_skips_never_alters():
     """Guards must be plain skips. A virtual_only branch that CHANGES an order's
     size, price or side would put the flag on the real-money path."""
@@ -320,7 +335,7 @@ def test_flag_only_skips_never_alters():
 - [ ] **Step 2: Run it to make sure it fails**
 
 Run: `python3 -m pytest tests/test_virtual_only_skips_real_orders.py -q`
-Expected: FAIL on the first five tests — no guards exist yet.
+Expected: FAIL on the first seven tests — no guards exist yet.
 
 - [ ] **Step 3: Add the guards**
 
@@ -376,6 +391,23 @@ Guard the two shared-config writers. Both protect the *testnet* bot:
             await order_executor.check_symbols_on_exchange(symbols)
 ```
 
+```python
+        # Private endpoint, and pointless for an instance that opens no positions.
+        if not _virtual_only:
+            await order_executor.reconcile_with_exchange()
+```
+
+```python
+        # Telegram delivers each update exactly once. Two pollers on one token means
+        # your commands land on a coin flip — and do_pause/do_resume/do_enable mutate
+        # the shared symbol registry.
+        if not _virtual_only:
+            _menu_task = asyncio.create_task(telegram_menu.run())
+```
+
+Note `_menu_task` is referenced during shutdown; initialise it to `None` before the
+guard and skip cancelling it when it is `None`.
+
 Note `candle_ts` is assigned inside the placement guard above; move its assignment
 above both guards so the rebalancer guard can still reference it.
 
@@ -391,7 +423,7 @@ Record it; Task 6 Step 7 re-checks it after the live instance has run.
 - [ ] **Step 4: Run the tests and make sure they pass**
 
 Run: `python3 -m pytest tests/test_virtual_only_skips_real_orders.py -q`
-Expected: 6 passed
+Expected: 8 passed
 
 - [ ] **Step 5: Prove the trading path is untouched**
 
@@ -428,13 +460,32 @@ price, side or leverage, so it cannot reach the real-money path."
 
 ---
 
-### Task 3: Mode-suffixed exporter, dual-writing for safety
+### Task 3: Mode-suffix everything written to the shared public dir
 
-`exporter.py:96` takes `mode` and ignores it, so two instances would overwrite each other's chart data. Dual-write in test mode so the dashboard keeps working untouched.
+`dashboard/public/` is the **one shared mount** — the dashboard has to read both
+instances — so every bot-written file in it needs a mode suffix. Three do:
+
+| file | writer | today |
+|---|---|---|
+| `results_{symbol}.json` | `exporter.py:96` | takes `mode`, ignores it |
+| `alert_state.json` | `main.py:127` (Notifier) | not suffixed |
+| `risk_state.json` | `risk_manager.py:35` | not suffixed |
+
+`risk_state.json` is the nastiest: a virtual-only instance has **balance 0** (Task 2
+skips the balance read), so it would overwrite the trading bot's real risk state with
+zeros — and that is what the dashboard's risk page displays.
+
+`symbols.json` (`exporter.py:125`) stays shared: both read the same registry, so both
+write an identical list and last-writer-wins is a no-op.
+
+Every suffix is applied **only for non-test modes**, so today's filenames — and the
+dashboard readers that expect them — are untouched.
 
 **Files:**
 - Modify: `bot/exporter.py:96`
-- Test: `tests/test_exporter_mode_paths.py`
+- Modify: `main.py:127` (alert_path), `bot/risk_manager.py:35` + its construction in `main.py`
+- Modify: `dashboard/app/api/risk/route.ts:7` (accept `?mode=`, default test)
+- Test: `tests/test_shared_public_paths.py`
 
 **Interfaces:**
 - Consumes: `export(symbol, timeframe, mode, ...)` — `mode` is already a parameter.
@@ -474,6 +525,17 @@ def test_live_mode_writes_only_the_suffixed_name():
 def test_unknown_mode_is_treated_as_live():
     """Fail closed: never clobber the file the dashboard reads."""
     assert Path('dashboard/public/results_INJUSDT.json') not in _results_path('INJUSDT', 'weird')
+
+
+def test_alert_and_risk_state_are_suffixed_only_off_test():
+    """Both live in the shared public mount. risk_state matters most: a virtual-only
+    instance has balance 0, so an unsuffixed write would show the trading bot's risk
+    page as zeroed."""
+    from main import _public_state_path          # helper added in this task
+    assert _public_state_path('risk_state.json', 'test').name == 'risk_state.json'
+    assert _public_state_path('risk_state.json', 'live').name == 'risk_state_live.json'
+    assert _public_state_path('alert_state.json', 'test').name == 'alert_state.json'
+    assert _public_state_path('alert_state.json', 'live').name == 'alert_state_live.json'
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
@@ -482,6 +544,40 @@ Run: `python3 -m pytest tests/test_exporter_mode_paths.py -q`
 Expected: FAIL — `ImportError: cannot import name '_results_path'`
 
 - [ ] **Step 3: Implement**
+
+In `main.py`, add the shared-public-dir helper next to the other path builders:
+
+```python
+def _public_state_path(name: str, mode: str) -> Path:
+    """Path for a bot-written file in the SHARED dashboard/public mount.
+
+    Test mode keeps the historical unsuffixed name so every existing dashboard reader
+    is untouched; any other mode gets its own file. Without this, a virtual-only
+    instance (balance 0) would overwrite the trading bot's risk_state.json with zeros.
+    """
+    if mode == 'test':
+        return _PROJECT_ROOT / 'dashboard' / 'public' / name
+    stem, _, ext = name.rpartition('.')
+    return _PROJECT_ROOT / 'dashboard' / 'public' / f'{stem}_{mode}.{ext}'
+```
+
+Use it for the notifier's `alert_path` and pass a `state_path` into `RiskManager`:
+
+```python
+        alert_path=_public_state_path('alert_state.json', current_mode),
+```
+
+```python
+    risk_manager = RiskManager(
+        mode=current_mode,
+        notifier=notifier,
+        state_path=_public_state_path('risk_state.json', current_mode),
+    )
+```
+
+`current_mode` is not yet assigned where the notifier is built — move the
+`_public_state_path` call for `alert_path` to after `current_mode` is set, or pass
+`_base_settings.trading_mode` if `virtual_only` else `'test'`.
 
 In `bot/exporter.py`, above `export()`:
 
@@ -652,8 +748,15 @@ the primary bot passes an empty label and its messages are unchanged."
 
 The trades API already accepts `?mode=` (`route.ts:37`) and the Strategy page loads through a generic `public-file` route, so this is smaller than it looks.
 
+The live instance writes to a **separate host directory** (`data_live/`), and the
+dashboard hardcodes `path.join(BOT_ROOT, 'data', ...)` (`_utils.ts:3`) while mounting
+only `./data`. Without a directory-aware resolver the toggle would find nothing — the
+suffixed filenames it looks for live in a directory it cannot see.
+
 **Files:**
 - Create: `dashboard/components/ModeToggle.tsx`
+- Modify: `dashboard/app/api/_utils.ts` (add `dataDir(mode)`)
+- Modify: `dashboard/app/api/trades/route.ts` (use `dataDir(mode)` in place of `'data'`)
 - Modify: `dashboard/app/page.tsx:62` (results fetch)
 - Test: `dashboard/_modetoggle.test.mts` (throwaway; delete after running)
 
@@ -661,7 +764,27 @@ The trades API already accepts `?mode=` (`route.ts:37`) and the Strategy page lo
 - Consumes: `results_{symbol}_{mode}.json` from Task 3.
 - Produces: `<ModeToggle value={mode} onChange={setMode} />`; `mode: 'test' | 'live'` persisted in `localStorage` under `bfb-data-mode`.
 
-- [ ] **Step 1: Write the component**
+- [ ] **Step 1: Make the API directory-aware**
+
+In `dashboard/app/api/_utils.ts`:
+
+```ts
+/** Where a given instance's data lives.
+ *
+ *  The live virtual instance runs in its own container with ./data_live mounted at
+ *  /app/data, so on the host its files sit in a different directory — not merely
+ *  under a different filename. Test keeps the original path so nothing changes.
+ */
+export function dataDir(mode: string): string {
+  return path.join(BOT_ROOT, mode === 'live' ? 'data_live' : 'data')
+}
+```
+
+In `dashboard/app/api/trades/route.ts`, replace each `path.join(BOT_ROOT, 'data', X)`
+with `path.join(dataDir(mode), X)`. Note `bot_mode.json` at line 16 must keep reading
+the **test** directory — it is the testnet bot's mode file, not the live instance's.
+
+- [ ] **Step 2: Write the component**
 
 ```tsx
 // dashboard/components/ModeToggle.tsx
@@ -699,7 +822,7 @@ export default function ModeToggle(
 }
 ```
 
-- [ ] **Step 2: Wire it into the Strategy page**
+- [ ] **Step 3: Wire it into the Strategy page**
 
 In `dashboard/app/page.tsx`, add the state and use it in the fetch at line 62:
 
@@ -727,7 +850,7 @@ onChange={(m) => {
 }}
 ```
 
-- [ ] **Step 3: Typecheck and build**
+- [ ] **Step 4: Typecheck and build**
 
 ```bash
 cd dashboard && npx tsc --noEmit && npm run build
@@ -735,7 +858,7 @@ cd dashboard && npx tsc --noEmit && npm run build
 
 Expected: no errors; `✓ Compiled successfully`.
 
-- [ ] **Step 4: Verify the default is unchanged**
+- [ ] **Step 5: Verify the default is unchanged**
 
 ```bash
 cd dashboard && grep -n "dataMode" app/page.tsx | head
@@ -743,10 +866,10 @@ cd dashboard && grep -n "dataMode" app/page.tsx | head
 
 Expected: `useState<DataMode>('test')` — the page must load testnet data with no stored preference.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add dashboard/components/ModeToggle.tsx dashboard/app/page.tsx
+git add dashboard/components/ModeToggle.tsx dashboard/app/page.tsx dashboard/app/api/
 git commit -m "feat(dashboard): testnet/live data toggle on the Strategy page
 
 Reads results_{symbol}_{mode}.json. Defaults to test and persists the choice,
@@ -807,6 +930,15 @@ ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
 ```
 
 Note: `environment:` rather than `env_file: .env` — that is what keeps the credentials out.
+
+- [ ] **Step 2b: Mount the live data into the dashboard**
+
+The dashboard needs to *read* `data_live/` for the Task 5 toggle. Add to the existing
+`dashboard` service volumes (read-only — the dashboard must never write live data):
+
+```yaml
+      - ./data_live:/app/data_live:ro
+```
 
 - [ ] **Step 3: Verify no credentials leak in**
 

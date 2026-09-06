@@ -160,6 +160,17 @@ async def run() -> None:
     timeframe = sym_settings[symbols[0]].timeframe
     first_settings = sym_settings[symbols[0]]
 
+    # A virtual-only instance gathers preset statistics on live charts and touches
+    # nothing else: no real orders, no private endpoints, no Telegram, and no writes
+    # to config shared with the trading bot. Every guard below is a plain skip — none
+    # of them changes what a real order does.
+    _virtual_only = first_settings.virtual_only
+    if _virtual_only:
+        logger.warning(
+            "VIRTUAL-ONLY instance: no real orders, no private endpoints, no Telegram, "
+            "no shared-config writes. Collecting preset statistics only."
+        )
+
     order_executor = OrderExecutor(
         mode=current_mode,
         settings=first_settings,
@@ -298,8 +309,12 @@ async def run() -> None:
     order_executor._feed = feed
 
     # Proactive exchange check + leverage brackets
-    await order_executor.check_symbols_on_exchange(symbols)
-    await order_executor.fetch_leverage_brackets(symbols)
+    # check_symbols_on_exchange can _auto_disable() a symbol into the shared
+    # symbol_registry.json, disabling it for the trading bot too. Leverage brackets
+    # are a private endpoint and feed only the real order executor.
+    if not _virtual_only:
+        await order_executor.check_symbols_on_exchange(symbols)
+        await order_executor.fetch_leverage_brackets(symbols)
 
     virtual_order_simulator.set_lot_cache(order_executor._lot_cache)
 
@@ -395,7 +410,10 @@ async def run() -> None:
     _restored = order_executor.restore_open_positions(_restart_path)
     if _restored:
         logger.info(f"Startup: {_restored} position(s) restored from restart state")
-    await order_executor.reconcile_with_exchange()
+    # Private endpoint, and closing positions the bot has no record of is meaningless
+    # for an instance that opens none.
+    if not _virtual_only:
+        await order_executor.reconcile_with_exchange()
     _write_open_positions()  # overwrite any stale file from a crashed previous session
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
 
@@ -444,6 +462,12 @@ async def run() -> None:
         *a* number and last-known is better than 0. Do NOT use this to report a
         balance to the user — see _read_wallet_now().
         """
+        # Guarded here rather than at each call site so every caller — including any
+        # added later — is covered. futures_account is a private endpoint the
+        # virtual-only instance has no credentials for, and virtual sizing uses the
+        # rank-pool balances, not this one.
+        if _virtual_only:
+            return 0.0
         now = time.monotonic()
         cached_val, cached_ts = _balance_cache_inner[0]
         if now - cached_ts < _BALANCE_TTL:
@@ -832,7 +856,7 @@ async def run() -> None:
             return 0.0
 
         # If best preset changed since last order, verify exchange has no open position
-        if order_executor._last_opened_preset.get(symbol) != preset_name:
+        if order_executor._last_opened_preset.get(symbol) != preset_name and not _virtual_only:
             await order_executor.check_symbols_on_exchange([symbol])
             if order_executor.get_state(symbol) != OrderState.IDLE:
                 return 0.0
@@ -1045,7 +1069,8 @@ async def run() -> None:
                 active_syms = symbol_registry.get_symbols()
                 logger.info("Daily exchange-info refresh: fetching leverage brackets and min notionals")
                 try:
-                    await order_executor.fetch_leverage_brackets(active_syms)
+                    if not _virtual_only:
+                        await order_executor.fetch_leverage_brackets(active_syms)
                     for sym in active_syms:
                         min_notionals[sym] = await order_executor.get_min_notional(sym)
                     logger.info("Daily exchange-info refresh complete")
@@ -1110,7 +1135,12 @@ async def run() -> None:
         # substitution and place the order on the WRONG preset's settings.
         _substituted_preset.clear()
         candidates = []
-        for sym in symbol_registry.get_symbols():
+        # A virtual-only instance evaluates signals and runs the simulator, but never
+        # places a real order. Emptying the candidate source skips the whole placement
+        # pass without restructuring the allocation logic below — the flag only ever
+        # removes work, it never alters an order.
+        _placement_symbols = [] if _virtual_only else symbol_registry.get_symbols()
+        for sym in _placement_symbols:
             if symbol_registry.is_disabled(sym):
                 continue
             if symbol_registry.is_symbol_paused(sym):
@@ -1359,7 +1389,10 @@ async def run() -> None:
             locked_preset=_locked_preset,
         )
 
-        weight_rebalancer.on_candle_close(candle_ts)
+        # save_risk_config() every candle. A virtual-only instance must never retune
+        # the trading bot's real symbol allocation from its own virtual results.
+        if not _virtual_only:
+            weight_rebalancer.on_candle_close(candle_ts)
 
         export(
             symbol, timeframe, mode_manager.current_mode,
@@ -1448,7 +1481,8 @@ async def run() -> None:
                 "main",
             )
             return
-        await order_executor.fetch_leverage_brackets(current_symbols)
+        if not _virtual_only:
+            await order_executor.fetch_leverage_brackets(current_symbols)
         for symbol in current_symbols:
             klines_new = await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 1500)
             analyzers[symbol].build_from_klines(klines_new)
@@ -1531,7 +1565,12 @@ async def run() -> None:
             on_price_update=on_price_update,
         )
     )
-    _menu_task = asyncio.create_task(telegram_menu.run())
+    # Telegram delivers each update exactly once. Two pollers on one token means your
+    # commands land on a coin flip — and do_pause/do_resume/do_enable mutate the
+    # shared symbol registry.
+    _menu_task = None
+    if not _virtual_only:
+        _menu_task = asyncio.create_task(telegram_menu.run())
 
     try:
         await feed.stream_combined(
@@ -1546,9 +1585,12 @@ async def run() -> None:
         await virtual_order_simulator.close_all_open(current_syms, feed)
         notifier.notify("emergency", "Bot halted — all symbols disabled", str(_halt_exc), "main")
     finally:
-        for t in [_poll_task, _hb_task, _watchdog_task, _menu_task]:
+        # _menu_task is None on a virtual-only instance, which does not run the
+        # Telegram menu — filter before cancelling or shutdown raises AttributeError.
+        _tasks = [t for t in (_poll_task, _hb_task, _watchdog_task, _menu_task) if t is not None]
+        for t in _tasks:
             t.cancel()
-        for t in [_poll_task, _hb_task, _watchdog_task, _menu_task]:
+        for t in _tasks:
             try:
                 await t
             except asyncio.CancelledError:

@@ -4,6 +4,43 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 66 (2026-09-06) — API bans diagnosed; failed-close bug fixed
+
+- [x] **Deployed `725288f`** — circuit breaker, balance TTL 5s→60s, failed-close fix.
+- [x] **Applied** `per_symbol_settings.EIGENUSDT.max_profit_pct=8` + `max_profit_pct_levels=[3]`,
+      verified inside the running container (no override key dropped; L3 only).
+- [x] **Root cause of `-1003` bans: not us.** Measured testnet consumption is 1–3
+      request-weight against a 6000/min limit, and the IP Binance names (`15.158.242.x`)
+      is a shared CloudFront edge, not our egress (`185.237.14.105`). Both endpoints sit
+      behind CloudFront. We cannot prevent these bans; the circuit breaker keeps them
+      short (bans left alone lasted ~4 min; bans we kept calling into ran to 82).
+- [x] **Fixed: a failed close was booked as a real trade** — fabricated PnL fed
+      `virtual_tracker`, the position was abandoned while still open on the exchange,
+      and the symbol went IDLE allowing double exposure. Never fired in production
+      (0 occurrences across 9 logs). Four tests were passing *because* of the bug.
+
+### Where the money is going (measured 2026-09-06, last 14 days)
+
+42 real orders, **−243.23 net, 31% WR**. It is almost entirely one symbol:
+
+| symbol | n | WR | net |
+|---|---|---|---|
+| EIGENUSDT | 15 | 13% | **−250.22** |
+| INJUSDT | 9 | 33% | −80.09 |
+| MEMEUSDT | 8 | 38% | −4.54 |
+| TIAUSDT | 10 | 50% | **+91.63** |
+
+**The L3 TP cap just deployed addresses 76% of it**: EIGENUSDT's two worst trades
+(−96.54 on 2026-08-31, −92.58 on 2026-09-03) both had L3 signals with TP >8% and would
+now be rejected. Remaining after the cap: −61.10 over 13 orders (avg −4.70).
+
+- [ ] **NEXT: measure before changing anything else on EIGENUSDT.** It now carries both
+      a preset lock (`r5_sl_filter`) and the L3 TP cap, applied hours apart. Adding a
+      third change would make all three unmeasurable. Revisit at ~10 EIGENUSDT orders
+      under the new config.
+
+---
+
 ## Session 65 (2026-09-05) — Level-scoped TP cap deployed; L column added
 
 - [x] **Deployed `abb1ed3`** — level-scoped `max_profit_pct`, page-wide date range on
@@ -31,14 +68,19 @@ publishes a 6000/min limit but enforces far below it and bans aggressively. Meas
 one pushes the expiry out — 04:30:00 banned to 05:09, 04:30:01 banned to 05:35.
 Ban episodes ran 4 min when left alone and up to 82 min when we kept calling.
 
-- [ ] **1. Route kline fetches to production** — pass `live_klines=True` at `main.py:284`.
+- [x] **1. REJECTED — do NOT route kline fetches to production.** Each mode must read
+      the chart it trades: test fills happen at testnet prices, so production candles
+      would give statistics describing neither market, and the live candle stream comes
+      from the testnet WebSocket regardless. `LIVE_KLINES` exists as a manual escape
+      hatch, defaulted OFF, with tests pinning both directions. Original (wrong) note:
+      pass `live_klines=True` at `main.py:284`.
       The code already supports it and the comment already says production is more stable.
       Verified safe: testnet vs production EIGENUSDT 15m closes agree within **±0.09%**,
       far below our 1-8% SL distances. Removes 28 of 43 daily errors. One line.
       Caveat to re-check: the live candle stream still comes from the testnet WS
       (`_ws_base`), so cache (production) and stream (testnet) would have different
       sources. Given ±0.09% agreement this is immaterial, but confirm after the change.
-- [ ] **2. Ban-aware circuit breaker** — parse `banned until <ms>` from -1003/418 and
+- [x] **2. DONE (`c023d18`) — ban-aware circuit breaker** — parse `banned until <ms>` from -1003/418 and
       suppress all REST to that host until expiry. This is the difference between a
       4-minute ban and an 82-minute one. Highest value after #1.
 - [ ] **3. Shrink the startup burst** — startup does `load_klines(limit=1500)` x 15
@@ -125,9 +167,12 @@ several connections at that symbol count. Size that before attempting it.
       six improvement candidates all rejected. Do NOT raise `preset_cooldown_trades`.
 - [x] **Tier bug fixed** — rank pools now order by `(tier, value)` like `best_preset`.
 
-- [ ] **Enable `max_entry_slippage_pct` at 0.30–0.50** once there are ~10+ trades in
-      the ≥0.30% band. Currently n=4 (all INJUSDT), all losers, avg −35.57.
-      This is the highest-expected-value pending change.
+- [x] **DROPPED — do NOT enable `max_entry_slippage_pct`.** The signal did not survive
+      more data. Session 64 saw corr(slippage, pnl) = −0.59 on 33 orders with the ≥0.30%
+      band at 0% WR. Re-measured 2026-09-06 on 60 reconciled orders: **corr = −0.089**,
+      and in the recent half the ≥0.30% band wins *more* than the rest (43% vs 35% WR),
+      worth only +12.58 if blocked. It was small-sample noise. Blocking on it would
+      suppress trades for no gain.
 - [ ] **Enable substitution per symbol** — start with INJUSDT alone (+12.22/trade,
       lowest fire rate = cheapest to be wrong about) once `no_recommendation` gives a
       true fire rate. Do NOT enable globally; value spans +12.22 to −0.03 by symbol.

@@ -4,7 +4,9 @@
 
 **Goal:** Run a second bot container against the live Binance market in virtual-only mode, holding no API credentials, so preset statistics can be gathered on real charts before any real money is committed.
 
-**Architecture:** Same Docker image, second compose service, different environment (`TRADING_MODE=live`, `VIRTUAL_ONLY=1`, no credentials). A keyless `python-binance` client serves the public endpoints the virtual path needs and refuses private ones outright, so the instance is structurally incapable of trading. Six shared file paths gain a mode suffix so the two instances cannot corrupt each other.
+**Architecture:** Same Docker image, second compose service, different environment (`TRADING_MODE=live`, `VIRTUAL_ONLY=1`, no credentials). A keyless `python-binance` client serves the public endpoints the virtual path needs and refuses private ones outright, so the instance is structurally incapable of trading.
+
+Separation is by **separate host directories**, not by filename: the live container mounts `./data_live` and `./logs_live` at the same in-container paths, so a missed suffix cannot cause a collision. Only `dashboard/public/` stays shared — the dashboard has to read both — and the files written there gain a mode suffix. Shared config is mounted read-only, and the two code paths that write it are skipped.
 
 **Tech Stack:** Python 3.12, python-binance, pytest, Next.js 16 dashboard, Docker Compose.
 
@@ -15,6 +17,7 @@
 - The bot trades real (testnet) money. Every change must leave `virtual_only=False` behaviour **byte-identical**. Each task carries a test asserting this.
 - `bot/virtual_order_simulator.py`, `bot/virtual_tracker.py`, `bot/analyzer.py`, `bot/fake_order.py` are **not to be modified**. The simulation must stay identical across modes or the comparison is meaningless.
 - The live instance must never hold API credentials. No task may add them.
+- **The live instance must never write shared state.** `weight_rebalancer` calls `save_risk_config()` (`weight_rebalancer.py:217`) every candle, and `_auto_disable()` writes `symbol_registry.json`. Either would silently retune the testnet bot's real trading from live-market virtual results. Both are skipped under `virtual_only`, and both files are mounted `:ro` as a backstop.
 - The dashboard is used daily. `mode` defaults to `test` everywhere; omitting it preserves today's behaviour.
 - `Settings` is a plain dataclass with no field defaults. New fields go at the end of the field list and get a matching entry in `load_settings()`.
 - Run the full suite (`python3 -m pytest tests/ -q`) before every commit. Baseline is **448 passing**.
@@ -22,31 +25,34 @@
 
 ---
 
-### Task 1: `virtual_only` setting and per-mode log paths
+### Task 1: `virtual_only` setting
 
-Adds the flag and stops the two instances writing to the same four files.
+Adds the flag only. **No file renames**: separation comes from mounting separate host
+directories (Task 6), so `logs/bot.log`, `logs/analysis.jsonl` and `data/system_log.json`
+keep their names inside each container and land in different places on the host. That
+avoids a server-side migration, dashboard reader changes and a logrotate update, and
+leaves every existing diagnostic command working.
 
 **Files:**
 - Modify: `config/settings.py` (field list end; `load_settings()`)
-- Modify: `main.py:92` (bot.log handler), `main.py:306` (analysis.jsonl), `main.py:126-127` (system_log, alert_state)
 - Test: `tests/test_virtual_only_setting.py`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Settings.virtual_only: bool` (env `VIRTUAL_ONLY`, default `False`); log/state paths suffixed with the trading mode.
+- Produces: `Settings.virtual_only: bool` (env `VIRTUAL_ONLY`, default `False`).
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_virtual_only_setting.py
-"""virtual_only marks an instance that must never place a real order.
+"""virtual_only marks an instance that gathers statistics only.
 
-The live-market instance runs with no API credentials, so it cannot trade even
-if asked. This flag is the in-process expression of that, and it must default
-to False so the existing testnet bot is unaffected.
+No real orders, no private endpoints, no writes to shared config. The live-market
+instance also runs with no credentials, so this flag is a second expression of the
+same guarantee rather than the only one. It must default to False so the existing
+testnet bot is unaffected.
 """
 import dataclasses
-import os
 
 from config.settings import Settings, load_settings
 
@@ -84,9 +90,8 @@ Expected: FAIL — `AttributeError: 'Settings' object has no attribute 'virtual_
 In `config/settings.py`, after the `live_klines: bool` field:
 
 ```python
-    # Marks an instance that gathers statistics only and must never place a real
-    # order. The live-market instance also runs without credentials, so this is a
-    # second, in-process expression of the same guarantee rather than the only one.
+    # Marks an instance that gathers statistics only: no real orders, no private
+    # endpoints, and no writes to shared config.
     virtual_only: bool
 ```
 
@@ -101,78 +106,147 @@ And in `load_settings()`, after the `live_klines=` entry:
 Run: `python3 -m pytest tests/test_virtual_only_setting.py -q`
 Expected: 4 passed
 
-- [ ] **Step 5: Suffix the four shared paths**
-
-`main.py:92` — the log handler. Read the mode before logging is configured; `TRADING_MODE` is the env var:
-
-```python
-    _log_mode = 'test' if os.getenv('TRADING_MODE', 'test') == 'test' else 'live'
-    general = logging.handlers.RotatingFileHandler(
-        f'logs/bot_{_log_mode}.log', maxBytes=10 * 1024 * 1024, backupCount=5
-```
-
-`main.py:306` — analysis log:
-
-```python
-        _PROJECT_ROOT / 'logs' / f'analysis_{current_mode}.jsonl',
-```
-
-`main.py:126-127` — notifier paths:
-
-```python
-        log_path=_PROJECT_ROOT / "data" / f"system_log_{current_mode}.json",
-        alert_path=_PROJECT_ROOT / "dashboard" / "public" / f"alert_state_{current_mode}.json",
-```
-
-- [ ] **Step 6: Point the dashboard at the renamed files**
-
-`system_log.json` and `alert_state.json` are read by the dashboard. Update the readers to default to the test-mode name:
-
-```bash
-grep -rn "system_log.json\|alert_state.json" dashboard/app dashboard/lib
-```
-
-For each hit, change the literal to `system_log_test.json` / `alert_state_test.json`.
-
-- [ ] **Step 7: Run the full suite**
+- [ ] **Step 5: Run the full suite**
 
 Run: `python3 -m pytest tests/ -q`
 Expected: 452 passed (448 baseline + 4 new)
 
-- [ ] **Step 8: Migrate the existing files on the server**
-
-The renames orphan the current files. Preserve history rather than losing it:
+- [ ] **Step 6: Commit**
 
 ```bash
-ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
-  "cd /opt/bot && \
-   [ -f data/system_log.json ] && cp data/system_log.json data/system_log_test.json; \
-   [ -f dashboard/public/alert_state.json ] && cp dashboard/public/alert_state.json dashboard/public/alert_state_test.json; \
-   [ -f logs/analysis.jsonl ] && cp logs/analysis.jsonl logs/analysis_test.jsonl; \
-   ls -la data/system_log_test.json logs/analysis_test.jsonl 2>/dev/null"
-```
+git add config/settings.py tests/test_virtual_only_setting.py
+git commit -m "feat(config): add virtual_only flag
 
-Copy rather than move, so a rollback still finds the originals.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add config/settings.py main.py tests/test_virtual_only_setting.py dashboard/
-git commit -m "feat(config): add virtual_only flag and per-mode log paths
-
-Two instances writing one bot.log, analysis.jsonl, system_log.json and
-alert_state.json would interleave into unreadable files. Suffixes them with the
-trading mode. virtual_only defaults to False so the testnet bot is unchanged."
+Marks a statistics-only instance: no real orders, no private endpoints, no
+writes to shared config. Defaults to False so the testnet bot is unchanged."
 ```
 
 ---
 
-### Task 2: Skip the real-order path when `virtual_only`
+### Task 1a: Derive the mode from settings, not the shared mode file
 
-The safety-critical task. The flag may only ever *skip* work; it must never change what a real order does.
+**Without this the whole design fails silently.** Data file paths use
+`mode_manager.current_mode`, which reads `data/bot_mode.json` and falls back to `"test"`
+(`mode_manager.py:43-49`) — it never consults `TRADING_MODE`. The live instance would
+connect to live endpoints (from env) while naming every file `..._test`. Task 6's
+separate directories stop that corrupting the testnet bot, but the live container's own
+files would be misleadingly named `_test`, and the dashboard toggle (Task 5) would never
+find them. It is masked today only because `bot_mode.json` is absent, so the fallback and
+the env happen to agree.
 
 **Files:**
-- Modify: `main.py` — `fetch_leverage_brackets()` calls (lines ~293, ~1039, ~1442), `_get_fresh_balance()` call (~1091), the placement loop
+- Modify: `bot/mode_manager.py` (`__init__`)
+- Modify: `main.py` (ModeManager construction)
+- Test: `tests/test_mode_manager_forced_mode.py`
+
+**Interfaces:**
+- Consumes: `Settings.virtual_only`, `Settings.trading_mode` (Task 1).
+- Produces: `ModeManager(..., forced_mode: str | None = None)`; when set, `current_mode`
+  is that value and the shared mode file is never read.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_mode_manager_forced_mode.py
+"""A virtual-only instance is not mode-switchable — it IS its configured mode.
+
+current_mode drives every data file path. It normally reads data/bot_mode.json, which
+the dashboard can rewrite; without an override the live instance would name its files
+after whatever that file says instead of its own configured mode.
+"""
+import json
+
+from bot.mode_manager import ModeManager
+
+
+def test_forced_mode_ignores_the_mode_file(tmp_path):
+    mode_file = tmp_path / 'bot_mode.json'
+    mode_file.write_text(json.dumps({'mode': 'test'}))
+    m = ModeManager(mode_path=mode_file, forced_mode='live')
+    assert m.current_mode == 'live', 'the mode file must not retarget this instance'
+
+
+def test_forced_mode_works_when_the_file_is_absent(tmp_path):
+    m = ModeManager(mode_path=tmp_path / 'missing.json', forced_mode='live')
+    assert m.current_mode == 'live'
+
+
+def test_without_forced_mode_behaviour_is_unchanged(tmp_path):
+    """The testnet bot must keep reading the file exactly as before."""
+    mode_file = tmp_path / 'bot_mode.json'
+    mode_file.write_text(json.dumps({'mode': 'test'}))
+    assert ModeManager(mode_path=mode_file).current_mode == 'test'
+
+
+def test_absent_file_still_falls_back_to_test(tmp_path):
+    assert ModeManager(mode_path=tmp_path / 'missing.json').current_mode == 'test'
+```
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `python3 -m pytest tests/test_mode_manager_forced_mode.py -q`
+Expected: FAIL — `TypeError: unexpected keyword argument 'forced_mode'`
+
+- [ ] **Step 3: Implement**
+
+In `bot/mode_manager.py`, add the parameter to `__init__` after `notifier`:
+
+```python
+        forced_mode: str | None = None,
+```
+
+and replace the `current_mode` assignment:
+
+```python
+        # A virtual-only instance is pinned to its configured mode. bot_mode.json is
+        # written by the dashboard, so honouring it here would let a mode switch
+        # retarget this instance's data files.
+        self._forced_mode = forced_mode
+        self.current_mode: str = forced_mode or self._read_mode()
+```
+
+In `main.py`, where ModeManager is constructed, pass:
+
+```python
+        forced_mode=first_settings.trading_mode if first_settings.virtual_only else None,
+```
+
+- [ ] **Step 4: Run the tests and make sure they pass**
+
+Run: `python3 -m pytest tests/test_mode_manager_forced_mode.py -q`
+Expected: 4 passed
+
+- [ ] **Step 5: Run the full suite**
+
+Run: `python3 -m pytest tests/ -q`
+Expected: 456 passed
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add bot/mode_manager.py main.py tests/test_mode_manager_forced_mode.py
+git commit -m "fix(mode): pin a virtual-only instance to its configured mode
+
+current_mode drives every data file path but read only data/bot_mode.json,
+never TRADING_MODE. The live instance would have connected to live endpoints
+while naming its files _test."
+```
+
+---
+
+### Task 2: Skip the real-order path and all shared-config writes
+
+The safety-critical task. The flag may only ever *skip* work; it must never change what
+a real order does.
+
+Two of these guards protect the **testnet bot**, not the live one:
+`weight_rebalancer.on_candle_close()` calls `save_risk_config()` every candle, and
+`check_symbols_on_exchange()` can `_auto_disable()` a symbol into `symbol_registry.json`.
+Unguarded, the live instance would retune the testnet bot's real allocation and disable
+its symbols based on live-market virtual results.
+
+**Files:**
+- Modify: `main.py` — `fetch_leverage_brackets()` calls (~293, ~1039, ~1442), `_get_fresh_balance()` (~1091), the placement loop, `check_symbols_on_exchange()` (~288, ~814), `weight_rebalancer.on_candle_close()` (~1352)
 - Test: `tests/test_virtual_only_skips_real_orders.py`
 
 **Interfaces:**
@@ -220,6 +294,18 @@ def test_placement_is_guarded():
     assert _guarded('_try_place_order(')
 
 
+def test_weight_rebalancer_is_guarded():
+    """It calls save_risk_config() every candle. Unguarded, the live instance would
+    retune the TESTNET bot's real symbol allocation from live virtual results."""
+    assert _guarded('weight_rebalancer.on_candle_close(')
+
+
+def test_exchange_symbol_check_is_guarded():
+    """It can _auto_disable() a symbol into the shared symbol_registry.json,
+    disabling it for the testnet bot too."""
+    assert _guarded('check_symbols_on_exchange(')
+
+
 def test_flag_only_skips_never_alters():
     """Guards must be plain skips. A virtual_only branch that CHANGES an order's
     size, price or side would put the flag on the real-money path."""
@@ -234,7 +320,7 @@ def test_flag_only_skips_never_alters():
 - [ ] **Step 2: Run it to make sure it fails**
 
 Run: `python3 -m pytest tests/test_virtual_only_skips_real_orders.py -q`
-Expected: FAIL on the first three tests — no guards exist yet.
+Expected: FAIL on the first five tests — no guards exist yet.
 
 - [ ] **Step 3: Add the guards**
 
@@ -275,10 +361,37 @@ Guard the placement loop by skipping the whole candidate pass:
             ...existing loop unchanged, indented one level...
 ```
 
+Guard the two shared-config writers. Both protect the *testnet* bot:
+
+```python
+        # save_risk_config() every candle — a virtual-only instance must never
+        # retune the trading bot's allocation from its own virtual results.
+        if not _virtual_only:
+            weight_rebalancer.on_candle_close(candle_ts)
+```
+
+```python
+        # _auto_disable() writes the shared symbol_registry.json.
+        if not _virtual_only:
+            await order_executor.check_symbols_on_exchange(symbols)
+```
+
+Note `candle_ts` is assigned inside the placement guard above; move its assignment
+above both guards so the rebalancer guard can still reference it.
+
+- [ ] **Step 3b: Prove the shared config is untouched**
+
+```bash
+md5_before=$(md5 -q risk_config.json 2>/dev/null || md5sum risk_config.json | cut -d' ' -f1)
+echo "risk_config.json before: $md5_before"
+```
+
+Record it; Task 6 Step 7 re-checks it after the live instance has run.
+
 - [ ] **Step 4: Run the tests and make sure they pass**
 
 Run: `python3 -m pytest tests/test_virtual_only_skips_real_orders.py -q`
-Expected: 4 passed
+Expected: 6 passed
 
 - [ ] **Step 5: Prove the trading path is untouched**
 
@@ -652,7 +765,14 @@ so the page is unchanged for anyone who does not touch it."
 - Consumes: everything above.
 - Produces: a `bot_live` container.
 
-- [ ] **Step 1: Add the service**
+- [ ] **Step 1: Create the host directories**
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
+  "mkdir -p /opt/bot/data_live /opt/bot/logs_live && ls -ld /opt/bot/data_live /opt/bot/logs_live"
+```
+
+- [ ] **Step 2: Add the service**
 
 ```yaml
   # Live-market data, virtual orders only. Deliberately has NO credentials:
@@ -669,20 +789,26 @@ so the page is unchanged for anyone who does not touch it."
       BINANCE_API_KEY: ""
       BINANCE_API_SECRET: ""
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      # SEPARATE host directories, mounted at the same in-container paths. This is the
+      # primary isolation: even a path that forgets its mode suffix cannot reach the
+      # testnet bot's data. dashboard/public is the one shared mount, because the
+      # dashboard must read both instances — the files written there are suffixed.
+      - ./data_live:/app/data
+      - ./logs_live:/app/logs
       - ./dashboard/public:/app/dashboard/public
-      - ./risk_config.json:/app/risk_config.json
-      - ./symbol_registry.json:/app/symbol_registry.json
+      # Read-only: shared config is an input, never an output, for this instance.
+      # Task 2 skips the two writers; :ro is the backstop if one is ever missed.
+      - ./risk_config.json:/app/risk_config.json:ro
+      - ./symbol_registry.json:/app/symbol_registry.json:ro
     command: >
-      sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot_live.log 2>&1'
+      sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot.log 2>&1'
     restart: unless-stopped
     stop_grace_period: 60s
 ```
 
 Note: `environment:` rather than `env_file: .env` — that is what keeps the credentials out.
 
-- [ ] **Step 2: Verify no credentials leak in**
+- [ ] **Step 3: Verify no credentials leak in**
 
 ```bash
 python3 -c "
@@ -697,11 +823,11 @@ print('bot_live carries no credentials')
 "
 ```
 
-- [ ] **Step 3: Update FEATURES.md**
+- [ ] **Step 4: Update FEATURES.md**
 
 Add a section describing the instance, the keyless guarantee, the mode-suffixed paths, and the dashboard toggle. Reference the spec path.
 
-- [ ] **Step 4: Run the full suite and commit**
+- [ ] **Step 5: Run the full suite and commit**
 
 ```bash
 python3 -m pytest tests/ -q
@@ -709,11 +835,11 @@ git add docker-compose.yml FEATURES.md
 git commit -m "feat(deploy): bot_live service — live market, virtual only, no keys"
 ```
 
-- [ ] **Step 5: STOP — get explicit deploy approval**
+- [ ] **Step 6: STOP — get explicit deploy approval**
 
 Do not deploy. Report to the user: what will be started, that the existing bot is unchanged, and the file migrations from Task 1 Step 8. Wait for confirmation.
 
-- [ ] **Step 6: Deploy the new service only**
+- [ ] **Step 7: Deploy the new service only**
 
 The existing `bot` container must not be restarted by this step beyond the image rebuild it needs for Tasks 1-4:
 
@@ -723,20 +849,23 @@ ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
    docker compose up -d --build 2>&1 | tail -10"
 ```
 
-- [ ] **Step 7: Verify the guarantee holds in production**
+- [ ] **Step 8: Verify the guarantees hold in production**
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
-  "echo '--- no credentials? ---'; docker exec bot_live printenv | grep -c 'BINANCE_API_KEY=$'; \
-   echo '--- virtual-only banner ---'; docker exec bot_live grep -c 'VIRTUAL-ONLY instance' /app/logs/bot_live.log; \
-   echo '--- any real order file? (must be 0) ---'; ls /opt/bot/data/real_orders_*_live.json 2>/dev/null | wc -l; \
-   echo '--- live virtual orders appearing? ---'; ls /opt/bot/data/virtual_orders_rank2_*_live.json 2>/dev/null | wc -l; \
-   echo '--- test bot still healthy ---'; docker exec bot tail -2 /app/logs/bot_test.log"
+  "cd /opt/bot
+   echo '--- credentials absent? (expect 1) ---'; docker exec bot_live printenv | grep -c 'BINANCE_API_KEY=$'
+   echo '--- virtual-only banner ---';           docker exec bot_live grep -c 'VIRTUAL-ONLY instance' /app/logs/bot.log
+   echo '--- real order files in live data? (MUST be 0) ---'; ls data_live/real_orders_*.json 2>/dev/null | wc -l
+   echo '--- live virtual orders appearing? ---'; ls data_live/virtual_orders_rank2_*_live.json 2>/dev/null | wc -l
+   echo '--- files named _test in live dir? (MUST be 0 — Task 1a) ---'; ls data_live/*_test.json 2>/dev/null | wc -l
+   echo '--- shared config untouched? ---';      md5sum risk_config.json symbol_registry.json
+   echo '--- testnet bot still healthy ---';     docker exec bot tail -2 /app/logs/bot.log"
 ```
 
-Expected: banner present, **zero** `real_orders_*_live.json`, live virtual files appearing, test bot logging normally.
-
----
+Expected: credentials absent, banner present, **zero** `real_orders_*` in `data_live/`,
+live virtual files appearing, **zero** `_test` files in `data_live/`, config checksums
+matching the values recorded in Task 2 Step 3b, and the testnet bot logging normally.
 
 ## After the plan
 

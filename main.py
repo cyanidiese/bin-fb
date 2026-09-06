@@ -390,7 +390,16 @@ async def run() -> None:
 
     # Mutable container for balance TTL cache (allows mutation inside nested coroutine)
     _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
-    _BALANCE_TTL = 5.0
+    # One candle batch = all 15 symbols processing the same close. Measured over 66
+    # batches on 2026-09-06: median 6.96s, p90 25.3s, max 27.8s. The old 5s TTL expired
+    # mid-batch in 55% of them, so the same unchanged balance was re-fetched several
+    # times per candle — and futures_account is our most expensive call (weight 5, vs 1
+    # for klines). 60s covers every observed batch with better than 2x margin while
+    # staying far below the 900s candle interval, so the balance still refreshes every
+    # candle. Staleness is bounded by real activity rather than by this number: the
+    # balance only moves when a position closes, and closes call _read_wallet_now(),
+    # which bypasses the TTL and refreshes this cache on the way past.
+    _BALANCE_TTL = 60.0
 
     # Daily exchange-info refresh: re-fetch leverage brackets + min notionals every 96 candles
     # (96 × 15 min = 24 h). Counter increments only on the first symbol close per candle so
@@ -1075,7 +1084,7 @@ async def run() -> None:
         recs = analyzer.add_candle(candle_to_add)
         best_for_this = analyzer.get_best_recommendation()
 
-        # Fetch balance once per candle batch (5s TTL shared across all symbols)
+        # Fetch balance once per candle batch (TTL shared across all symbols)
         balance = await _get_fresh_balance()
         if balance > 0:
             risk_manager.update_balance(balance)

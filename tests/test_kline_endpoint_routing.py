@@ -1,10 +1,10 @@
-"""Kline reads go to production while trading stays on testnet.
+"""Kline endpoint follows the trading mode.
 
-Testnet bans aggressively: measured 2026-09-06 it returned HTTP 418 while production
-served the same request at used-weight 1/2400, costing ~27% of that day. Klines are
-public data and the two endpoints agree closely (EIGENUSDT 15m closes within ±0.09%),
-so routing public reads to production keeps the fragile testnet quota for the account
-calls that actually require it.
+Each mode must read the chart it trades on — test fills happen at testnet prices, so
+feeding the strategy production candles would yield statistics describing neither
+market. LIVE_KLINES exists only as a manual escape hatch and defaults to off; these
+tests pin both directions so the routing cannot drift silently, which is how it went
+unnoticed before.
 """
 import dataclasses
 from unittest.mock import MagicMock, patch
@@ -62,8 +62,10 @@ def test_reinit_falls_back_to_the_trading_client():
     assert f._klines_client is f._client
 
 
-def test_setting_defaults_to_enabled():
-    assert load_settings().live_klines is True
+def test_setting_defaults_to_disabled():
+    """Each mode must read the chart it trades on: test fills happen at testnet prices,
+    so test mode reads testnet candles. This stays off unless deliberately overridden."""
+    assert load_settings().live_klines is False
 
 
 @pytest.mark.parametrize('val,expected', [

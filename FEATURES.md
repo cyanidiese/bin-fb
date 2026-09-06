@@ -556,18 +556,39 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
 
-### Kline Endpoint Routing — `LIVE_KLINES` (Session 66)
-Kline REST reads go to the **production** endpoint while all trading stays on testnet.
-Enabled by default (`LIVE_KLINES=true`); set `LIVE_KLINES=false` to restore the old
-behaviour without a code change.
+### Balance Cache TTL (Session 66)
+`_BALANCE_TTL` raised 5s → 60s (`main.py:402`) so one balance read covers a whole
+candle batch.
 
-**Why**: testnet bans aggressively and was the sole source of our `-1003` bans. Measured
-2026-09-06 from the server: testnet returned **HTTP 418 (active ban)** while production
-served the same request at **used-weight 1/2400**. That day saw 43 ban errors across ~4
-episodes, degrading roughly 4.5 of 16.5 hours (~27%). Our own consumption was never the
-problem — measured at **8.75 weight per candle = 0.02% of the limit**. The fix moves
-public reads off the fragile quota and leaves it for account calls that genuinely need
-testnet.
+**Why**: `futures_account` is our most expensive call (weight 5, vs 1 for klines).
+Measured over 66 candle batches on 2026-09-06 — median 6.96s, p90 25.3s, max 27.8s —
+the 5s TTL expired mid-batch in **55%** of them, re-fetching an unchanged balance
+several times per candle. 60s covers every observed batch with >2x margin and stays
+far below the 900s candle interval, so the balance still refreshes every candle.
+
+**Safe because staleness is bounded by real activity, not by the TTL**: the balance
+only moves when a position closes, and closes call `_read_wallet_now()`, which bypasses
+the TTL and refreshes this cache on the way past.
+
+**Files**: `main.py` (`_BALANCE_TTL`), `tests/test_balance_ttl.py` (4 cases)
+
+**Note**: this is API hygiene, not a ban fix — see the rate-limit analysis in TODO.md.
+Our measured testnet consumption is 1–3 weight against a 6000/min limit, and the IP
+Binance names in the bans is a shared CloudFront edge, not ours.
+
+### Kline Endpoint Routing — `LIVE_KLINES` (Session 66)
+Escape hatch to read klines from **production** while trading on testnet.
+**OFF by default and it should stay off** — each mode must read the chart it trades on.
+Kept only as a manual fallback if the testnet kline endpoint becomes unusable for a
+sustained period.
+
+**Why it stays off**: test fills happen at testnet prices, so feeding the strategy
+production candles would produce statistics describing neither market — and the live
+candle stream comes from the testnet WebSocket regardless, so enabling it mixes two
+sources in one cache. Testnet does ban aggressively (2026-09-06: HTTP 418 while
+production served at used-weight 1/2400), but that is not ours to fix by reading the
+wrong chart: our own consumption is 1–3 weight against a 6000/min limit, and the banned
+IP is a shared CloudFront edge, not our address.
 
 **Files**: `config/settings.py` (`live_klines` field + `LIVE_KLINES` env),
 `main.py:284` (wires it into `DataFeed`), `bot/data_feed.py` (endpoint logging)

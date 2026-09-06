@@ -14,6 +14,59 @@ Legend: [ ] pending  [~] in progress  [x] done
       the field, or the merge drops it and the cap hits every level.
 - [x] **L column** in the Trades orders table; virtual orders now record `signal_level`.
 
+### API rate-limit bans — root cause found (2026-09-06 analysis)
+
+Measured, not estimated. Our own usage is **~8.75 request-weight per candle**
+(klines 15/4 x w1 = 3.75, balance 1 x w5 = 5) = **0.58 weight/min = 0.02% of the
+2400/min limit**. Volume is not the problem.
+
+**Root cause**: `DataFeed(first_settings)` at `main.py:284` leaves `live_klines=False`,
+so `_klines_client = self._client` — every kline fetch goes to **testnet**. Testnet
+publishes a 6000/min limit but enforces far below it and bans aggressively. Measured
+2026-09-06: testnet returned **HTTP 418 (active ban)** while production returned 200 at
+**used-weight 1/2400**. 43 ban errors that day across ~4 episodes, roughly 4.5h of a
+16.5h window degraded (~27%).
+
+**Amplifier**: no ban awareness. We keep issuing scheduled calls during a ban and each
+one pushes the expiry out — 04:30:00 banned to 05:09, 04:30:01 banned to 05:35.
+Ban episodes ran 4 min when left alone and up to 82 min when we kept calling.
+
+- [ ] **1. Route kline fetches to production** — pass `live_klines=True` at `main.py:284`.
+      The code already supports it and the comment already says production is more stable.
+      Verified safe: testnet vs production EIGENUSDT 15m closes agree within **±0.09%**,
+      far below our 1-8% SL distances. Removes 28 of 43 daily errors. One line.
+      Caveat to re-check: the live candle stream still comes from the testnet WS
+      (`_ws_base`), so cache (production) and stream (testnet) would have different
+      sources. Given ±0.09% agreement this is immaterial, but confirm after the change.
+- [ ] **2. Ban-aware circuit breaker** — parse `banned until <ms>` from -1003/418 and
+      suppress all REST to that host until expiry. This is the difference between a
+      4-minute ban and an 82-minute one. Highest value after #1.
+- [ ] **3. Shrink the startup burst** — startup does `load_klines(limit=1500)` x 15
+      symbols = **150 weight** at once (`main.py:318`). limit=1000 costs weight 5 instead
+      of 10, halving it to 75 for 500 fewer candles of history. Or stagger the warm.
+- [ ] **4. Batch the price fetch** — `close_all_open()` (`bot/virtual_order_simulator.py:586`)
+      calls `futures_symbol_ticker` per symbol (weight 1 each). One call with no symbol
+      returns ALL prices for **weight 2** total. Irrelevant at 15 symbols, essential at 528.
+      (Measured: ticker_price_one w=1, ticker_price_all w=2.)
+
+### Cost of running LIVE virtual orders in parallel with test mode
+
+Virtual orders make **zero REST calls per candle** — verified: the only REST call in
+`virtual_order_simulator.py` is the shutdown path (`close_all_open`). Per candle the
+simulator uses WebSocket prices and the cached klines. So a parallel live-mode virtual
+layer costs only the kline refresh for its symbols, on the *public* production endpoint:
+
+| scenario | symbols | weight/candle burst | % of 2400/min |
+|---|---|---|---|
+| test mode today | 15 | 8.75 | 0.02% |
+| + live virtual | 15 | +3.75 | 0.03% |
+| + live virtual, all USDT perps | 528 | +132 | 5.5% |
+
+528 USDT perpetuals are currently TRADING. Even all of them is ~5.5% of the production
+limit, so **REST is not the constraint**. The constraint is the WebSocket: streams are
+assembled into one combined URL (`data_feed.py:69-72`), which would need sharding across
+several connections at that symbol count. Size that before attempting it.
+
 ### Ideas to implement next
 
 - [ ] **Always collect virtual orders, for every symbol, in every state.**

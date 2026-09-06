@@ -85,6 +85,20 @@ def _capture(g, mode='test'):
     return sent
 
 
+def test_messages_carry_no_html_markup(g, clock):
+    """Notifier.notify() html-escapes the body, so markup here renders literally."""
+    sent = _capture(g)
+    g.note_exception('testnet', _ban(3000))
+    clock['t'] += rlg._PROBE_FIRST_S + 1
+    g.blocked_for('testnet')
+    g.note_success('testnet')
+    assert len(sent) == 2
+    for _lvl, title, body, _src in sent:
+        for tag in ('<b>', '</b>', '<i>', '<code>', '&lt;'):
+            assert tag not in body, f'{tag!r} would render literally in Telegram'
+            assert tag not in title
+
+
 def test_ban_start_is_announced_with_expiry_and_mode(g, clock):
     sent = _capture(g)
     g.note_exception('testnet', _ban(3000))

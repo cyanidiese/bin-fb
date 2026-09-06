@@ -168,14 +168,16 @@ class RateLimitGuard:
                     f"the ban, so we wait."
                 )
                 if not was_blocked:
+                    # Plain text only: Notifier.notify() html-escapes the body (so an
+                    # API error containing '<' cannot break the message), which would
+                    # render any markup here literally.
                     self._announce(
                         'warning',
                         f"API ban started — {key}",
-                        (f"Endpoint: <b>{key}</b>\n"
-                         f"Trading mode: <b>{self._mode or 'unknown'}</b>\n"
-                         f"Banned until: <b>{until_txt}</b> "
-                         f"(~{remaining / 60:.0f} min)\n"
-                         f"Reason: {msg[:160]}\n\n"
+                        (f"Endpoint:     {key}\n"
+                         f"Trading mode: {self._mode or 'unknown'}\n"
+                         f"Banned until: {until_txt}  (~{remaining / 60:.0f} min)\n"
+                         f"Reason:       {msg[:150]}\n\n"
                          f"Kline and balance reads are paused — calling while banned "
                          f"extends it. Open positions keep their exchange stop-loss, and "
                          f"an exit that cannot execute is retried rather than recorded. "
@@ -226,14 +228,14 @@ class RateLimitGuard:
         logger.info(f"Rate-limit guard CLEARED for '{key}' ({reason}) — resuming requests.")
         early = ''
         if stated and stated > time.time():
-            early = (f"\nRecovered <b>{(stated - time.time()) / 60:.0f} min early</b> "
-                     f"— Binance had stated {self._fmt_wall(stated)}.")
+            early = (f"\nRecovered {(stated - time.time()) / 60:.0f} min early — "
+                     f"Binance had stated {self._fmt_wall(stated)}.")
         self._announce(
             'info',
             f"API ban ended — {key}",
-            (f"Endpoint: <b>{key}</b>\n"
-             f"Trading mode: <b>{self._mode or 'unknown'}</b>\n"
-             f"Resolution: {reason}{early}\n\n"
+            (f"Endpoint:     {key}\n"
+             f"Trading mode: {self._mode or 'unknown'}\n"
+             f"Resolution:   {reason}{early}\n\n"
              f"Normal kline and balance reads have resumed."),
         )
 

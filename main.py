@@ -36,6 +36,12 @@ from bot.lot_constraint_detector import adjust_constrained_symbols
 from bot.weight_rebalancer import WeightRebalancer
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
+# Set once in run() from Settings.virtual_only. Module-level because the writers below
+# are called from startup, a 10-second heartbeat loop and shutdown — guarding at each
+# call site means one missed site reintroduces the bug, and the bug here is: press Stop,
+# get a success response, trading bot still running.
+_VIRTUAL_ONLY: bool = False
+
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
 _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
@@ -49,6 +55,10 @@ def _tf_to_ms(timeframe: str) -> int:
 
 
 def _write_pid() -> None:
+    # The dashboard Stop button kills whatever PID is in this file. A virtual-only
+    # instance must never own it, or Stop kills the wrong process.
+    if _VIRTUAL_ONLY:
+        return
     _BOT_PID_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _BOT_PID_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({"pid": os.getpid()}))
@@ -58,6 +68,10 @@ def _write_pid() -> None:
 def _write_bot_state(running: bool, mode: str, started_at: str,
                      symbols_active: int = 0, symbols_disabled: int = 0,
                      phase: str = 'starting') -> None:
+    # The 'is the bot alive' indicator belongs to the trading bot. A virtual-only
+    # instance would otherwise overwrite it every 10 seconds from the heartbeat.
+    if _VIRTUAL_ONLY:
+        return
     _BOT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _BOT_STATE_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({
@@ -164,7 +178,8 @@ async def run() -> None:
     # nothing else: no real orders, no private endpoints, no Telegram, and no writes
     # to config shared with the trading bot. Every guard below is a plain skip — none
     # of them changes what a real order does.
-    _virtual_only = first_settings.virtual_only
+    global _VIRTUAL_ONLY
+    _virtual_only = _VIRTUAL_ONLY = first_settings.virtual_only
     if _virtual_only:
         logger.warning(
             "VIRTUAL-ONLY instance: no real orders, no private endpoints, no Telegram, "
@@ -1551,9 +1566,14 @@ async def run() -> None:
 
     _load_streak_state()
 
-    _poll_task = asyncio.create_task(
-        mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
-    )
+    # mode_manager DELETES the command file after reading it — consume-once. A Stop
+    # taken by the virtual instance would report success while the trading bot kept
+    # running, so only the trading bot polls the channel.
+    _poll_task = None
+    if not _virtual_only:
+        _poll_task = asyncio.create_task(
+            mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
+        )
     _hb_task = asyncio.create_task(
         _heartbeat_loop(mode_manager, started_at, symbol_registry)
     )

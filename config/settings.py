@@ -135,6 +135,11 @@ class Settings:
     # is incoherent. Kept only as a manual fallback if the testnet kline endpoint is
     # unusable for a sustained period. No effect in live mode (both are production).
     live_klines: bool
+    # Marks an instance that gathers statistics only: no real orders, no private
+    # endpoints, and no writes to shared config. The live-market instance also runs
+    # with no credentials, so this is a second expression of the same guarantee
+    # rather than the only one.
+    virtual_only: bool
     # When True: re-enable the opposing-parent hard reject for continuation signals
     # EVEN IF ignore_parent_alignment is True. This decouples the two behaviours that
     # ignore_parent_alignment used to bundle — escaping post-BoS droughts (keep) vs
@@ -240,6 +245,7 @@ def load_settings(symbol: str | None = None) -> Settings:
         trend_regime_filter=os.getenv('TREND_REGIME_FILTER', 'false').lower() in ('1', 'true', 'yes'),
         trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
         live_klines=os.getenv('LIVE_KLINES', 'false').lower() in ('1', 'true', 'yes'),
+        virtual_only=os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes'),
         enforce_parent_alignment_hard=os.getenv('ENFORCE_PARENT_ALIGNMENT_HARD', 'false').lower() in ('1', 'true', 'yes'),
         enable_mean_reversion=os.getenv('ENABLE_MEAN_REVERSION', 'false').lower() in ('1', 'true', 'yes'),
         mr_window=int(os.getenv('MR_WINDOW', '48')),

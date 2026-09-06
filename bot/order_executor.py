@@ -110,6 +110,13 @@ class OrderExecutor:
         self._states: dict[str, OrderState] = {}
         self._open_orders: dict[str, OpenOrder] = {}
         self._fake_orders: dict[str, FakeOrder] = {}  # software TP/SL/trailing tracking
+        # Exits we decided on but could not execute (e.g. the endpoint banned us).
+        # symbol -> (result, software_close_price). Retried every candle until the
+        # exchange confirms. Booking these as closed would write a trade that never
+        # happened into the preset record and free the symbol while the position is
+        # still live — see _finalize_close.
+        self._pending_close: dict[str, tuple[str, float]] = {}
+        self._pending_close_logged: dict[str, str] = {}
         self._placing_locks: dict[str, asyncio.Lock] = {}
         self._failure_counts: dict[str, int] = {}
         self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty, min_notional}}
@@ -355,6 +362,98 @@ class OrderExecutor:
     # Per-candle order monitoring (software TP/SL/trailing)               #
     # ------------------------------------------------------------------ #
 
+    async def _finalize_close(
+        self, symbol: str, open_order: 'OpenOrder', result: str, software_close_price: float,
+    ) -> dict | None:
+        """Close on the exchange and book the result.
+
+        Returns None when the exchange close did NOT execute. In that case the position,
+        its FakeOrder and its non-IDLE state are all left intact so the exit is retried
+        on the next candle.
+
+        Booking a failed close would be actively harmful: the fabricated PnL flows into
+        virtual_tracker.record_closed_trade(), and preset ranking is sum(recent_trades),
+        so the bot would promote a preset on profit it never earned — and the symbol
+        would go IDLE while the position is still open on the exchange, allowing a
+        second position on top of the first.
+        """
+        try:
+            actual_close_price = await self._market_close(
+                symbol, open_order, fallback=software_close_price)
+        except Exception as exc:
+            self._pending_close[symbol] = (result, software_close_price)
+            # Log/notify once per distinct exit reason, not once per retry.
+            if self._pending_close_logged.get(symbol) != result:
+                self._pending_close_logged[symbol] = result
+                logger.error(
+                    f"Market close failed for {symbol} ({result}): {exc} — "
+                    f"position kept OPEN and will be retried; exchange SL still stands"
+                )
+                self._notifier.notify(
+                    "warning", f"Could not close {symbol}",
+                    f"{exc}\nPosition left OPEN and will be retried. Nothing was recorded.",
+                    "order_executor",
+                )
+            return None
+
+        self._pending_close.pop(symbol, None)
+        self._pending_close_logged.pop(symbol, None)
+
+        pnl = self._calc_pnl(open_order, actual_close_price)
+        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
+        info = {
+            "symbol": symbol,
+            "preset_name": open_order.preset_name,
+            "result": result,
+            "pnl_usdt": pnl,
+            "side": open_order.side,
+            "entry_price": open_order.entry_price,
+            "fill_entry_price": self._effective_entry(open_order),
+            "close_price": actual_close_price,
+            "fee_usdt": self._order_fee(
+                open_order.quantity, self._effective_entry(open_order), actual_close_price),
+            "wallet_at_open": open_order.wallet_at_open,
+            "leverage": open_order.leverage,
+        }
+        self._open_orders.pop(symbol, None)
+        self._fake_orders.pop(symbol, None)
+        self._states[symbol] = OrderState.IDLE
+        self._record_success(symbol)
+        logger.info(
+            f"Order closed: {symbol} result={result} "
+            f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
+        )
+        return info
+
+    async def retry_pending_closes(self, only_symbol: str | None = None) -> list[dict]:
+        """Re-attempt exits whose exchange close previously failed.
+
+        Called at the top of check_symbol_candle (the live per-candle path) so a
+        position stranded by a ban is retried on every candle until it clears.
+        """
+        out: list[dict] = []
+        items = list(self._pending_close.items())
+        if only_symbol is not None:
+            items = [kv for kv in items if kv[0] == only_symbol]
+        for symbol, (result, sw_price) in items:
+            open_order = self._open_orders.get(symbol)
+            if open_order is None:
+                # Position vanished (reconciled elsewhere) — drop the intent.
+                self._pending_close.pop(symbol, None)
+                self._pending_close_logged.pop(symbol, None)
+                continue
+            if symbol in self._closing:
+                continue
+            self._closing.add(symbol)
+            try:
+                info = await self._finalize_close(symbol, open_order, result, sw_price)
+            finally:
+                self._closing.discard(symbol)
+            if info is not None:
+                logger.info(f"[{symbol}] Pending close finally executed on retry")
+                out.append(info)
+        return out
+
     async def check_all_orders(
         self,
         high: float,
@@ -367,8 +466,12 @@ class OrderExecutor:
         Returns list of closed order result dicts for the caller to record in VirtualTracker.
         """
         self._candle_index += 1
-        closed = []
+        # Retry any exit whose exchange close failed earlier (e.g. during a ban)
+        # before evaluating fresh triggers.
+        closed = await self.retry_pending_closes()
         for symbol, fake_order in list(self._fake_orders.items()):
+            if symbol in self._pending_close:
+                continue  # already handled by the retry above
             result = fake_order.check(
                 high, low, self._candle_index,
                 candle_open=candle_open,
@@ -383,38 +486,9 @@ class OrderExecutor:
                 continue
 
             software_close_price = fake_order.close_price or open_order.entry_price
-            # Attempt to close on the exchange at market
-            try:
-                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
-            except Exception as exc:
-                logger.error(f"Market close failed for {symbol}: {exc}")
-                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
-                actual_close_price = software_close_price
-
-            pnl = self._calc_pnl(open_order, actual_close_price)
-            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
-            closed.append({
-                "symbol": symbol,
-                "preset_name": open_order.preset_name,
-                "result": result,
-                "pnl_usdt": pnl,
-                "side": open_order.side,
-                "entry_price": open_order.entry_price,
-                "fill_entry_price": self._effective_entry(open_order),
-                "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(
-                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
-                "wallet_at_open": open_order.wallet_at_open,
-                "leverage": open_order.leverage,
-            })
-            del self._open_orders[symbol]
-            del self._fake_orders[symbol]
-            self._states[symbol] = OrderState.IDLE
-            self._record_success(symbol)
-            logger.info(
-                f"Order closed: {symbol} result={result} "
-                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
-            )
+            info = await self._finalize_close(symbol, open_order, result, software_close_price)
+            if info is not None:
+                closed.append(info)
         return closed
 
     async def check_symbol_price(self, symbol: str, current_price: float) -> list[dict]:
@@ -429,7 +503,7 @@ class OrderExecutor:
         if result is None:
             return []
 
-        if symbol in self._closing:
+        if symbol in self._closing or symbol in self._pending_close:
             return []
         self._closing.add(symbol)
         try:
@@ -439,37 +513,8 @@ class OrderExecutor:
                 return []
 
             software_close_price = fake_order.close_price or open_order.entry_price
-            try:
-                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
-            except Exception as exc:
-                logger.error(f"Market close failed for {symbol}: {exc}")
-                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
-                actual_close_price = software_close_price
-
-            pnl = self._calc_pnl(open_order, actual_close_price)
-            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
-            del self._open_orders[symbol]
-            del self._fake_orders[symbol]
-            self._states[symbol] = OrderState.IDLE
-            self._record_success(symbol)
-            logger.info(
-                f"Order closed (price tick): {symbol} result={result} "
-                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
-            )
-            return [{
-                "symbol": symbol,
-                "preset_name": open_order.preset_name,
-                "result": result,
-                "pnl_usdt": pnl,
-                "side": open_order.side,
-                "entry_price": open_order.entry_price,
-                "fill_entry_price": self._effective_entry(open_order),
-                "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(
-                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
-                "wallet_at_open": open_order.wallet_at_open,
-                "leverage": open_order.leverage,
-            }]
+            info = await self._finalize_close(symbol, open_order, result, software_close_price)
+            return [info] if info is not None else []
         finally:
             self._closing.discard(symbol)
 
@@ -485,6 +530,13 @@ class OrderExecutor:
         (price jumped through SL/TP at candle open) that per-tick checks miss."""
         if self._states.get(symbol) == OrderState.PLACING:
             return []
+        # An exit we decided on earlier but could not execute (a ban, a transient
+        # rejection) is retried here first — this is the live per-candle entry point.
+        retried = await self.retry_pending_closes(only_symbol=symbol)
+        if retried:
+            return retried
+        if symbol in self._pending_close:
+            return []  # still stranded; do not re-evaluate or double-handle
         fake_order = self._fake_orders.get(symbol)
         if fake_order is None:
             return []
@@ -500,7 +552,7 @@ class OrderExecutor:
         if result is None:
             return []
 
-        if symbol in self._closing:
+        if symbol in self._closing or symbol in self._pending_close:
             return []
         self._closing.add(symbol)
         try:
@@ -510,38 +562,8 @@ class OrderExecutor:
                 return []
 
             software_close_price = fake_order.close_price or open_order.entry_price
-            try:
-                actual_close_price = await self._market_close(symbol, open_order, fallback=software_close_price)
-            except Exception as exc:
-                logger.error(f"Market close failed for {symbol}: {exc}")
-                self._notifier.notify("warning", f"Failed to close {symbol}", str(exc), "order_executor")
-                actual_close_price = software_close_price
-
-            pnl = self._calc_pnl(open_order, actual_close_price)
-            self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
-            closed_info = {
-                "symbol": symbol,
-                "preset_name": open_order.preset_name,
-                "result": result,
-                "pnl_usdt": pnl,
-                "side": open_order.side,
-                "entry_price": open_order.entry_price,
-                "fill_entry_price": self._effective_entry(open_order),
-                "close_price": actual_close_price,
-                "fee_usdt": self._order_fee(
-                    open_order.quantity, self._effective_entry(open_order), actual_close_price),
-                "wallet_at_open": open_order.wallet_at_open,
-                "leverage": open_order.leverage,
-            }
-            del self._open_orders[symbol]
-            del self._fake_orders[symbol]
-            self._states[symbol] = OrderState.IDLE
-            self._record_success(symbol)
-            logger.info(
-                f"Order closed (candle): {symbol} result={result} "
-                f"entry={open_order.entry_price} close={actual_close_price:.4f} pnl={pnl:.2f} USDT"
-            )
-            return [closed_info]
+            info = await self._finalize_close(symbol, open_order, result, software_close_price)
+            return [info] if info is not None else []
         finally:
             self._closing.discard(symbol)
 
@@ -865,8 +887,16 @@ class OrderExecutor:
             raise  # other errors → caller records failure
 
     async def _market_close(self, symbol: str, order: OpenOrder, fallback: float | None = None) -> float:
-        # Cancel the exchange SL order first so it doesn't fight the market close
-        await self._cancel_exchange_order(symbol, order.sl_order_id)
+        # The exchange SL is cancelled AFTER a confirmed close, not before.
+        #
+        # Cancelling first left a window where the cancel succeeded but the close then
+        # failed — an open position with no stop. That window is reachable whenever the
+        # endpoint rejects us mid-sequence (a rate-limit ban does exactly this), and it
+        # matters more now that a failed close keeps the position open for retry.
+        #
+        # Leaving the SL live during the close is safe: both legs are reduceOnly and
+        # point the same way. If the SL fills first, our market order returns -2022,
+        # which is handled below by recovering the actual SL fill price.
         if self._feed is None:
             return order.entry_price
         client = self._feed.client
@@ -914,6 +944,8 @@ class OrderExecutor:
                 )
                 return fb
             raise
+        # Close confirmed — now retire the protective SL.
+        await self._cancel_exchange_order(symbol, order.sl_order_id)
         avg_price = float(result.get('avgPrice', 0) or 0)
         # Testnet often returns avgPrice="0" in the immediate response for market orders.
         # Retry-query the order to get the actual fill price before falling back to entry.

@@ -27,7 +27,7 @@ async def test_real_order_recorded_on_price_close(tmp_path):
     async def fake_submit(*a, **kw):
         return 'id1'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 55000.0
 
     ex._submit_to_exchange = fake_submit
@@ -60,7 +60,7 @@ async def test_real_order_records_append_across_trades(tmp_path):
     close_prices = [55000.0, 47000.0]
     call_count = [0]
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         p = close_prices[call_count[0]]
         call_count[0] += 1
         return p
@@ -88,7 +88,7 @@ async def test_real_order_recorded_via_check_all_orders(tmp_path):
     async def fake_submit(*a, **kw):
         return 'id1'
 
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 55000.0
 
     ex._submit_to_exchange = fake_submit
@@ -126,7 +126,7 @@ async def test_no_recording_when_project_root_none():
 
     async def fake_submit(*a, **kw):
         return 'id'
-    async def fake_close(symbol, order):
+    async def fake_close(symbol, order, fallback=None):
         return 55000.0
 
     ex._submit_to_exchange = fake_submit

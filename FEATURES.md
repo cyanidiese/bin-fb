@@ -556,6 +556,43 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
 
+### Failed Close Never Books a Trade (Session 66)
+A market close that did not execute no longer counts as a close. The position, its
+FakeOrder and its non-IDLE state are kept, and the exit is retried every candle until
+the exchange confirms it.
+
+**The bug**: on any close error other than `-2022`, the bot booked the trade at the
+*software* price, deleted the position from its books and set the symbol IDLE — while
+the position was still open on the exchange. A rate-limit ban triggers this exactly.
+Consequences were: (1) the fabricated PnL flowed into
+`virtual_tracker.record_closed_trade()`, and preset ranking is `sum(recent_trades[-10:])`,
+so the bot would promote a preset on profit it never earned; (2) the freed symbol allowed
+a second position on top of the live one; (3) the orphan later closed at its stop, a real
+loss never recorded. Never observed in production (`Market close failed` = 0 across all
+9 retained logs) — timing luck, with 4.5 banned hours on 2026-09-06 alone to survive.
+
+**Files**: `bot/order_executor.py` — `_finalize_close()` and `retry_pending_closes()`
+replace three duplicated close blocks (`on_candle_close`, `check_symbol_price`,
+`check_symbol_candle`)
+**Key details**:
+- Retry is wired into `check_symbol_candle`, the live per-candle entry point.
+  `OrderExecutor.on_candle_close` is dead code — nothing calls it.
+- A stranded symbol is not re-evaluated while pending, so it cannot be double-handled
+- Notifies once per stranded exit, not once per retry (a ban spans many candles)
+- Retry books the **real** fill price, never the software price
+- If the position vanishes (reconciled elsewhere) the intent is dropped, not resurrected
+- **SL ordering reversed**: the exchange stop-loss is now cancelled only *after* a
+  confirmed close. Cancelling first left a window with an open position and no stop
+  whenever the close then failed. Leaving it live during the close is safe — both legs
+  are reduceOnly and same-direction, and an SL that fills first returns `-2022`, already
+  handled by recovering the real fill price.
+- Tests: `tests/test_failed_close_keeps_position.py` (11)
+
+**Note**: four tests in `test_real_order_recording.py` were passing *because* of this
+bug — their `fake_close(symbol, order)` mock omitted the `fallback` kwarg, so every call
+raised `TypeError`, which the old code swallowed and booked as a successful close. Mock
+signatures corrected to match `_market_close`.
+
 ### Rate-Limit Circuit Breaker (Session 66)
 When Binance answers `-1003` / HTTP 418, it states when the ban lifts. The guard reads
 that, and suppresses further requests to that endpoint until it expires.

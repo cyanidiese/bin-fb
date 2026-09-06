@@ -281,7 +281,7 @@ async def run() -> None:
         bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
-    feed = DataFeed(first_settings)
+    feed = DataFeed(first_settings, live_klines=first_settings.live_klines)
     order_executor._feed = feed
 
     # Proactive exchange check + leverage brackets

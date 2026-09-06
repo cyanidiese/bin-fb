@@ -556,6 +556,38 @@ Unified visual styling for WeightRebalancerSection to match all other risk manag
 - **Visibility**: Body always visible (removed `open` collapsible state)
 - **No behavioral change**: Feature logic unchanged, only visual unification
 
+### Kline Endpoint Routing — `LIVE_KLINES` (Session 66)
+Kline REST reads go to the **production** endpoint while all trading stays on testnet.
+Enabled by default (`LIVE_KLINES=true`); set `LIVE_KLINES=false` to restore the old
+behaviour without a code change.
+
+**Why**: testnet bans aggressively and was the sole source of our `-1003` bans. Measured
+2026-09-06 from the server: testnet returned **HTTP 418 (active ban)** while production
+served the same request at **used-weight 1/2400**. That day saw 43 ban errors across ~4
+episodes, degrading roughly 4.5 of 16.5 hours (~27%). Our own consumption was never the
+problem — measured at **8.75 weight per candle = 0.02% of the limit**. The fix moves
+public reads off the fragile quota and leaves it for account calls that genuinely need
+testnet.
+
+**Files**: `config/settings.py` (`live_klines` field + `LIVE_KLINES` env),
+`main.py:284` (wires it into `DataFeed`), `bot/data_feed.py` (endpoint logging)
+**Key details**:
+- Only affects test mode. In live mode both endpoints are production already and the
+  flag is a no-op — verified by test, including that no second client is opened.
+- Verified safe before enabling: testnet vs production EIGENUSDT 15m closes agree within
+  **±0.09%**, far inside our 1–8% SL distances.
+- Verified a testnet API key does not break public production calls (HTTP 200 with a
+  bogus key — public endpoints ignore the header).
+- `reinit()` deliberately falls back to the trading client, so a mode switch never leaves
+  klines pointed at the wrong endpoint.
+- The endpoint is now logged at startup (`Kline REST endpoint: production (...)`) because
+  it was previously invisible — which is why this went unnoticed.
+- **Known consequence**: kline *history* now comes from production while the live candle
+  *stream* still comes from the testnet WebSocket, so the cache is mixed across restarts.
+  At ±0.09% this is immaterial, but moving the stream too is a separate decision with
+  trading implications (fills happen at testnet prices).
+- Tests: `tests/test_kline_endpoint_routing.py` (13 cases)
+
 ### Level-Scoped TP Cap — `max_profit_pct_levels` (Session 65)
 Restricts `max_profit_pct` to specific trend levels instead of applying it at every level.
 Empty (the default) means the cap applies everywhere, so every existing preset is unchanged.

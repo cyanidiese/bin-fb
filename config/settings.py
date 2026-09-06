@@ -127,6 +127,13 @@ class Settings:
     # Number of consecutive swing highs (and lows) that must all be in the same
     # direction before getTrendRegime() declares a regime. Default 3.
     trend_regime_lookback: int
+    # Fetch klines from the PRODUCTION endpoint while trading on testnet.
+    # Klines are public data and the two endpoints agree closely (measured 2026-09-06:
+    # EIGENUSDT 15m closes within +/-0.09%), but testnet bans aggressively — it returned
+    # HTTP 418 while production served the same request at used-weight 1/2400. Routing
+    # public reads to production keeps the fragile testnet quota for account calls that
+    # genuinely require it. No effect in live mode, where both are already production.
+    live_klines: bool
     # When True: re-enable the opposing-parent hard reject for continuation signals
     # EVEN IF ignore_parent_alignment is True. This decouples the two behaviours that
     # ignore_parent_alignment used to bundle — escaping post-BoS droughts (keep) vs
@@ -231,6 +238,7 @@ def load_settings(symbol: str | None = None) -> Settings:
         signal_direction=os.getenv('SIGNAL_DIRECTION', 'both').lower(),
         trend_regime_filter=os.getenv('TREND_REGIME_FILTER', 'false').lower() in ('1', 'true', 'yes'),
         trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
+        live_klines=os.getenv('LIVE_KLINES', 'true').lower() in ('1', 'true', 'yes'),
         enforce_parent_alignment_hard=os.getenv('ENFORCE_PARENT_ALIGNMENT_HARD', 'false').lower() in ('1', 'true', 'yes'),
         enable_mean_reversion=os.getenv('ENABLE_MEAN_REVERSION', 'false').lower() in ('1', 'true', 'yes'),
         mr_window=int(os.getenv('MR_WINDOW', '48')),

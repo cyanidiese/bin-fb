@@ -36,8 +36,17 @@ class DataFeed:
         # The cache file path is unchanged — only the fetch endpoint differs.
         if live_klines and self._is_testnet:
             self._klines_client = Client(settings.api_key, settings.api_secret, testnet=False)
+            self._klines_source = 'production'
         else:
             self._klines_client = self._client
+            self._klines_source = 'testnet' if self._is_testnet else 'production'
+        # Logged because this is invisible otherwise, and it is the difference between
+        # a quota that bans us several times a day and one that sits near idle.
+        logger.info(
+            f"Kline REST endpoint: {self._klines_source} "
+            f"({getattr(self._klines_client, 'FUTURES_URL', '?')}) | "
+            f"trading endpoint: {'testnet' if self._is_testnet else 'production'}"
+        )
 
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
 
@@ -55,6 +64,8 @@ class DataFeed:
         if self._is_testnet:
             self._client.FUTURES_URL = _FUTURES_REST_TESTNET
         self._klines_client = self._client  # reinit always uses the trading client
+        self._klines_source = 'testnet' if self._is_testnet else 'production'
+        logger.info(f"Kline REST endpoint after reinit: {self._klines_source}")
         self._ws_base = _WS_TESTNET if self._is_testnet else _WS_LIVE
         self._reconnect_requested = True
         self._last_candle_open.clear()

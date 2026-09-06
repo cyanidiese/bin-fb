@@ -28,13 +28,19 @@ class ModeManager:
         command_path: Path = _DEFAULT_COMMAND_PATH,
         result_path: Path = _DEFAULT_RESULT_PATH,
         notifier: Notifier | None = None,
+        forced_mode: str | None = None,
     ) -> None:
         self._mode_path = mode_path
         self._command_path = command_path
         self._result_path = result_path
         self._notifier = notifier
         self._lock = asyncio.Lock()
-        self.current_mode: str = self._read_mode()
+        # A virtual-only instance is pinned to its configured mode. bot_mode.json is
+        # written by the dashboard and lives on a volume the other container can see,
+        # so honouring it here would let a mode switch retarget this instance's data
+        # files — and current_mode names every one of them.
+        self._forced_mode = forced_mode
+        self.current_mode: str = forced_mode or self._read_mode()
 
     # ------------------------------------------------------------------ #
     # Mode state                                                           #

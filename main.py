@@ -131,7 +131,16 @@ async def run() -> None:
         emergency_repeat_interval_s=float(risk_cfg.get("emergency_repeat_interval_s", 1800)),
         warning_repeat_interval_s=float(risk_cfg.get("warning_repeat_interval_s", 14400)),
     )
-    mode_manager = ModeManager(notifier=notifier)
+    # Loaded here because current_mode, on the next line, names every data file. A
+    # virtual-only instance must be pinned to its own configured mode instead of the
+    # shared bot_mode.json, or it would write its live-market results under test-mode
+    # filenames. load_settings() normalises trading_mode to exactly 'test' or 'live',
+    # the same vocabulary current_mode uses.
+    _base_settings = load_settings()
+    mode_manager = ModeManager(
+        notifier=notifier,
+        forced_mode=_base_settings.trading_mode if _base_settings.virtual_only else None,
+    )
     current_mode = mode_manager.current_mode
 
     risk_manager = RiskManager(

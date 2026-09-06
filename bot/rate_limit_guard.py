@@ -41,6 +41,18 @@ _DEFAULT_BLOCK_S = 60.0
 # Never trust an absurd expiry from a malformed message.
 _MAX_BLOCK_S = 3600.0
 
+# Binance's stated expiry is an upper bound, not a promise. Measured 2026-09-06: it
+# reported a ban until 18:48:59, but futures_account already succeeded again at 18:07 —
+# 41 minutes early. Blocking blindly for the stated window would have cost us balance
+# and kline updates for nothing, so treat the endpoint as HALF-OPEN periodically and let
+# exactly one probe through. If the probe works, clear the block early.
+#
+# The probe interval backs off, because a probe that fails does extend the real ban
+# (~2 min per call, measured). Starting at 60s recovers a short ban quickly; the cap
+# keeps a genuinely long ban from costing many wasted calls.
+_PROBE_FIRST_S = 60.0
+_PROBE_MAX_S = 600.0
+
 
 def parse_ban_expiry_ms(message: str) -> Optional[int]:
     """Epoch-ms the ban lifts, or None when the message carries no expiry."""
@@ -79,6 +91,32 @@ class RateLimitGuard:
     def __init__(self) -> None:
         self._blocked_until: dict[str, float] = {}   # key -> monotonic deadline
         self._announced: dict[str, float] = {}       # key -> deadline already logged
+        self._next_probe: dict[str, float] = {}      # key -> monotonic time of next probe
+        self._probe_delay: dict[str, float] = {}     # key -> current backoff
+        self._banned_until_wall: dict[str, float] = {}  # key -> epoch seconds, for messages
+        self._notify = None                          # set via set_notifier()
+        self._mode: str = ''                         # trading mode, for message context
+
+    def set_notifier(self, notify, mode: str = '') -> None:
+        """Register a callback used to announce ban start/end.
+
+        Signature matches Notifier.notify(level, title, body, source).
+        """
+        self._notify = notify
+        self._mode = mode
+
+    def _announce(self, level: str, title: str, body: str) -> None:
+        if self._notify is None:
+            return
+        try:
+            self._notify(level, title, body, 'rate_limit_guard')
+        except Exception as exc:  # never let a notification failure affect trading
+            logger.debug(f"Rate-limit guard notification failed: {exc}")
+
+    @staticmethod
+    def _fmt_wall(epoch_s: float) -> str:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(epoch_s, timezone.utc).strftime('%H:%M:%S UTC')
 
     def note_exception(self, key: str, exc: BaseException) -> bool:
         """Record a ban if `exc` is one. Returns True when the guard armed.
@@ -101,31 +139,103 @@ class RateLimitGuard:
         if remaining <= 0:
             return False
 
-        deadline = time.monotonic() + remaining
+        now = time.monotonic()
+        deadline = now + remaining
+        was_blocked = self._blocked_until.get(key, 0.0) > now
+
+        # A failed probe means the ban is still real: back the probe interval off so we
+        # stop paying for attempts that only extend it.
+        if was_blocked:
+            self._probe_delay[key] = min(
+                self._probe_delay.get(key, _PROBE_FIRST_S) * 2, _PROBE_MAX_S)
+        else:
+            self._probe_delay[key] = _PROBE_FIRST_S
+        self._next_probe[key] = now + self._probe_delay[key]
+
         # Never shorten an existing block — a later message may report a nearer expiry
         # for a different endpoint while the longer one still stands.
         if deadline > self._blocked_until.get(key, 0.0):
             self._blocked_until[key] = deadline
+            if expiry_ms is not None:
+                self._banned_until_wall[key] = expiry_ms / 1000.0
             if self._announced.get(key) != deadline:
                 self._announced[key] = deadline
+                until = self._banned_until_wall.get(key)
+                until_txt = self._fmt_wall(until) if until else 'unknown (assumed 60s)'
                 logger.warning(
                     f"Rate-limit guard ARMED for '{key}': suppressing requests for "
-                    f"{remaining:.0f}s. Calling while banned extends the ban, so we wait."
+                    f"{remaining:.0f}s (until {until_txt}). Calling while banned extends "
+                    f"the ban, so we wait."
                 )
+                if not was_blocked:
+                    self._announce(
+                        'warning',
+                        f"API ban started — {key}",
+                        (f"Endpoint: <b>{key}</b>\n"
+                         f"Trading mode: <b>{self._mode or 'unknown'}</b>\n"
+                         f"Banned until: <b>{until_txt}</b> "
+                         f"(~{remaining / 60:.0f} min)\n"
+                         f"Reason: {msg[:160]}\n\n"
+                         f"Kline and balance reads are paused — calling while banned "
+                         f"extends it. Open positions keep their exchange stop-loss, and "
+                         f"an exit that cannot execute is retried rather than recorded. "
+                         f"The endpoint is re-probed periodically and will resume as soon "
+                         f"as it actually works."),
+                    )
         return True
 
     def blocked_for(self, key: str) -> float:
-        """Seconds still to wait for this endpoint. 0.0 when clear."""
+        """Seconds still to wait for this endpoint. 0.0 when clear.
+
+        Returns 0.0 either when the stated ban has expired, or when it is time to send a
+        single probe. The stated expiry is an upper bound — Binance lifted one 41 minutes
+        early on 2026-09-06 — so we test rather than wait it out.
+        """
         deadline = self._blocked_until.get(key)
         if deadline is None:
             return 0.0
-        remaining = deadline - time.monotonic()
+        now = time.monotonic()
+        remaining = deadline - now
         if remaining <= 0:
-            del self._blocked_until[key]
-            self._announced.pop(key, None)
-            logger.info(f"Rate-limit guard CLEARED for '{key}' — resuming requests.")
+            self._clear(key, 'stated ban expired')
+            return 0.0
+        # Half-open: let exactly one request through, then reset the probe timer so the
+        # next caller is blocked again until either it succeeds (clearing the block) or
+        # note_exception re-arms with a longer backoff.
+        next_probe = self._next_probe.get(key)
+        if next_probe is not None and now >= next_probe:
+            self._next_probe[key] = now + self._probe_delay.get(key, _PROBE_FIRST_S)
+            logger.info(
+                f"Rate-limit guard probing '{key}' (stated ban has "
+                f"{remaining / 60:.0f} min left) — letting one request through"
+            )
             return 0.0
         return remaining
+
+    def note_success(self, key: str) -> None:
+        """A request got through. If we thought we were banned, we were wrong — clear it."""
+        if self._blocked_until.get(key):
+            self._clear(key, 'probe succeeded — endpoint is working again')
+
+    def _clear(self, key: str, reason: str) -> None:
+        stated = self._banned_until_wall.pop(key, None)
+        self._blocked_until.pop(key, None)
+        self._announced.pop(key, None)
+        self._next_probe.pop(key, None)
+        self._probe_delay.pop(key, None)
+        logger.info(f"Rate-limit guard CLEARED for '{key}' ({reason}) — resuming requests.")
+        early = ''
+        if stated and stated > time.time():
+            early = (f"\nRecovered <b>{(stated - time.time()) / 60:.0f} min early</b> "
+                     f"— Binance had stated {self._fmt_wall(stated)}.")
+        self._announce(
+            'info',
+            f"API ban ended — {key}",
+            (f"Endpoint: <b>{key}</b>\n"
+             f"Trading mode: <b>{self._mode or 'unknown'}</b>\n"
+             f"Resolution: {reason}{early}\n\n"
+             f"Normal kline and balance reads have resumed."),
+        )
 
     def is_blocked(self, key: str) -> bool:
         return self.blocked_for(key) > 0.0
@@ -135,9 +245,15 @@ class RateLimitGuard:
         if key is None:
             self._blocked_until.clear()
             self._announced.clear()
+            self._next_probe.clear()
+            self._probe_delay.clear()
+            self._banned_until_wall.clear()
         else:
             self._blocked_until.pop(key, None)
             self._announced.pop(key, None)
+            self._next_probe.pop(key, None)
+            self._probe_delay.pop(key, None)
+            self._banned_until_wall.pop(key, None)
 
 
 class RateLimited(Exception):

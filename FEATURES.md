@@ -614,8 +614,21 @@ that, and suppresses further requests to that endpoint until it expires.
   high-value, and it fails loudly through paths that already handle it. This guards the
   two high-frequency read paths (klines, balance) that account for every ban error seen.
 - Clearing is logged, so recovery is visible
+- **Half-open probing**: Binance's stated expiry is an upper bound, not a promise.
+  Measured 2026-09-06 — it reported a ban until 18:48:59, but `futures_account` already
+  succeeded at 18:07, **41 minutes early**. Waiting the stated window out would have
+  paused balance and kline reads for nothing. The guard therefore lets exactly one probe
+  through periodically (first after 60s, doubling to a 600s cap on each failed probe,
+  since a failed probe does extend the real ban by ~2 min). A probe that succeeds calls
+  `note_success()` and clears the block immediately.
+- **Telegram alerts on ban start and end.** Start (warning) gives the endpoint, trading
+  mode, the wall-clock expiry and duration, the raw reason, and what is paused. End
+  (info) gives the endpoint, mode, how it resolved, and how early it recovered against
+  the stated expiry. One alert per ban, not one per blocked call. A failing notifier can
+  never affect trading — the call is wrapped.
 - Tests: `tests/test_rate_limit_guard.py` (19), `tests/test_rate_limit_integration.py` (4,
-  asserting the network call is actually skipped rather than just state being recorded)
+  asserting the network call is actually skipped rather than just state being recorded),
+  `tests/test_rate_limit_probe_and_alerts.py` (12)
 
 **This is damage control, not prevention.** Our own consumption is 1–3 request-weight
 against a 6000/min limit, and the IP Binance names (`15.158.242.x`) is a shared

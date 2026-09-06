@@ -14,6 +14,7 @@ from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import load_settings, Settings, max_profit_cap_applies
+from bot.rate_limit_guard import guard as rl_guard
 from bot.analyzer import Analyzer
 from bot import analysis_log
 from bot.data_feed import DataFeed
@@ -282,6 +283,9 @@ async def run() -> None:
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
     feed = DataFeed(first_settings, live_klines=first_settings.live_klines)
+    # Ban start/end are announced to Telegram: an outage that silently pauses reads is
+    # otherwise invisible until someone reads the log.
+    rl_guard.set_notifier(notifier.notify, mode=current_mode)
     order_executor._feed = feed
 
     # Proactive exchange check + leverage brackets

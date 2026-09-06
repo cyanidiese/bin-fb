@@ -168,7 +168,9 @@ class DataFeed:
         if _wait > 0:
             raise RateLimited(_key, _wait)
         try:
-            return self._klines_client.futures_klines(**params)
+            _res = self._klines_client.futures_klines(**params)
+            rl_guard.note_success(_key)   # a probe that worked clears the block early
+            return _res
         except Exception as e:
             # Arm the guard before re-raising so the next scheduled fetch skips the
             # network entirely instead of extending the ban.

@@ -1115,6 +1115,7 @@ class OrderExecutor:
             return 0.0
         try:
             account = await asyncio.to_thread(self._feed.client.futures_account)
+            rl_guard.note_success(_key)   # a probe that worked clears the block early
             for asset in account.get('assets', []) or []:
                 if asset.get('asset') == self._QUOTE_ASSET:
                     return float(asset.get('walletBalance', 0) or 0)

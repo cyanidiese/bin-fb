@@ -471,7 +471,10 @@ export default function TradesPage() {
       const res = await fetch('/api/risk/lock-preset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, preset: isAlreadyLocked ? null : presetName }),
+        // dataMode, not the bot's mode: the lock must land on the instance whose
+        // table is on screen, which is what this page reads back.
+        body: JSON.stringify({ symbol, preset: isAlreadyLocked ? null : presetName,
+                               mode: dataMode }),
       })
       if (res.ok) {
         setLockedPreset(isAlreadyLocked ? null : presetName)

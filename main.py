@@ -136,21 +136,29 @@ async def run() -> None:
         logger.error("No active symbols in registry — cannot start")
         sys.exit(1)
 
+    # Loaded before the Notifier because virtual_only decides whether Telegram is wired
+    # at all, and before the ModeManager because current_mode names every data file.
+    # load_settings() normalises trading_mode to exactly 'test' or 'live', the same
+    # vocabulary current_mode uses.
+    _base_settings = load_settings()
+
     notifier = Notifier(
         log_path=_PROJECT_ROOT / "data" / "system_log.json",
         alert_path=_PROJECT_ROOT / "dashboard" / "public" / "alert_state.json",
-        telegram_token=risk_cfg.get("telegram", {}).get("token", ""),
+        # A statistics-only mirror sends nothing: it has no trades to report, and two
+        # bots alerting on one API ban is worse than one bot doing it. Notifier skips
+        # sending when the token is empty, so local logging is unaffected and no code
+        # downstream needs to know. Blanking the token here rather than guarding each
+        # notify() call means a future caller cannot reintroduce a message by accident.
+        telegram_token=(
+            "" if _base_settings.virtual_only
+            else risk_cfg.get("telegram", {}).get("token", "")
+        ),
         telegram_chat_id=risk_cfg.get("telegram", {}).get("chat_id", ""),
         min_interval_s=float(risk_cfg.get("telegram_notify_interval_s", 120)),
         emergency_repeat_interval_s=float(risk_cfg.get("emergency_repeat_interval_s", 1800)),
         warning_repeat_interval_s=float(risk_cfg.get("warning_repeat_interval_s", 14400)),
     )
-    # Loaded here because current_mode, on the next line, names every data file. A
-    # virtual-only instance must be pinned to its own configured mode instead of the
-    # shared bot_mode.json, or it would write its live-market results under test-mode
-    # filenames. load_settings() normalises trading_mode to exactly 'test' or 'live',
-    # the same vocabulary current_mode uses.
-    _base_settings = load_settings()
     mode_manager = ModeManager(
         notifier=notifier,
         forced_mode=_base_settings.trading_mode if _base_settings.virtual_only else None,

@@ -766,7 +766,17 @@ Data-backed stop-loss width limits per symbol, protecting against artifact SL ge
   The "8%+ is toxic" conclusion came from a single trade: TIAUSDT SELL at **22.52%** SL, -206.12. Everything between 8% and 13% is net **+138.57**. Win rate also rises monotonically with SL width (23% -> 43%), i.e. tight stops are being whipsawed.
 - **Why it mattered**: with the 8% cap, TIAUSDT produced **107 signals that were all rejected** at 8.24-11.72% (median 8.99%) while being the #2 ranked symbol. In one 36h window, 40 TIAUSDT signals were rejected and only 1 real order was placed bot-wide. The rejected signals are invisible in the virtual statistics because `virtual_order_simulator.py:337` applies the same cap.
 - **Why 10 and not removal**: 10% admits the largest rejection cluster (59 of 132, the 8-10% band with the best evidence) while still blocking the 13%+ class that contains the only catastrophic loss. 12.5% would additionally admit EIGENUSDT's 11.65-12.26% cluster (17 signals) but rests on n=2 - revisit once 10% has real trades behind it.
-- **Clamping (2026-09-07)**: `max_sl_pct` now **clamps the stop to the cap instead of rejecting the signal**, mirroring the `min_sl_pct` floor which has always widened rather than rejected. Implemented once in `config/settings.py:clamp_sl_to_max()` and used by all three engines — `main.py` (live), `bot/virtual_order_simulator.py` (virtual) and `bot/backtester.py`. They must agree: while they disagreed, 107 rejected TIAUSDT signals were invisible in the virtual statistics, so there was no evidence either way for two months.
+- **Clamping (2026-09-07) — OPT-IN, currently OFF everywhere**: `max_sl_pct` can **clamp the stop to the cap instead of rejecting the signal**, mirroring the `min_sl_pct` floor which has always widened rather than rejected. Implemented once in `config/settings.py:clamp_sl_to_max()` and used by all three engines — `main.py` (live), `bot/virtual_order_simulator.py` (virtual) and `bot/backtester.py`. They must agree: while they disagreed, 107 rejected TIAUSDT signals were invisible in the virtual statistics, so there was no evidence either way for two months.
+  - **Enabling it**: `risk_config.per_symbol_settings.<SYMBOL>.sl_clamp_enabled = true`, with `max_sl_pct` on the same symbol as the clamp target. Both are plain `Settings` fields, so they flow through the existing `dataclasses.replace` merge — no new config machinery. `SL_CLAMP_ENABLED=1` in the environment flips the default for every symbol; not used.
+  - **Default is `false`**, i.e. a stop wider than `max_sl_pct` rejects the signal, exactly as it has since 2026-07-16. Shipping it enabled would change what the bot trades with no controlled comparison, so it goes on one symbol at a time.
+
+    | stop width | default (off, cap 10) | opt-in (on, cap 12) |
+    |---|---|---|
+    | 8.5% | trade at 8.50% | trade at 8.50% |
+    | 11.7% | **reject** | trade at 11.70% |
+    | 15.8% | **reject** | trade at 12.00% (clamped) |
+    | 22.5% | **reject** | trade at 12.00% (clamped) |
+
   - Clamping only ever **reduces** risk, never widens it.
   - It runs **before** the ATR floor and `min_profit_loss_ratio`/`sl_adjust_to_rr`, so a clamped stop still has to satisfy the preset's own geometry — pulling the stop in raises RR, and if it lands too tight for the instrument's volatility `min_sl_atr_mult` rejects it.
   - SELL distances keep the x1.5 weighting the rest of the chain uses, so the inverse divides by 1.5 — identical to the floor.

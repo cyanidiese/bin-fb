@@ -334,11 +334,15 @@ class VirtualOrderSimulator:
             else:
                 sl = entry * (1.0 + _effective_min_sl / 1.5 / 100.0)
             sl_dist_pct = _effective_min_sl
-        # Clamp rather than reject, identically to main.py — if these two disagree the
-        # virtual statistics measure a different strategy than the one that trades,
-        # which is exactly how 107 rejected TIAUSDT signals stayed invisible.
-        sl, sl_dist_pct, _ = clamp_sl_to_max(
-            entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
+        # Same two behaviours as main.py, same flag. These must not diverge: while they
+        # did, 107 rejected TIAUSDT signals were invisible in the virtual statistics, so
+        # there was no evidence either way for two months.
+        if not preset_settings.sl_clamp_enabled:
+            if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
+                return
+        else:
+            sl, sl_dist_pct, _ = clamp_sl_to_max(
+                entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
 
         if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:
             _klines = analyzer.get_klines()

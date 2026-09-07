@@ -52,6 +52,11 @@ class Settings:
     # The TP is projected from the swing structure, so how far it lands depends on which
     # level produced the signal; a cap that is right for one level can be wrong for another.
     max_profit_pct_levels: tuple[int, ...]
+    # Opt-in per symbol via risk_config.per_symbol_settings.<SYMBOL>.sl_clamp_enabled.
+    # False keeps the long-standing behaviour: a stop wider than max_sl_pct rejects the
+    # signal. True clamps the stop to max_sl_pct and trades it instead. Ships OFF so
+    # enabling it is a deliberate, per-symbol experiment with a controlled comparison.
+    sl_clamp_enabled: bool
     # Correction quality bonus weight in precision scoring. 0.0 = disabled (no change to scoring).
     # When > 0, signals that follow a well-formed correction get a precision boost up to this value.
     correction_weight: float
@@ -265,6 +270,7 @@ def load_settings(symbol: str | None = None) -> Settings:
         trend_regime_lookback=int(os.getenv('TREND_REGIME_LOOKBACK', '3')),
         live_klines=os.getenv('LIVE_KLINES', 'false').lower() in ('1', 'true', 'yes'),
         virtual_only=os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes'),
+        sl_clamp_enabled=os.getenv('SL_CLAMP_ENABLED', 'false').lower() in ('1', 'true', 'yes'),
         enforce_parent_alignment_hard=os.getenv('ENFORCE_PARENT_ALIGNMENT_HARD', 'false').lower() in ('1', 'true', 'yes'),
         enable_mean_reversion=os.getenv('ENABLE_MEAN_REVERSION', 'false').lower() in ('1', 'true', 'yes'),
         mr_window=int(os.getenv('MR_WINDOW', '48')),

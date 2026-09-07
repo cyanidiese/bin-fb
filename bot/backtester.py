@@ -365,10 +365,14 @@ class Backtester:
                         else:
                             sl = entry_price * (1.0 + _effective_min_sl / 1.5 / 100.0)
                         sl_dist_pct = _effective_min_sl
-                    # Clamp rather than skip, matching main.py and the virtual
-                    # simulator so a backtest predicts what will actually trade.
-                    sl, sl_dist_pct, _ = clamp_sl_to_max(
-                        entry_price, sl, sl_dist_pct, side, settings.max_sl_pct)
+                    # Same two behaviours as main.py, same flag, so a backtest
+                    # predicts what will actually trade under either setting.
+                    if not settings.sl_clamp_enabled:
+                        if settings.max_sl_pct > 0 and sl_dist_pct > settings.max_sl_pct:
+                            continue
+                    else:
+                        sl, sl_dist_pct, _ = clamp_sl_to_max(
+                            entry_price, sl, sl_dist_pct, side, settings.max_sl_pct)
                     if settings.min_sl_atr_mult > 0 and settings.atr_lookback > 0:
                         start = max(0, i - settings.atr_lookback + 1)
                         candle_slice = klines[start:i + 1]

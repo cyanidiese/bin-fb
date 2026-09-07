@@ -811,27 +811,43 @@ async def run() -> None:
                 preset_name=preset_name, scenario=_active_scenario_name,
             )
 
-        # max_sl_pct: clamp the stop, do not discard the signal.
-        # Mirrors the SL floor above, which has always widened rather than rejected.
-        # Pulling the stop in only reduces risk, and everything below — the ATR floor
-        # and min_profit_loss_ratio/sl_adjust_to_rr — still runs on the clamped value,
-        # so the trade is accepted only if it satisfies the preset's own geometry.
-        _pre_clamp_sl, _pre_clamp_pct = sl, sl_dist_pct
-        sl, sl_dist_pct, _sl_clamped = clamp_sl_to_max(
-            entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
-        if _sl_clamped:
-            logger.info(
-                f"[{symbol}] SL clamped: {_pre_clamp_pct:.3f}% → {sl_dist_pct:.3f}%"
-                f" ({_pre_clamp_sl:.6g} → {sl:.6g}) preset={preset_name}"
-            )
-            dl_record(
-                dl_path, candle_ts=candle_ts, symbol=symbol,
-                decision='clamp_max_sl_pct',
-                reason=(f'sl_dist={_pre_clamp_pct:.2f}% clamped to '
-                        f'max={preset_settings.max_sl_pct}%'),
-                balance=balance, leverage=0, efficiency_score=_eff_for_dl,
-                preset_name=preset_name, scenario=_active_scenario_name,
-            )
+        # max_sl_pct — two behaviours, chosen per symbol by sl_clamp_enabled.
+        #
+        # OFF (default, and what has shipped since 2026-07-16): a stop wider than the
+        # cap rejects the signal.
+        #
+        # ON: clamp the stop to the cap and trade it. Mirrors the SL floor above, which
+        # has always widened rather than rejected. Clamping only ever reduces risk, and
+        # everything below — the ATR floor and min_profit_loss_ratio/sl_adjust_to_rr —
+        # still runs on the clamped value, so the trade is taken only if it satisfies
+        # the preset's own geometry.
+        if not preset_settings.sl_clamp_enabled:
+            if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
+                dl_record(
+                    dl_path, candle_ts=candle_ts, symbol=symbol,
+                    decision='skip_max_sl_pct',
+                    reason=f'sl_dist={sl_dist_pct:.2f}% > max={preset_settings.max_sl_pct}%',
+                    balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                    preset_name=preset_name, scenario=_active_scenario_name,
+                )
+                return 0.0
+        else:
+            _pre_clamp_sl, _pre_clamp_pct = sl, sl_dist_pct
+            sl, sl_dist_pct, _sl_clamped = clamp_sl_to_max(
+                entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
+            if _sl_clamped:
+                logger.info(
+                    f"[{symbol}] SL clamped: {_pre_clamp_pct:.3f}% → {sl_dist_pct:.3f}%"
+                    f" ({_pre_clamp_sl:.6g} → {sl:.6g}) preset={preset_name}"
+                )
+                dl_record(
+                    dl_path, candle_ts=candle_ts, symbol=symbol,
+                    decision='clamp_max_sl_pct',
+                    reason=(f'sl_dist={_pre_clamp_pct:.2f}% clamped to '
+                            f'max={preset_settings.max_sl_pct}%'),
+                    balance=balance, leverage=0, efficiency_score=_eff_for_dl,
+                    preset_name=preset_name, scenario=_active_scenario_name,
+                )
 
         # ATR-based SL floor (instrument-agnostic structural filter)
         if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:

@@ -92,10 +92,15 @@ class TestConsistency:
 def test_all_three_engines_use_the_shared_helper():
     """live, virtual and backtest must agree — otherwise the virtual statistics
     measure a different strategy than the one that trades, which is exactly why there
-    was no data on the rejected signals for two months."""
+    was no data on the rejected signals for two months.
+
+    Both behaviours are kept: rejecting is the default, clamping is opt-in per symbol
+    (see tests/test_sl_clamp_optional.py). What matters here is that no engine rolls
+    its own clamp arithmetic.
+    """
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     for f in ('main.py', 'bot/virtual_order_simulator.py', 'bot/backtester.py'):
         src = (root / f).read_text()
-        assert 'clamp_sl_to_max' in src, f'{f} still has its own max_sl_pct handling'
-        assert "decision='skip_max_sl_pct'" not in src, f'{f} still rejects on max_sl_pct'
+        assert 'clamp_sl_to_max' in src, f'{f} does not use the shared helper'
+        assert 'sl_clamp_enabled' in src, f'{f} does not gate on the flag'

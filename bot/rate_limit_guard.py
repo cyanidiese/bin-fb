@@ -54,6 +54,47 @@ _PROBE_FIRST_S = 60.0
 _PROBE_MAX_S = 600.0
 
 
+# Epoch timestamps Binance embeds in its error text. Bounded to a plausible window so
+# an order id, a quantity or a price is never mistaken for a date: 13 digits is
+# milliseconds, 10 is seconds.
+_EPOCH_MS_RE = re.compile(r'\b(\d{13})\b')
+_EPOCH_S_RE = re.compile(r'\b(\d{10})\b')
+_PLAUSIBLE_FROM = 1577836800.0   # 2020-01-01
+_PLAUSIBLE_TO = 2524608000.0     # 2050-01-01
+
+
+def _fmt_wall(epoch_s: float) -> str:
+    """An absolute instant, as a date and time in UTC.
+
+    The date matters: a ban can cross midnight, and "00:41:58 UTC" on its own does not
+    say which day it lifts.
+    """
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch_s, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+
+def humanize_epochs(text: str) -> str:
+    """Rewrite epoch timestamps in an API message as readable UTC.
+
+    Binance says "banned until 1788777598577", which tells a human reading a Telegram
+    alert nothing at all. Only numbers that decode to a date between 2020 and 2050 are
+    rewritten, so order ids, quantities and prices are left exactly as they are.
+    """
+    if not text:
+        return ''
+
+    def _sub(divisor):
+        def inner(m):
+            secs = int(m.group(1)) / divisor
+            if _PLAUSIBLE_FROM <= secs <= _PLAUSIBLE_TO:
+                return _fmt_wall(secs)
+            return m.group(1)
+        return inner
+
+    text = _EPOCH_MS_RE.sub(_sub(1000.0), text)
+    return _EPOCH_S_RE.sub(_sub(1.0), text)
+
+
 def parse_ban_expiry_ms(message: str) -> Optional[int]:
     """Epoch-ms the ban lifts, or None when the message carries no expiry."""
     m = _BANNED_UNTIL_RE.search(message or '')
@@ -113,11 +154,6 @@ class RateLimitGuard:
         except Exception as exc:  # never let a notification failure affect trading
             logger.debug(f"Rate-limit guard notification failed: {exc}")
 
-    @staticmethod
-    def _fmt_wall(epoch_s: float) -> str:
-        from datetime import datetime, timezone
-        return datetime.fromtimestamp(epoch_s, timezone.utc).strftime('%H:%M:%S UTC')
-
     def note_exception(self, key: str, exc: BaseException) -> bool:
         """Record a ban if `exc` is one. Returns True when the guard armed.
 
@@ -161,7 +197,7 @@ class RateLimitGuard:
             if self._announced.get(key) != deadline:
                 self._announced[key] = deadline
                 until = self._banned_until_wall.get(key)
-                until_txt = self._fmt_wall(until) if until else 'unknown (assumed 60s)'
+                until_txt = _fmt_wall(until) if until else 'unknown (assumed 60s)'
                 logger.warning(
                     f"Rate-limit guard ARMED for '{key}': suppressing requests for "
                     f"{remaining:.0f}s (until {until_txt}). Calling while banned extends "
@@ -177,7 +213,7 @@ class RateLimitGuard:
                         (f"Endpoint:     {key}\n"
                          f"Trading mode: {self._mode or 'unknown'}\n"
                          f"Banned until: {until_txt}  (~{remaining / 60:.0f} min)\n"
-                         f"Reason:       {msg[:150]}\n\n"
+                         f"Reason:       {humanize_epochs(msg)[:200]}\n\n"
                          f"Kline and balance reads are paused — calling while banned "
                          f"extends it. Open positions keep their exchange stop-loss, and "
                          f"an exit that cannot execute is retried rather than recorded. "
@@ -229,7 +265,7 @@ class RateLimitGuard:
         early = ''
         if stated and stated > time.time():
             early = (f"\nRecovered {(stated - time.time()) / 60:.0f} min early — "
-                     f"Binance had stated {self._fmt_wall(stated)}.")
+                     f"Binance had stated {_fmt_wall(stated)}.")
         self._announce(
             'info',
             f"API ban ended — {key}",

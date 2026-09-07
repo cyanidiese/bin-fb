@@ -518,6 +518,15 @@ async def run() -> None:
     # otherwise invisible until someone reads the log.
     rl_guard.set_notifier(notifier.notify, mode=current_mode)
 
+    # Restore a ban that was still running when the previous process exited. Guard
+    # state is in-memory, so without this a restart mid-ban began clean and fired its
+    # startup calls — kline loads, leverage brackets, balance — straight into the
+    # active ban, extending it by ~2 minutes each. Loaded before DataFeed is used so
+    # the first request is already suppressed.
+    _rl_state_path = _instance_path(
+        _PROJECT_ROOT / "data", "rate_limit_state.json", current_mode, _virtual_only)
+    rl_guard.load_state(_rl_state_path)
+
     # Close out a ban alert the previous run never resolved. Guard state is in-memory,
     # so a restart while a block is armed kills it before _clear() can send the "ban
     # ended" notice — leaving the last Telegram message as "API ban started" for a ban

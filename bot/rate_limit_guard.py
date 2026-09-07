@@ -23,6 +23,7 @@ the log.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -208,6 +209,9 @@ class RateLimitGuard:
         self._probe_delay: dict[str, float] = {}     # key -> current backoff
         self._banned_until_wall: dict[str, float] = {}  # key -> epoch seconds, for messages
         self._notify = None                          # set via set_notifier()
+        # Set by load_state(); every later arm/clear rewrites it, so persistence
+        # cannot be forgotten at a call site the way append_kline() was.
+        self._state_path = None
         self._mode: str = ''                         # trading mode, for message context
 
     def set_notifier(self, notify, mode: str = '') -> None:
@@ -285,6 +289,7 @@ class RateLimitGuard:
                     f"{remaining:.0f}s (until {until_txt}). Calling while banned extends "
                     f"the ban, so we wait."
                 )
+                self._persist()
                 if not was_blocked:
                     # Plain text only: Notifier.notify() html-escapes the body (so an
                     # API error containing '<' cannot break the message), which would
@@ -410,6 +415,7 @@ class RateLimitGuard:
         self._probe_delay.pop(key, None)
         self._probe_inflight.pop(key, None)
         self._settle_until.pop(key, None)
+        self._persist()
         logger.info(f"Rate-limit guard CLEARED for '{key}' ({reason}) — resuming requests.")
         early = ''
         if stated and stated > time.time():
@@ -423,6 +429,89 @@ class RateLimitGuard:
              f"Resolution:   {reason}{early}\n\n"
              f"Normal kline and balance reads have resumed."),
         )
+
+    def _persist(self) -> None:
+        """Rewrite the state file, if load_state() gave us a path."""
+        if self._state_path is not None:
+            self.save_state(self._state_path)
+
+    def save_state(self, path) -> None:
+        """Persist each endpoint's ban expiry as wall-clock epoch seconds.
+
+        The block deadline is monotonic, which is meaningless across processes, so the
+        wall-clock expiry Binance stated is what gets written. Without this a restart
+        during a ban began with a clean guard and fired its startup calls — kline loads,
+        leverage brackets, balance — straight into the active ban, extending it by 2
+        minutes each. Two restarts on 2026-09-07 landed inside a ban window and only
+        escaped because Binance had lifted it early.
+
+        Never raises: this is called from the candle path, and a disk problem must not
+        stop the bot trading.
+        """
+        try:
+            from pathlib import Path as _P
+            p = _P(path)
+            with self._lock:
+                now_m = time.monotonic()
+                data = {
+                    k: self._banned_until_wall.get(k, time.time() + (d - now_m))
+                    for k, d in self._blocked_until.items()
+                    if d > now_m
+                }
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data))
+        except (OSError, ValueError) as exc:
+            # Narrow for the same reason as load_state, but still non-fatal: this runs
+            # on the candle path and a disk problem must not stop the bot trading.
+            logger.debug(f"Rate-limit state save failed: {exc}")
+
+    def load_state(self, path) -> None:
+        """Re-arm from a persisted expiry, so a restart does not call into a known ban.
+
+        Anything unreadable, expired or absurd is ignored — a corrupt file must never
+        be able to suppress traffic indefinitely, so the remaining time is clamped to
+        _MAX_BLOCK_S exactly as a live ban message is. A restored block still probes:
+        Binance lifts bans early and we must not wait one out blindly.
+        """
+        # Remember the path FIRST. Returning early on a missing file left _state_path
+        # unset, so on a fresh install nothing ever persisted and the whole feature was
+        # dead on first run — the unit tests missed it because they always loaded an
+        # existing file.
+        self._state_path = path
+        try:
+            from pathlib import Path as _P
+            raw = json.loads(_P(path).read_text())
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # Narrow on purpose. A bare `except Exception` here hid a missing `import
+            # json` — load_state silently did nothing and the tests failed with a
+            # misleading message. Only I/O and parse errors are expected; anything
+            # else is a bug and should surface.
+            logger.debug(f"Rate-limit state load skipped: {exc}")
+            return
+        if not isinstance(raw, dict):
+            return
+        now_w, now_m = time.time(), time.monotonic()
+        restored = []
+        with self._lock:
+            for key, expiry in raw.items():
+                try:
+                    remaining = float(expiry) - now_w
+                except (TypeError, ValueError):
+                    continue
+                if remaining <= 0:
+                    continue
+                remaining = min(remaining, _MAX_BLOCK_S)
+                self._blocked_until[key] = now_m + remaining
+                self._banned_until_wall[key] = float(expiry)
+                self._probe_delay[key] = _PROBE_FIRST_S
+                self._next_probe[key] = now_m + _PROBE_FIRST_S
+                restored.append((key, remaining))
+        for key, remaining in restored:
+            logger.warning(
+                f"Rate-limit guard RESTORED for '{key}' from disk: still banned for "
+                f"{remaining / 60:.0f} min (until {_fmt_wall(self._banned_until_wall[key])}) "
+                f"— skipping API calls instead of rediscovering it the hard way"
+            )
 
     def is_blocked(self, key: str) -> bool:
         """Whether traffic is currently held back.

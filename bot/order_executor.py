@@ -360,6 +360,20 @@ class OrderExecutor:
                 return False
             except Exception as exc:
                 self._states[symbol] = OrderState.IDLE
+                # Placement is deliberately NOT gated on the rate-limit guard: a real
+                # order is the scarce resource here (78 placed in 27 days, all 78
+                # succeeded) and refusing one on a possibly-stale ban flag would cost
+                # the thing we are trying to protect. It is treated as a privileged
+                # probe instead — always attempted, but its failure now ARMS the guard,
+                # so the reads that follow back off immediately rather than each adding
+                # another 2 minutes. Before this, a banned placement told the guard
+                # nothing.
+                _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+                if rl_guard.note_exception(_key, exc):
+                    logger.error(
+                        f"Order placement for {symbol} was rejected as rate-limited — "
+                        f"guard armed; reads will now back off"
+                    )
                 threshold_hit = self._record_failure(symbol)
                 if threshold_hit:
                     await self._auto_disable(symbol, f"consecutive_failures: {exc}")
@@ -1223,6 +1237,17 @@ class OrderExecutor:
         """
         if self._feed is None:
             return
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            # Startup called this straight into an active ban. Brackets only cap
+            # leverage, and get_bracket_max() already defaults to 20, so skipping is
+            # cheap; extending the ban is not.
+            logger.warning(
+                f"Skipping leverage brackets: '{_key}' rate-limit banned for another "
+                f"{_wait:.0f}s — using cached/default ceilings"
+            )
+            return
         wanted = set(symbols)
         try:
             result = await asyncio.to_thread(self._feed.client.futures_leverage_bracket)
@@ -1244,6 +1269,7 @@ class OrderExecutor:
                     return
                 wanted -= set(self._bracket_max)
         except Exception as exc:
+            rl_guard.note_exception(_key, exc)
             logger.warning(f"Batch leverage-bracket fetch failed: {exc} — per-symbol fallback")
 
         for symbol in sorted(wanted):

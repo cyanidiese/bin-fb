@@ -29,6 +29,15 @@ def append_entry(
     _write(path, entries)
 
 
+def read_entries(path: Path) -> list[dict]:
+    """The log's entries, oldest first. Empty list when the file is missing or bad.
+
+    Public wrapper over _read so callers outside this module do not reach for a private
+    name. Used at startup to spot a ban alert the previous run never closed out.
+    """
+    return _read(path)
+
+
 def trim_to(path: Path, keep: int) -> int:
     """Keep only the latest `keep` entries. Returns the new count."""
     entries = _read(path)

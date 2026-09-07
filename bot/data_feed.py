@@ -23,6 +23,38 @@ _WS_TESTNET = 'wss://stream.binancefuture.com/ws'
 _WS_LIVE = 'wss://fstream.binance.com/ws'
 
 
+# Binance charges kline weight on the `limit` parameter, not on rows returned, and
+# startTime does not reduce it. Measured from X-MBX-USED-WEIGHT-1M on 2026-09-07:
+#     limit=100 -> 1,  limit=500 -> 2,  limit=1000 -> 5,  limit=1500 -> 10
+# Only these boundaries are ever worth asking for: a limit of 137 costs the same as 500
+# while fetching less.
+_KLINE_WEIGHT_TIERS = (100, 500, 1000, 1500)
+
+# Extra candles on top of the measured gap, so a boundary gap cannot lose the newest
+# candle to an off-by-one.
+_KLINE_GAP_MARGIN = 3
+
+
+def update_fetch_limit(gap_ms: int, candle_ms: int, max_limit: int) -> int:
+    """Smallest `limit` that still covers `gap_ms`, snapped to a weight tier.
+
+    On a restart the cache is usually minutes old, yet load_klines asked for 1500
+    candles — weight 10 per symbol, 150 across 15 symbols, to retrieve maybe 20 rows.
+    Sizing the request to the real gap makes that 15, with no behavioural change: the
+    fetch is bounded by startTime, and `limit` only caps how many come back.
+
+    A candle_ms of 0 (unknown timeframe) falls back to max_limit rather than guessing
+    small and silently under-fetching.
+    """
+    if candle_ms <= 0:
+        return max_limit
+    needed = max(0, gap_ms) // candle_ms + _KLINE_GAP_MARGIN
+    for tier in _KLINE_WEIGHT_TIERS:
+        if tier >= needed and tier <= max_limit:
+            return tier
+    return max_limit
+
+
 class DataFeed:
     def __init__(self, settings: Settings, live_klines: bool = False):
         self._settings = settings
@@ -100,9 +132,19 @@ class DataFeed:
 
         if cached:
             last_open_ms = int(cached[-1][0])
-            logger.info(f"Cache has {len(cached)} klines, fetching updates since {last_open_ms}")
+            # Ask only for what the gap needs. Weight is charged on `limit`, so a
+            # 1500-candle request to collect a few new candles cost 10x what it had to.
+            _gap_limit = update_fetch_limit(
+                gap_ms=int(time.time() * 1000) - int(cached[-1][6]),
+                candle_ms=self._timeframe_to_ms(timeframe),
+                max_limit=limit,
+            )
+            logger.info(
+                f"Cache has {len(cached)} klines, fetching updates since {last_open_ms} "
+                f"(limit={_gap_limit}, was {limit})"
+            )
             try:
-                fresh = self._fetch(symbol, timeframe, limit=limit, start_ms=last_open_ms + 1)
+                fresh = self._fetch(symbol, timeframe, limit=_gap_limit, start_ms=last_open_ms + 1)
             except Exception as e:
                 logger.warning(f"[{symbol}] Kline update fetch failed (using cache): {e}")
                 fresh = []

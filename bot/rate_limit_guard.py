@@ -150,6 +150,41 @@ def looks_like_rate_limit(message: str) -> bool:
     )
 
 
+# Titles the guard emits, parsed back on startup to spot a ban we never closed out.
+_BAN_TITLE_RE = re.compile(r'API ban (started|ended)\s*[—-]\s*(\S+)')
+
+
+def unresolved_ban_endpoints(entries) -> list[str]:
+    """Endpoints whose most recent ban notification was a 'started' with no 'ended'.
+
+    Guard state is in-memory, so a restart during a ban kills it before `_clear()` can
+    send the "ban ended" alert. On 2026-09-07 the bot was restarted at 14:56 while a
+    block was armed; the last alert anyone saw was "API ban started" at 14:30, for a ban
+    that had expired around 14:48. It read as a 40-minute outage that was not happening,
+    and every deploy during a ban would do the same.
+
+    Sorted by timestamp rather than trusting append order, so a hand-edited or merged
+    log cannot invert the result. Anything unparseable is ignored — this only ever adds
+    an informational message, and getting it wrong must not be able to break startup.
+    """
+    latest: dict[str, tuple[str, str]] = {}
+    for e in entries or []:
+        if not isinstance(e, dict):
+            continue
+        title = e.get('title')
+        if not isinstance(title, str):
+            continue
+        m = _BAN_TITLE_RE.search(title)
+        if not m:
+            continue
+        state, key = m.group(1), m.group(2)
+        ts = str(e.get('timestamp') or '')
+        prev = latest.get(key)
+        if prev is None or ts >= prev[0]:
+            latest[key] = (ts, state)
+    return sorted(k for k, (_ts, state) in latest.items() if state == 'started')
+
+
 class RateLimitGuard:
     """Tracks, per endpoint key, how long we must stay away.
 

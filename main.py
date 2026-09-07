@@ -16,7 +16,10 @@ from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import (
     load_settings, Settings, max_profit_cap_applies, clamp_sl_to_max,
 )
-from bot.rate_limit_guard import guard as rl_guard, RateLimited, _SETTLE_S
+from bot.rate_limit_guard import (
+    guard as rl_guard, RateLimited, _SETTLE_S, unresolved_ban_endpoints,
+)
+from bot.system_log import read_entries as read_system_log
 from bot.analyzer import Analyzer
 from bot import analysis_log
 from bot.data_feed import DataFeed
@@ -466,6 +469,32 @@ async def run() -> None:
     # Ban start/end are announced to Telegram: an outage that silently pauses reads is
     # otherwise invisible until someone reads the log.
     rl_guard.set_notifier(notifier.notify, mode=current_mode)
+
+    # Close out a ban alert the previous run never resolved. Guard state is in-memory,
+    # so a restart while a block is armed kills it before _clear() can send the "ban
+    # ended" notice — leaving the last Telegram message as "API ban started" for a ban
+    # that may well have expired. Worded honestly: we do not know whether it is still
+    # active until the first call finds out.
+    try:
+        _sys_log_path = _instance_path(
+            _PROJECT_ROOT / "data", "system_log.json", current_mode, _virtual_only)
+        for _stale_key in unresolved_ban_endpoints(read_system_log(_sys_log_path)):
+            notifier.notify(
+                "info",
+                f"API ban tracking reset — {_stale_key}",
+                (f"Endpoint:     {_stale_key}\n"
+                 f"Trading mode: {current_mode}\n"
+                 f"Reason:       the bot restarted while this endpoint was marked "
+                 f"banned, so the previous run could not send its 'ban ended' "
+                 f"notice.\n\n"
+                 f"The rate-limit guard starts clear after a restart. If the ban is "
+                 f"still active it will be detected again on the next read and you "
+                 f"will get a fresh alert; if it has expired, nothing further "
+                 f"happens."),
+                "rate_limit_guard",
+            )
+    except Exception as _stale_exc:
+        logger.debug(f"Ban-alert reconciliation skipped: {_stale_exc}")
     order_executor._feed = feed
 
     # Proactive exchange check + leverage brackets

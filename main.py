@@ -35,7 +35,10 @@ from bot.virtual_tracker import VirtualTracker
 from bot.virtual_order_simulator import VirtualOrderSimulator
 from bot.risk_manager import RiskManager
 from bot.leverage_scenario import create_scenario
-from config.risk_config import load_risk_config, save_risk_config, get_min_trades_for_ranking
+from config.risk_config import (
+    load_risk_config, save_risk_config, get_min_trades_for_ranking,
+    locked_presets_for,
+)
 from bot.balance_history import record as bh_record
 from bot.decision_log import record as dl_record
 from bot.lot_constraint_detector import adjust_constrained_symbols
@@ -792,7 +795,7 @@ async def run() -> None:
             logger.info(f"[{symbol}] Skipping real order: trading blackout H{datetime.now(timezone.utc).hour:02d} UTC")
             return 0.0
 
-        _locked_presets = risk_cfg.get("locked_presets", {})
+        _locked_presets = locked_presets_for(risk_cfg, current_mode)
         is_locked = symbol in _locked_presets
         if is_locked:
             preset_name = _locked_presets[symbol]
@@ -1411,7 +1414,7 @@ async def run() -> None:
             # collect preset performance data to inform future re-enablement decisions.
             # Placement logic is skipped entirely.
             recs = analyzer.add_candle(kline)
-            _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
+            _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
             await virtual_order_simulator.on_candle_close(
                 symbol=symbol,
                 analyzer=analyzer,
@@ -1496,7 +1499,8 @@ async def run() -> None:
                 # Base-settings engine lacks hl_buy/lh_sell flags — fall back to the symbol's
                 # best preset's own overrides so those signal types are not silently missed.
                 # locked_presets takes precedence over VirtualTracker selection.
-                _bp = risk_cfg.get("locked_presets", {}).get(sym) or virtual_tracker.best_preset(sym)
+                _bp = (locked_presets_for(risk_cfg, mode_manager.current_mode).get(sym)
+                       or virtual_tracker.best_preset(sym))
                 _bp_ovr = all_presets.get(_bp or '', {})
                 if _bp_ovr:
                     best_sym = _sym_az.get_recommendation_for_preset(_bp_ovr)
@@ -1512,7 +1516,7 @@ async def run() -> None:
             # substitute while _try_place_order (which takes the locked branch) would
             # size and manage the order with the LOCKED preset's settings, so entry/TP/SL
             # and the trail/partial rules would come from two different presets.
-            _is_locked_sym = sym in risk_cfg.get("locked_presets", {})
+            _is_locked_sym = sym in locked_presets_for(risk_cfg, mode_manager.current_mode)
             if best_sym is None and _sub_on and not _is_locked_sym:
                 # The best preset produced no recommendation. Fall back to ONE rank
                 # down — the next preset that is both live-proven (tier 1) and
@@ -1717,7 +1721,7 @@ async def run() -> None:
                 balance_estimated=_after_or_computed(c, wallet_after)[1],
             )
 
-        _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
+        _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
             analyzer=analyzer,

@@ -79,7 +79,11 @@ DEFAULT_CONFIG: dict = {
     # Example: 1.5 means "never lose more than 1.5× the potential profit on this trade."
     "max_loss_tp_ratio": 0.0,
     # Symbol → preset name. When set, bypasses virtual tracker scoring for that symbol.
-    "locked_presets": {},
+    # Per trading mode: {"test": {symbol: preset}, "live": {...}}. The mirror instance
+    # mounts this same file read-only, so a single shared dict forced the testnet locks
+    # onto the live market — where the ranking may well differ, which is the whole
+    # reason the mirror exists. A legacy flat dict is still read as the test set.
+    "locked_presets": {"test": {}, "live": {}},
     # Backtest realism: scale seeded USD scores to match live leverage so Tier-0 rankings
     # are comparable with live PnL. Set to actual mean leverage once code is deployed.
     "backtest_seed_leverage_factor": 1.0,
@@ -127,6 +131,26 @@ def _atomic_write(path: Path, data: dict) -> None:
     started raising the day rebalancing was switched on.
     """
     write_json(path, data)
+
+
+def locked_presets_for(cfg: dict, mode: str) -> dict:
+    """The {symbol: preset} locks that apply to `mode`.
+
+    Accepts both shapes. The current one is nested per mode; a legacy flat dict is read
+    as the TEST set, so existing server config keeps working unchanged and the live
+    instance starts with none rather than inheriting testnet's.
+
+    Returns a copy, and never raises — this runs on the candle path, so a malformed
+    config must degrade to "no locks", not take the bot down.
+    """
+    raw = cfg.get("locked_presets")
+    if not isinstance(raw, dict):
+        return {}
+    if "test" in raw or "live" in raw:
+        got = raw.get(mode)
+        return dict(got) if isinstance(got, dict) else {}
+    # legacy flat {symbol: preset} — testnet's locks, and only testnet's
+    return dict(raw) if mode == "test" else {}
 
 
 def get_min_trades_for_ranking(cfg: dict, symbol: str) -> int:

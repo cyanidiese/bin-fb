@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { lockedPresetsFor } from '../_locked-presets'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../_utils'
@@ -74,7 +75,8 @@ export async function GET(req: NextRequest) {
     }
     return stats.seeded_winning_usdt ?? 0
   }
-  const lockedPreset: string | null = (riskConfig.locked_presets as Record<string, string> | undefined)?.[symbol] ?? null
+  // the lock set belonging to the instance being viewed, not a shared one
+  const lockedPreset: string | null = lockedPresetsFor(riskConfig, mode)[symbol] ?? null
 
   // Determine best preset: locked preset wins; otherwise highest effective score > 0
   let bestPreset: string | null = lockedPreset

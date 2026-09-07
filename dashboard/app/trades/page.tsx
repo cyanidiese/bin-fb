@@ -5,6 +5,7 @@ import { useSymbolContext } from '@/lib/SymbolContext'
 import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry, OpenRealPosition, OpenVirtualPosition } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
 import InstanceToggle, { oppositeMode, type Instance } from '@/components/InstanceToggle'
+import { lockedPresetsFor } from '@/app/api/_locked-presets'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
 import {
@@ -327,9 +328,12 @@ export default function TradesPage() {
   useEffect(() => {
     fetch('/api/risk')
       .then(r => r.json())
-      .then(({ config }) => setLockedPreset(config?.locked_presets?.[symbol] ?? null))
+      // per-mode lock set for the instance being viewed, not a shared dict
+      .then(({ config }) => setLockedPreset(lockedPresetsFor(config, dataMode)[symbol] ?? null))
       .catch(() => setLockedPreset(null))
-  }, [symbol])
+    // dataMode included: switching Primary/Shadow must re-read the other instance's
+    // lock set, or the page shows testnet's locks while displaying live data.
+  }, [symbol, dataMode])
 
   // ── Page-wide date range ────────────────────────────────────────────────
   // Bounds come from everything loaded for this symbol (klines + all order lists).

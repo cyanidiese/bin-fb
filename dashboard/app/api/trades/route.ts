@@ -35,10 +35,16 @@ export async function GET(req: NextRequest) {
   }
 
   const mode = searchParams.get('mode') ?? currentMode()
+  // Anything other than the bot's own mode is the shadow instance. Its backtest lives
+  // under a suffixed name so it cannot overwrite the numbers the trading bot sizes real
+  // orders from — see bot/instance_paths.py. Everything else in data/ is already
+  // mode-suffixed, so `mode` alone selects it.
+  const isShadow = mode !== currentMode()
 
   const realOrdersPath = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
   const efficiencyPath = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
-  const backtestPath   = path.join(BOT_ROOT, 'dashboard', 'public', `backtest_results_${symbol}.json`)
+  const backtestPath   = path.join(BOT_ROOT, 'dashboard', 'public',
+    isShadow ? `backtest_results_${symbol}_${mode}.json` : `backtest_results_${symbol}.json`)
 
   const realOrders = readJson(realOrdersPath, []) as unknown[]
   const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number; recent_trades?: number[] }>>

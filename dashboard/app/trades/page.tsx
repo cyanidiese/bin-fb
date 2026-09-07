@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
 import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry, OpenRealPosition, OpenVirtualPosition } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
+import InstanceToggle, { oppositeMode, type Instance } from '@/components/InstanceToggle'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
 import {
@@ -182,6 +183,42 @@ export default function TradesPage() {
   const [lockedPreset, setLockedPreset]       = useState<string | null>(null)
   const [lockBusy, setLockBusy]               = useState(false)
 
+  // Which instance's data this page shows. Pure view state — it never changes what the
+  // bot trades. 'primary' keeps today's behaviour.
+  const [instance, setInstance] = useState<Instance>('primary')
+  const [botMode, setBotMode]   = useState<'test' | 'live'>('test')
+
+  // Both reads happen in the promise callback rather than the effect body: localStorage
+  // is an external system and is client-only, so reading it during render would break
+  // SSR, and setting state synchronously in an effect body is exactly what
+  // react-hooks/set-state-in-effect forbids.
+  useEffect(() => {
+    fetch('/api/mode')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.mode === 'live' || d?.mode === 'test') setBotMode(d.mode)
+        try {
+          const saved = localStorage.getItem('bfb-instance')
+          if (saved === 'shadow' || saved === 'primary') setInstance(saved)
+        } catch { /* private window — keep the default */ }
+      })
+      .catch(() => {})
+  }, [])
+
+  function chooseInstance(i: Instance) {
+    setInstance(i)
+    try { localStorage.setItem('bfb-instance', i) } catch { /* private window */ }
+  }
+
+  // The market this view reads. The shadow always runs the opposite of the bot mode,
+  // matching opposite_mode() in bot/mode_manager.py.
+  const dataMode = instance === 'primary' ? botMode : oppositeMode(botMode)
+  // The primary owns the unsuffixed results file — the only name most readers look for.
+  // See _results_path() in bot/exporter.py.
+  const resultsFile = instance === 'primary'
+    ? `results_${symbol}.json`
+    : `results_${symbol}_${dataMode}.json`
+
   useEffect(() => {
     if (!symbol) return
     setData(null)
@@ -189,7 +226,7 @@ export default function TradesPage() {
     setSelectedPreset(null)
     setSortKey('rank')
     setSortDir('asc')
-    fetch(`/api/trades?symbol=${symbol}`)
+    fetch(`/api/trades?symbol=${symbol}&mode=${dataMode}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d: TradesData) => {
         setData(d)
@@ -197,15 +234,17 @@ export default function TradesPage() {
         setDisabledSymbols(d.disabled_symbols ?? {})
       })
       .catch(e => setError(String(e)))
-  }, [symbol])
+  }, [symbol, dataMode])
 
   useEffect(() => {
     if (!symbol) return
-    fetch(`/api/public-file?f=results_${symbol}.json`)
+    fetch(`/api/public-file?f=${resultsFile}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.klines) setKlines(d.klines) })
-      .catch(() => {})
-  }, [symbol])
+      // Assign unconditionally so switching instance clears the previous one's chart
+      // rather than leaving stale candles from the other market on screen.
+      .then(d => setKlines(d?.klines ?? []))
+      .catch(() => setKlines([]))
+  }, [symbol, resultsFile])
 
   useEffect(() => {
     fetch('/api/trades/symbols')
@@ -383,7 +422,16 @@ export default function TradesPage() {
       {symbolsWithOrders.length > 0 && (
         <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
       )}
+      {/* The toggle has to stay reachable here: this is a full-page early return, and
+          without it a failed shadow fetch would strand the reader with no way back. */}
+      <InstanceToggle value={instance} onChange={chooseInstance} botMode={botMode} />
       <div className="text-red-400">{error}</div>
+      {instance === 'shadow' && (
+        <div className="text-xs text-gray-500">
+          The shadow instance writes its first files after one candle close. If it is not
+          running yet, there is nothing to show here.
+        </div>
+      )}
     </div>
   )
   if (!data || !fdata) return (
@@ -500,9 +548,13 @@ export default function TradesPage() {
         </div>
       )}
 
-      {/* ── Date range (drives every widget below except Ranks) ── */}
+      {/* ── Instance + date range (drive every widget below except Ranks) ── */}
       <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3">
         <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-gray-500">Instance</span>
+            <InstanceToggle value={instance} onChange={chooseInstance} botMode={botMode} />
+          </label>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] uppercase tracking-wider text-gray-500">From</span>
             <input

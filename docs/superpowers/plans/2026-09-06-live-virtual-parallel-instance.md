@@ -15,7 +15,12 @@
 - The testnet bot trades. Every change must leave `virtual_only=False` behaviour **byte-identical**.
 - `bot/virtual_order_simulator.py`, `bot/virtual_tracker.py`, `bot/analyzer.py`, `bot/fake_order.py` **must not change** — the simulation has to be identical across modes or the comparison is meaningless.
 - The live instance holds **no API credentials** and sends **no Telegram**. No task may add either.
-- Files keep their normal paths. Suffixes apply **only off test mode**, so existing filenames and every dashboard reader are untouched.
+- Files keep their normal paths. Category-B suffixes apply **only when `virtual_only`** — the
+  primary always owns the unsuffixed name in either mode, so existing filenames and every
+  dashboard reader are untouched. (Amended 2026-09-07: a mode-keyed rule would hand the
+  secondary `risk_state.json` once the primary went live, blanking the trading bot's risk page.)
+- The secondary always runs the **opposite** mode to `bot_mode.json`, resolved at startup and
+  re-established by a clean exit + container restart when the file flips. See spec Amendment 2026-09-07.
 - Baseline: **456 passing** (Tasks 1 and 1a already committed: `ffd965a`, `14db2f7`).
 - Never deploy without explicit user confirmation.
 - Resource headroom measured 2026-09-06: 1,998 MB RAM available, `bot` uses 138 MB at 0.44% CPU, 5.0 GB disk free with `data/` at 144 MB. A second instance is comfortable — but its logs must rotate (Task 6 Step 2b) or disk becomes the failure mode.
@@ -343,6 +348,301 @@ would report success while the trading bot kept running."
 
 ---
 
+### Task 1c: Mirror mode resolution, and one source of truth for mode
+
+Amended in 2026-09-07. Two latent bugs and the mirror behaviour all live in the same
+five lines of mode resolution, so they are one task.
+
+Today `current_mode` comes from `bot_mode.json` (`main.py:158`) but `DataFeed` is built
+from `settings.trading_mode` (env `TRADING_MODE`, `main.py:320`). They agree on the server
+right now (`TRADING_MODE=test`, `bot_mode.json` absent) which is why nothing has broken —
+but they are independent, so the first genuine mode change desynchronises the file suffix
+from the endpoint being read.
+
+**Files:**
+- Modify: `bot/mode_manager.py` — add `opposite_mode()`, replace `forced_mode` with `mirror`
+- Modify: `main.py:153-158` — resolve one mode and stamp it onto the settings the feed uses
+- Modify: `main.py` shutdown region — add the mirror watcher task
+- Modify: `dashboard/components/settings/TradingMode.tsx:62` — make the dialog truthful
+- Test: `tests/test_mirror_mode.py`
+
+**Interfaces:**
+- Consumes: `Settings.virtual_only` (Task 1), `_VIRTUAL_ONLY` (Task 2b)
+- Produces: `mode_manager.opposite_mode(m) -> str`; `ModeManager(mirror: bool)`;
+  `main._resolve_mode(base_settings, mode_manager) -> str`; watcher coroutine
+  `main._mirror_watch(mode_manager)`. Task 4 keys its suffix off `_VIRTUAL_ONLY`, not off
+  this mode, so it does not depend on the value — only on the mode string being correct.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/test_mirror_mode.py
+import json
+from bot.mode_manager import ModeManager, opposite_mode
+
+
+def test_opposite_mode_flips_both_ways():
+    assert opposite_mode('test') == 'live'
+    assert opposite_mode('live') == 'test'
+
+
+def test_opposite_mode_defaults_unknown_to_live():
+    """An unreadable/garbage mode must not silently mirror the primary."""
+    assert opposite_mode('') == 'live'
+    assert opposite_mode('nonsense') == 'live'
+
+
+def _mm(tmp_path, mode, mirror):
+    mp = tmp_path / 'bot_mode.json'
+    if mode is not None:
+        mp.write_text(json.dumps({'mode': mode}))
+    return ModeManager(mode_path=mp, command_path=tmp_path / 'c.json',
+                       result_path=tmp_path / 'r.json', mirror=mirror)
+
+
+def test_primary_follows_the_file(tmp_path):
+    assert _mm(tmp_path, 'live', mirror=False).current_mode == 'live'
+
+
+def test_mirror_takes_the_opposite(tmp_path):
+    assert _mm(tmp_path, 'live', mirror=True).current_mode == 'test'
+    assert _mm(tmp_path, 'test', mirror=True).current_mode == 'live'
+
+
+def test_mirror_of_missing_file_is_live(tmp_path):
+    """No file means the primary defaults to test, so the mirror must be live."""
+    assert _mm(tmp_path, None, mirror=True).current_mode == 'live'
+
+
+def test_mirror_detects_a_flip(tmp_path):
+    mm = _mm(tmp_path, 'test', mirror=True)
+    assert mm.mirror_target_changed() is False
+    (tmp_path / 'bot_mode.json').write_text(json.dumps({'mode': 'live'}))
+    assert mm.mirror_target_changed() is True
+
+
+def test_primary_never_reports_a_flip(tmp_path):
+    mm = _mm(tmp_path, 'test', mirror=False)
+    (tmp_path / 'bot_mode.json').write_text(json.dumps({'mode': 'live'}))
+    assert mm.mirror_target_changed() is False
+
+
+def test_torn_or_garbage_file_is_not_a_flip(tmp_path):
+    """A half-written file must not trigger a restart loop."""
+    mm = _mm(tmp_path, 'test', mirror=True)
+    (tmp_path / 'bot_mode.json').write_text('{not json')
+    assert mm.mirror_target_changed() is False
+
+
+def test_resolved_mode_is_stamped_onto_settings():
+    """The feed must read the market whose name the files carry."""
+    import re
+    src = open('main.py').read()
+    body = src[src.index('def _resolve_mode'):]
+    body = body[:body.index('\nasync def', 1) if '\nasync def' in body else 2000]
+    assert 'trading_mode' in body, 'resolved mode must be written back to settings'
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `.venv/bin/python -m pytest tests/test_mirror_mode.py -v`
+Expected: FAIL — `ImportError: cannot import name 'opposite_mode'`
+
+- [ ] **Step 3: Implement in `bot/mode_manager.py`**
+
+Add above the class:
+
+```python
+def opposite_mode(mode: str) -> str:
+    """The mode a mirror instance runs, given the primary's mode.
+
+    Anything other than an explicit 'live' mirrors to 'live'. Defaulting the unknown
+    case to 'live' is deliberate: the primary defaults to 'test', so 'live' is the only
+    answer that cannot leave both instances in the same mode writing the same files.
+    """
+    return 'test' if mode == 'live' else 'live'
+```
+
+Replace the `forced_mode` parameter with `mirror`:
+
+```python
+        mirror: bool = False,
+```
+```python
+        # A mirror instance runs whatever mode the primary is not running, so the two
+        # never share a file suffix. It resolves this once at startup and re-resolves by
+        # exiting and letting the container restart — see mirror_target_changed().
+        self._mirror = mirror
+        self.current_mode: str = (
+            opposite_mode(self._read_mode()) if mirror else self._read_mode()
+        )
+```
+
+And add the watcher predicate:
+
+```python
+    def mirror_target_changed(self) -> bool:
+        """True when a mirror instance is no longer the opposite of the primary.
+
+        Returns False for a primary, and False when the file cannot be read — a torn or
+        deleted file must never trigger a restart loop. _read_mode() already swallows
+        decode errors and returns 'test', so an unreadable file looks like 'test'; guard
+        on existence so a momentarily-absent file is not read as a real flip.
+        """
+        if not self._mirror or not self._mode_path.exists():
+            return False
+        try:
+            raw = json.loads(self._mode_path.read_text()).get('mode')
+        except (json.JSONDecodeError, ValueError, OSError):
+            return False
+        if raw not in ('test', 'live'):
+            return False
+        return opposite_mode(raw) != self.current_mode
+```
+
+- [ ] **Step 4: Implement one source of truth in `main.py`**
+
+Replace the `mode_manager` construction at `main.py:153-158` with:
+
+```python
+    _base_settings = load_settings()
+    mode_manager = ModeManager(
+        notifier=notifier,
+        mirror=_base_settings.virtual_only,
+    )
+    current_mode = _resolve_mode(_base_settings, mode_manager)
+```
+
+and add near the other module-level helpers:
+
+```python
+def _resolve_mode(base_settings: Settings, mode_manager: "ModeManager") -> str:
+    """Return the one mode this process runs, and make the feed agree with it.
+
+    current_mode names every data file; Settings.trading_mode picks the REST and
+    WebSocket endpoints. They came from two independent sources — bot_mode.json and the
+    TRADING_MODE env var — so a disagreement meant writing '_live' files while reading
+    testnet prices. Stamping the resolved mode back onto Settings makes the market the
+    bot reads and the market its filenames claim the same thing by construction.
+    """
+    resolved = mode_manager.current_mode
+    if base_settings.trading_mode != resolved:
+        logger.warning(
+            f"Mode source disagreement: TRADING_MODE={base_settings.trading_mode!r}, "
+            f"resolved={resolved!r} (mirror={base_settings.virtual_only}). "
+            f"Using {resolved!r} for both filenames and endpoints."
+        )
+    object.__setattr__(base_settings, 'trading_mode', resolved)
+    return resolved
+```
+
+Then, where per-symbol settings are built (`main.py:169`), stamp each one too, so
+`DataFeed(first_settings, ...)` at line 320 cannot disagree:
+
+```python
+        s = load_settings(symbol)
+        object.__setattr__(s, 'trading_mode', current_mode)
+```
+
+Note: `object.__setattr__` because `Settings` is a frozen dataclass. Verify with
+`grep -n "frozen" config/settings.py` before writing this; if it is not frozen, use plain
+assignment.
+
+- [ ] **Step 5: Add the mirror watcher**
+
+Alongside the other background tasks (near `main.py:1573`):
+
+```python
+    _mirror_task = None
+    if _virtual_only:
+        _mirror_task = asyncio.create_task(_mirror_watch(mode_manager))
+```
+
+and the coroutine:
+
+```python
+async def _mirror_watch(mode_manager) -> None:
+    """Exit when the primary's mode changes, so the container restarts as its opposite.
+
+    Restarting beats switching in place: on_switch_mode() closes orders, refetches
+    balance and rebuilds every mode-scoped object, and a partial failure would leave
+    this instance writing to a mix of both suffixes. A fresh process has no such state.
+
+    Requires two consecutive confirmations 30s apart. bot_mode.json is written
+    atomically by both writers, so a torn read is not possible — but the dashboard
+    re-runs backtests right after writing it, and exiting mid-backtest for a value that
+    is about to be corrected again would be a restart loop.
+    """
+    confirmations = 0
+    while True:
+        await asyncio.sleep(30.0)
+        if mode_manager.mirror_target_changed():
+            confirmations += 1
+            if confirmations < 2:
+                logger.info("Mirror: primary mode change seen, confirming in 30s")
+                continue
+            logger.warning(
+                f"Mirror: primary mode changed — this instance ran "
+                f"{mode_manager.current_mode!r}. Exiting so the container restarts "
+                f"as the new opposite."
+            )
+            os._exit(0)
+        else:
+            confirmations = 0
+```
+
+`os._exit(0)` rather than `sys.exit` or raising: this runs in a background task where an
+exception would be swallowed by the task, and there is nothing to flush — the mirror holds
+no positions and no credentials. Add `import os` if absent. Add `_mirror_task` to the
+shutdown filter built in Task 2b (`_tasks = [t for t in (...) if t is not None]`).
+
+- [ ] **Step 6: Make the mode dialog truthful**
+
+`TradingMode.tsx:57-65` promises order closing and immediate live trading; the route only
+writes a file. Replace the two `botRunning` branches with one honest message:
+
+```tsx
+    const msg = botRunning
+      ? `Save ${target.toUpperCase()} as the bot mode?
+
+`
+        + `The running bot is NOT switched by this — it keeps trading in `
+        + `${mode.toUpperCase()} with its open positions until it is restarted.
+
+`
+        + `Backtests for all ${symbolCount} symbols will re-run now to load `
+        + `${target}-mode klines.`
+      : `Switch to ${target.toUpperCase()} mode?
+
+The bot is not running — the mode `
+        + `preference will be saved and used on next start.
+
+Backtests for all `
+        + `${symbolCount} symbols will re-run automatically to load ${target}-mode kline data.`
+```
+
+- [ ] **Step 7: Run the full suite**
+
+Run: `.venv/bin/python -m pytest tests/ -q 2>&1 | tail -5`
+Expected: all pass, count = previous + 8. Any failure naming `forced_mode` is a
+`tests/test_mode_manager_forced_mode.py` call site — update it to `mirror=`, keeping the
+behavioural assertions.
+
+- [ ] **Step 8: Typecheck the dashboard**
+
+Run: `cd dashboard && npx tsc --noEmit`
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add bot/mode_manager.py main.py tests/test_mirror_mode.py \
+        tests/test_mode_manager_forced_mode.py \
+        dashboard/components/settings/TradingMode.tsx
+git commit -m "feat(mirror): secondary runs the opposite mode; one source of truth for mode"
+```
+
+---
+
 ### Task 3: No Telegram from the virtual instance
 
 `Notifier` already skips sending when the token is empty (`notifier.py:105`), so this
@@ -418,18 +718,33 @@ git commit -m "feat(notifier): no Telegram from a virtual-only instance"
 
 ---
 
-### Task 4: Mode-suffix the per-instance files
+### Task 4: Give the mirror its own per-instance files
 
-Six files carry per-instance data and would interleave. Suffix **only off test mode**.
+Seven files carry per-instance data and would interleave. **Amended 2026-09-07:** the
+suffix is keyed on **which instance** is writing (`virtual_only`), not on the mode. A
+mode-keyed rule breaks the moment the primary runs live: the mirror would then be the
+test-mode process and would claim `dashboard/public/risk_state.json` — which it writes
+with balance 0, blanking the trading bot's risk page.
+
+**The rule:** the primary always writes the historical unsuffixed name, in either mode.
+The mirror always writes `<stem>_{its mode}.<ext>`.
+
+Verified before choosing this: `results_{symbol}_{mode}.json` is read by **nothing** —
+`telegram_menu.py:257`, `telegram_menu.py:324`, `exporter.py:96`, `page.tsx:62`,
+`trades/page.tsx:204` and `api/symbols/[symbol]/route.ts:24` all read the unsuffixed name.
+So the primary needs to write only that one name, exactly as today.
 
 **Files:**
-- Modify: `main.py` (bot.log handler, analysis.jsonl, system_log, alert_state, RiskManager `state_path`)
+- Modify: `main.py` (bot.log + trades.log handlers, analysis.jsonl, system_log, alert_state, RiskManager `state_path`)
 - Modify: `bot/exporter.py:96`
+- Modify: `bot/mode_manager.py` — expose `read_mode_file()` for use before `ModeManager` exists
 - Test: `tests/test_per_instance_paths.py`
 
 **Interfaces:**
-- Produces: `_mode_path(base: Path, name: str, mode: str) -> Path` in `main.py`;
-  `_results_path(symbol: str, mode: str) -> list[Path]` in `bot/exporter.py`.
+- Consumes: `opposite_mode()` (Task 1c), `Settings.virtual_only` (Task 1)
+- Produces: `_instance_path(base: Path, name: str, mode: str, mirror: bool) -> Path` in
+  `main.py`; `_results_path(symbol: str, mode: str, mirror: bool) -> Path` in
+  `bot/exporter.py`; `read_mode_file(path: Path) -> str` in `bot/mode_manager.py`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -437,132 +752,187 @@ Six files carry per-instance data and would interleave. Suffix **only off test m
 # tests/test_per_instance_paths.py
 """Per-instance files must not interleave between the two bots.
 
-Suffixes apply only off test mode, so today's filenames — and every dashboard reader
-expecting them — are untouched.
+The suffix is keyed on which instance writes, not on the mode: the primary owns the
+unsuffixed name in either mode, so every existing reader is untouched whichever mode
+the bot is switched to.
 """
 from pathlib import Path
 
 from bot.exporter import _results_path
-from main import _mode_path
+from main import _instance_path
 
 BASE = Path('/x')
+NAMES = ('risk_state.json', 'alert_state.json', 'system_log.json',
+         'analysis.jsonl', 'bot.log', 'trades.log')
 
 
-def test_test_mode_keeps_the_historical_name():
-    assert _mode_path(BASE, 'risk_state.json', 'test') == BASE / 'risk_state.json'
-    assert _mode_path(BASE, 'analysis.jsonl', 'test') == BASE / 'analysis.jsonl'
+def test_primary_keeps_the_historical_name_in_test_mode():
+    for n in NAMES:
+        assert _instance_path(BASE, n, 'test', mirror=False) == BASE / n, n
 
 
-def test_live_mode_is_suffixed():
-    assert _mode_path(BASE, 'risk_state.json', 'live') == BASE / 'risk_state_live.json'
-    assert _mode_path(BASE, 'analysis.jsonl', 'live') == BASE / 'analysis_live.jsonl'
+def test_primary_keeps_the_historical_name_in_live_mode():
+    """The regression the amendment exists to prevent: going live must not hand the
+    mirror the file the dashboard reads."""
+    for n in NAMES:
+        assert _instance_path(BASE, n, 'live', mirror=False) == BASE / n, n
 
 
-def test_unknown_mode_is_suffixed_too():
-    """Fail closed: never write the file the dashboard reads unless mode is test."""
-    assert _mode_path(BASE, 'risk_state.json', 'weird') == BASE / 'risk_state_weird.json'
+def test_mirror_is_always_suffixed():
+    assert _instance_path(BASE, 'risk_state.json', 'live', mirror=True) == BASE / 'risk_state_live.json'
+    assert _instance_path(BASE, 'risk_state.json', 'test', mirror=True) == BASE / 'risk_state_test.json'
+    assert _instance_path(BASE, 'analysis.jsonl', 'live', mirror=True) == BASE / 'analysis_live.jsonl'
+    assert _instance_path(BASE, 'bot.log', 'test', mirror=True) == BASE / 'bot_test.log'
 
 
-def test_results_test_mode_writes_both_names():
-    """The dashboard reads the unsuffixed name today; keep writing it."""
-    assert _results_path('INJUSDT', 'test') == [
-        Path('dashboard/public/results_INJUSDT_test.json'),
-        Path('dashboard/public/results_INJUSDT.json'),
-    ]
+def test_mirror_suffix_tracks_its_own_market():
+    """After a flip the mirror must not append live-market data to a test-market file."""
+    a = _instance_path(BASE, 'analysis.jsonl', 'live', mirror=True)
+    b = _instance_path(BASE, 'analysis.jsonl', 'test', mirror=True)
+    assert a != b
 
 
-def test_results_live_mode_never_writes_the_unsuffixed_name():
-    assert _results_path('INJUSDT', 'live') == [
-        Path('dashboard/public/results_INJUSDT_live.json'),
-    ]
+def test_extensionless_name_still_gets_a_suffix():
+    assert _instance_path(BASE, 'notes', 'live', mirror=True) == BASE / 'notes_live'
+
+
+def test_results_primary_writes_only_the_name_everything_reads():
+    assert _results_path('INJUSDT', 'test', mirror=False) == Path('dashboard/public/results_INJUSDT.json')
+    assert _results_path('INJUSDT', 'live', mirror=False) == Path('dashboard/public/results_INJUSDT.json')
+
+
+def test_results_mirror_never_writes_the_unsuffixed_name():
+    for mode in ('test', 'live'):
+        got = _results_path('INJUSDT', mode, mirror=True)
+        assert got == Path(f'dashboard/public/results_INJUSDT_{mode}.json')
+        assert got != Path('dashboard/public/results_INJUSDT.json')
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `python3 -m pytest tests/test_per_instance_paths.py -q`
-Expected: FAIL — `ImportError: cannot import name '_mode_path'`
+Run: `.venv/bin/python -m pytest tests/test_per_instance_paths.py -q`
+Expected: FAIL — `ImportError: cannot import name '_instance_path'`
 
 - [ ] **Step 3: Implement the helper**
 
 In `main.py`, beside the other path constants:
 
 ```python
-def _mode_path(base: Path, name: str, mode: str) -> Path:
+def _instance_path(base: Path, name: str, mode: str, mirror: bool) -> Path:
     """Per-instance file path.
 
-    Test mode keeps the historical unsuffixed name so every existing reader — the
-    dashboard, logrotate, our own diagnostic commands — is untouched. Any other mode
-    gets its own file. Without this a virtual-only instance (balance 0) would
-    overwrite the trading bot's risk_state.json with zeros.
+    Keyed on which instance is writing, not on the mode. The primary keeps the
+    historical unsuffixed name in either mode, so the dashboard, logrotate and our own
+    diagnostic commands are untouched by a mode switch. The mirror always gets its own
+    file, suffixed with the market it is actually reading — so a flip starts a new file
+    rather than appending a different market to the old one.
+
+    Without this the mirror (balance 0) would overwrite the trading bot's
+    risk_state.json with zeros.
     """
-    if mode == 'test':
+    if not mirror:
         return base / name
-    stem, _, ext = name.rpartition('.')
+    stem, dot, ext = name.rpartition('.')
+    if not dot:                       # no extension: 'notes' -> 'notes_live'
+        return base / f'{name}_{mode}'
     return base / f'{stem}_{mode}.{ext}'
 ```
 
-Apply it to `analysis.jsonl`, `system_log.json` and `alert_state.json`, and pass a
-`state_path` into `RiskManager` for `risk_state.json`. `logs/trades.log`
-(`main.py:101`) needs the same treatment — two `RotatingFileHandler`s pointed at one
-file will collide during rollover even though the virtual instance logs no trades.
-For `bot.log`, the handler runs
-before `current_mode` exists — read the env there:
+Apply it to `analysis.jsonl`, `system_log.json`, `alert_state.json` and `logs/trades.log`
+(`main.py:101` — two `RotatingFileHandler`s on one file collide during rollover even
+though the mirror logs no trades), and pass a `state_path` into `RiskManager` for
+`risk_state.json`.
+
+`bot.log` is set up before `current_mode` exists, so resolve it from the environment and
+the mode file directly. Add to `bot/mode_manager.py`:
 
 ```python
-    _log_mode = os.getenv('TRADING_MODE', 'test')
-    _log_mode = 'test' if _log_mode in ('test', 'testnet') else _log_mode
+def read_mode_file(path: Path = _DEFAULT_MODE_PATH) -> str:
+    """The primary's mode as recorded on disk, defaulting to 'test'.
+
+    Module-level so logging setup can resolve a filename before ModeManager exists.
+    """
+    try:
+        m = json.loads(path.read_text()).get('mode')
+        return m if m in ('test', 'live') else 'test'
+    except (json.JSONDecodeError, ValueError, OSError):
+        return 'test'
+```
+
+and in `main.py`'s logging setup:
+
+```python
+    # Runs before Settings/ModeManager exist, so read the two inputs directly. The
+    # mirror's log name must track the market it reads, which is the opposite of the
+    # primary's recorded mode — not the TRADING_MODE env var, which it ignores.
+    _log_mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    _log_mode = opposite_mode(read_mode_file()) if _log_mirror else 'test'
     general = logging.handlers.RotatingFileHandler(
-        str(_mode_path(Path('logs'), 'bot.log', _log_mode)),
+        str(_instance_path(Path('logs'), 'bot.log', _log_mode, _log_mirror)),
         maxBytes=10 * 1024 * 1024, backupCount=5
+    )
 ```
 
 In `bot/exporter.py`, above `export()`:
 
 ```python
-def _results_path(symbol: str, mode: str) -> list[Path]:
+def _results_path(symbol: str, mode: str, mirror: bool) -> Path:
     """Where this symbol's chart data goes.
 
-    Test mode also writes the historical unsuffixed name so the dashboard keeps
-    working. Any other mode writes only its own file — never the unsuffixed one,
-    which belongs to the test bot.
+    The primary writes the unsuffixed name in either mode — it is the only name any
+    reader looks for (telegram_menu.py:257/324, page.tsx:62, trades/page.tsx:204,
+    api/symbols/[symbol]/route.ts:24). The mirror writes its own suffixed file, which
+    the Trades-page data toggle fetches explicitly.
     """
-    paths = [Path(f'dashboard/public/results_{symbol}_{mode}.json')]
-    if mode == 'test':
-        paths.append(Path(f'dashboard/public/results_{symbol}.json'))
-    return paths
+    if mirror:
+        return Path(f'dashboard/public/results_{symbol}_{mode}.json')
+    return Path(f'dashboard/public/results_{symbol}.json')
 ```
 
-Replace line 96 and its write with a loop over these paths, keeping the existing
-try/except per path.
+`export()` needs `mirror` threaded in from `Settings.virtual_only` at its call site;
+`mode` is already a parameter it currently ignores.
 
 - [ ] **Step 4: Run the tests and make sure they pass**
 
-Run: `python3 -m pytest tests/test_per_instance_paths.py -q`
-Expected: 5 passed
+Run: `.venv/bin/python -m pytest tests/test_per_instance_paths.py -q`
+Expected: 7 passed
 
-- [ ] **Step 5: Confirm nothing changed for test mode**
+- [ ] **Step 5: Confirm nothing changed for the primary, in either mode**
 
 ```bash
-python3 -c "
+.venv/bin/python -c "
 from pathlib import Path
-from main import _mode_path
+from main import _instance_path
 from bot.exporter import _results_path
-for n in ('risk_state.json','alert_state.json','system_log.json','analysis.jsonl','bot.log','trades.log'):
-    assert _mode_path(Path('x'), n, 'test') == Path('x')/n, n
-assert Path('dashboard/public/results_INJUSDT.json') in _results_path('INJUSDT','test')
-print('every test-mode path is unchanged')
+for mode in ('test','live'):
+    for n in ('risk_state.json','alert_state.json','system_log.json','analysis.jsonl','bot.log','trades.log'):
+        assert _instance_path(Path('x'), n, mode, mirror=False) == Path('x')/n, (n, mode)
+    assert _results_path('INJUSDT', mode, mirror=False) == Path('dashboard/public/results_INJUSDT.json')
+print('every primary path is unchanged in both modes')
 "
 ```
 
-- [ ] **Step 6: Run the full suite and commit**
+- [ ] **Step 6: Check the symbol-template glob still picks a sane file**
+
+`api/symbols/route.ts:47` seeds a new symbol by copying any existing `results_*.json`.
+That glob now also matches the mirror's `results_X_live.json`. Harmless — it is only a
+render placeholder that the next candle overwrites — but confirm it is not treated as
+authoritative:
 
 ```bash
-python3 -m pytest tests/ -q   # expect 474
-git add main.py bot/exporter.py tests/test_per_instance_paths.py
-git commit -m "feat(paths): mode-suffix per-instance files off test mode
+grep -n "startsWith('results_')" -A4 dashboard/app/api/symbols/route.ts
+```
 
-risk_state.json matters most: a virtual-only instance has balance 0 and would
-otherwise zero the trading bot's risk page. Test-mode paths are unchanged."
+- [ ] **Step 7: Run the full suite and commit**
+
+```bash
+.venv/bin/python -m pytest tests/ -q   # expect previous + 7
+git add main.py bot/exporter.py bot/mode_manager.py tests/test_per_instance_paths.py
+git commit -m "feat(paths): give the mirror instance its own per-instance files
+
+Keyed on which instance writes, not on the mode: the primary keeps the unsuffixed
+name in either mode, so switching to live cannot hand the mirror the trading bot's
+risk_state.json and blank it with a zero balance."
 ```
 
 ---
@@ -692,47 +1062,70 @@ Also fixes a latent race for the existing bot."
 
 ---
 
-### Task 5: Dashboard test/live toggle
+### Task 5: Trades-page instance toggle
 
-The trades API already accepts `?mode=` (`route.ts:37`) and files stay in `data/`, so no
-directory resolution is needed.
+**Amended 2026-09-07.** This is a **data-view** control, not a mode control: it changes
+which instance's files the page reads and takes effect **instantly**, client-side. It
+never writes `bot_mode.json` or `bot_command.json`, so it cannot alter what the bot
+trades. The bot-mode control stays where it is, in Settings, and still takes effect only
+on restart.
+
+Placed on the Trades page — the mirror produces trade and preset data and nothing else,
+so no other page has anything to show for it.
+
+Labels are "Primary" and "Shadow" rather than "Test" and "Live", because which market
+each one reads depends on the bot mode. The shadow's market is shown next to the label,
+derived from `/api/mode` as its opposite, so the reader always knows what they are
+looking at.
 
 **Files:**
-- Create: `dashboard/components/ModeToggle.tsx`
-- Modify: `dashboard/app/page.tsx:62`
-- Modify: `dashboard/app/api/risk/route.ts:7` (accept `?mode=`, default test)
+- Create: `dashboard/components/InstanceToggle.tsx`
+- Modify: `dashboard/app/trades/page.tsx:204` (the `results_${symbol}.json` fetch)
+- Modify: `dashboard/app/api/trades/route.ts` (accept `?instance=`)
 
 - [ ] **Step 1: Create the component**
 
 ```tsx
-// dashboard/components/ModeToggle.tsx
+// dashboard/components/InstanceToggle.tsx
 'use client'
 
-/** Chooses which instance's data the page shows.
+/** Chooses which instance's data this page shows. Pure data view — it never changes
+ *  what the bot trades.
  *
- *  'test' is the testnet bot that places real (testnet) orders. 'live' is the
- *  virtual-only instance on the real market — no credentials, never trades.
- *  Defaults to 'test' so the page behaves as before.
+ *  'primary' is the bot that places real orders, in whatever mode it was started in.
+ *  'shadow' is the virtual-only mirror running the opposite market: no credentials,
+ *  structurally unable to trade. Defaults to 'primary' so the page behaves as before.
  */
-export type DataMode = 'test' | 'live'
+export type Instance = 'primary' | 'shadow'
 
-export default function ModeToggle(
-  { value, onChange }: { value: DataMode; onChange: (m: DataMode) => void },
-) {
+export default function InstanceToggle({
+  value, onChange, botMode,
+}: {
+  value: Instance
+  onChange: (i: Instance) => void
+  botMode: 'test' | 'live'
+}) {
+  const shadowMode = botMode === 'live' ? 'test' : 'live'
+  const label: Record<Instance, string> = {
+    primary: `Primary (${botMode})`,
+    shadow: `Shadow (${shadowMode}, virtual)`,
+  }
+  const title: Record<Instance, string> = {
+    primary: `The trading bot — places real orders on the ${botMode} market`,
+    shadow: `Virtual-only mirror on the ${shadowMode} market — no credentials, never trades`,
+  }
   return (
     <div className="inline-flex rounded border border-gray-700 overflow-hidden text-xs">
-      {(['test', 'live'] as DataMode[]).map(m => (
+      {(['primary', 'shadow'] as Instance[]).map(i => (
         <button
-          key={m}
-          onClick={() => onChange(m)}
+          key={i}
+          onClick={() => onChange(i)}
+          title={title[i]}
           className={`px-3 py-1 transition-colors ${
-            value === m ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+            value === i ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
           }`}
-          title={m === 'live'
-            ? 'Virtual-only instance on the real market — no credentials, never trades'
-            : 'Testnet bot — places real testnet orders'}
         >
-          {m === 'test' ? 'Testnet' : 'Live (virtual)'}
+          {label[i]}
         </button>
       ))}
     </div>
@@ -740,46 +1133,84 @@ export default function ModeToggle(
 }
 ```
 
-- [ ] **Step 2: Wire it into the Strategy page**
+- [ ] **Step 2: Wire it into the Trades page**
+
+Derive during render — do not seed state in an effect, which trips
+`react-hooks/set-state-in-effect` (the pattern already used for the date range in this
+file):
 
 ```tsx
-const [dataMode, setDataMode] = useState<DataMode>('test')
+const [instance, setInstance] = useState<Instance>('primary')
+const [botMode, setBotMode] = useState<'test' | 'live'>('test')
 
 useEffect(() => {
-  try {
-    const saved = localStorage.getItem('bfb-data-mode')
-    if (saved === 'live' || saved === 'test') setDataMode(saved)
-  } catch { /* private window — keep the default */ }
+  fetch('/api/mode').then(r => r.json())
+    .then(d => setBotMode(d.mode === 'live' ? 'live' : 'test'))
+    .catch(() => {})
 }, [])
+
+// Which file this page reads. The shadow's suffix is its own market — the opposite of
+// the bot mode — matching _results_path() in bot/exporter.py.
+const shadowMode = botMode === 'live' ? 'test' : 'live'
+const resultsFile = instance === 'primary'
+  ? `results_${symbol}.json`
+  : `results_${symbol}_${shadowMode}.json`
 ```
 
-Change the fetch at line 62 to `results_${symbol}_${dataMode}.json`, add `dataMode` to
-that effect's dependency array, render the toggle in the header, and persist on change.
+Change the fetch at line 204 to use `resultsFile`, add `resultsFile` to that effect's
+dependency array, and render the toggle in the header beside the date pickers.
 
-- [ ] **Step 3: Typecheck and build**
+Persist the choice, tolerating a private window:
+
+```tsx
+function persistInstance(i: Instance) {
+  setInstance(i)
+  try { localStorage.setItem('bfb-instance', i) } catch { /* private window */ }
+}
+```
+
+- [ ] **Step 3: Handle the empty shadow gracefully**
+
+Until the mirror has run a candle, its file does not exist and the fetch 404s. Show that
+as a state, not an error — otherwise the first click looks like a bug:
+
+```tsx
+{instance === 'shadow' && error && (
+  <div className="text-xs text-gray-500">
+    No shadow data yet — the mirror instance writes its first file after one candle close.
+  </div>
+)}
+```
+
+- [ ] **Step 4: Typecheck and build**
 
 ```bash
 cd dashboard && npx tsc --noEmit && npm run build
 ```
 
-- [ ] **Step 4: Verify the default is unchanged**
+- [ ] **Step 5: Verify the default is unchanged and nothing writes bot state**
 
 ```bash
-cd dashboard && grep -n "useState<DataMode>" app/page.tsx
+cd dashboard && grep -n "useState<Instance>" app/trades/page.tsx
+grep -rn "bot_command\|target_mode" components/InstanceToggle.tsx app/trades/page.tsx || echo "clean: view-only toggle"
 ```
 
-Expected: `useState<DataMode>('test')`.
+Expected: `useState<Instance>('primary')`, and `clean: view-only toggle`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add dashboard/components/ModeToggle.tsx dashboard/app/page.tsx dashboard/app/api/risk/route.ts
-git commit -m "feat(dashboard): testnet/live data toggle, defaulting to test"
+git add dashboard/components/InstanceToggle.tsx dashboard/app/trades/page.tsx \
+        dashboard/app/api/trades/route.ts
+git commit -m "feat(dashboard): Trades-page primary/shadow data toggle, defaulting to primary"
 ```
 
 ---
 
 ### Task 6: Compose service and first run
+
+**Amended 2026-09-07.** The service is named `bot_mirror`, not `bot_live`: its mode is no
+longer fixed, and a name that claims otherwise would be wrong half the time.
 
 **Files:**
 - Modify: `docker-compose.yml`, `FEATURES.md`
@@ -787,16 +1218,23 @@ git commit -m "feat(dashboard): testnet/live data toggle, defaulting to test"
 - [ ] **Step 1: Add the service**
 
 ```yaml
-  # Live market, virtual orders only. Deliberately has NO credentials: python-binance
-  # refuses private endpoints without a secret, so this container cannot place an order
-  # even if asked. Writes data/*_live.json — exactly where a live-mode main bot reads —
-  # so going live later means deleting VIRTUAL_ONLY and adding keys, with the statistics
-  # already gathered.
-  bot_live:
+  # The mirror. Runs whichever mode the primary is not running, with virtual orders only.
+  #
+  # Deliberately has NO credentials: python-binance refuses private endpoints without a
+  # secret, so this container cannot place an order even if asked. TRADING_MODE is
+  # intentionally absent — a mirror derives its mode as the opposite of bot_mode.json
+  # (see _resolve_mode in main.py), and an env value here would only be misleading.
+  #
+  # It writes data/*_{its mode}.json, exactly where a same-mode main bot reads, so going
+  # live later means deleting VIRTUAL_ONLY and adding keys with the statistics already
+  # gathered.
+  #
+  # restart: unless-stopped is load-bearing, not just resilience: on a bot-mode change
+  # the mirror exits 0 and this policy brings it back up as the new opposite.
+  bot_mirror:
     build: .
-    container_name: bot_live
+    container_name: bot_mirror
     environment:
-      TRADING_MODE: live
       VIRTUAL_ONLY: "1"
       BINANCE_API_KEY: ""
       BINANCE_API_SECRET: ""
@@ -809,89 +1247,137 @@ git commit -m "feat(dashboard): testnet/live data toggle, defaulting to test"
       - ./risk_config.json:/app/risk_config.json:ro
       - ./symbol_registry.json:/app/symbol_registry.json:ro
     command: >
-      sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot_live.log 2>&1'
+      sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot_mirror_stdout.log 2>&1'
     restart: unless-stopped
     stop_grace_period: 60s
 ```
 
 `environment:` rather than `env_file: .env` is what keeps credentials out.
 
-- [ ] **Step 2: Verify no credentials leak in**
+The stdout redirect goes to a fixed `bot_mirror_stdout.log` because compose cannot know
+the resolved mode. It catches only crashes before logging initialises; Python's own
+handler writes `logs/bot_{mode}.log`. Both need rotation (Step 2b).
+
+- [ ] **Step 2: Verify no credentials leak in and the restart policy is right**
 
 ```bash
-python3 -c "
+.venv/bin/python -c "
 import yaml
-c = yaml.safe_load(open('docker-compose.yml'))['services']['bot_live']
+c = yaml.safe_load(open('docker-compose.yml'))['services']['bot_mirror']
 assert 'env_file' not in c, 'env_file would inject the real keys'
 assert c['environment']['BINANCE_API_KEY'] == ''
+assert c['environment']['BINANCE_API_SECRET'] == ''
 assert c['environment']['VIRTUAL_ONLY'] == '1'
-assert c['environment']['TRADING_MODE'] == 'live'
+assert 'TRADING_MODE' not in c['environment'], 'the mirror derives its mode, not env'
+assert c['restart'] == 'unless-stopped', 'the mirror restart depends on this policy'
 assert sum(1 for v in c['volumes'] if v.endswith(':ro')) == 2, 'config must be read-only'
-print('bot_live: no credentials, config read-only')
+print('bot_mirror: no credentials, config read-only, restart policy correct')
 "
 ```
 
-- [ ] **Step 2b: Extend logrotate to the live logs**
+- [ ] **Step 2b: Extend logrotate — with globs, not fixed paths**
 
 logrotate lists **explicit paths** (`/opt/bot/logs/bot.log /opt/bot/logs/trades.log`), so
-the new files would never rotate. The compose stdout redirect appends to `bot_live.log`
-outside Python's `RotatingFileHandler` cap, so it grows without limit — and 5 GB of free
-disk is what both bots are living on.
+new files would never rotate. The mirror's log name changes when the mode flips, so
+enumerate with globs rather than naming each one. The compose stdout redirect appends
+outside Python's `RotatingFileHandler` cap and grows without limit — and 5 GB of free
+disk is what both bots live on.
+
+Find the real filename first:
+
+```bash
+ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 "ls /etc/logrotate.d/"
+```
+
+Then widen it to globs covering `bot.log`, `bot_test.log`, `bot_live.log`,
+`bot_mirror_stdout.log`, `trades.log`, `trades_test.log`, `trades_live.log`:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
-  "sed -i 's#^/opt/bot/logs/bot.log /opt/bot/logs/trades.log {#/opt/bot/logs/bot.log /opt/bot/logs/trades.log /opt/bot/logs/bot_live.log /opt/bot/logs/trades_live.log {#' /etc/logrotate.d/bot && \
+  "cp /etc/logrotate.d/bot /etc/logrotate.d/bot.bak && \
+   sed -i '1s#.*#/opt/bot/logs/bot*.log /opt/bot/logs/trades*.log {#' /etc/logrotate.d/bot && \
    head -1 /etc/logrotate.d/bot && logrotate -d /etc/logrotate.d/bot 2>&1 | grep -c 'considering log'"
 ```
 
-Expected: the first line lists four paths, and the dry run considers four logs. Find the
-real config filename first with `ls /etc/logrotate.d/`.
+Verify the first line is the glob form and the dry run considers every existing log. Keep
+`.bak` until the next rotation has been observed.
 
 - [ ] **Step 3: Update FEATURES.md**
 
-Document the instance, the keyless guarantee, the shared-state taxonomy, the toggle, and
-the handover: remove `VIRTUAL_ONLY`, add credentials, and it becomes the live bot.
+Document the mirror, the keyless guarantee, the shared-state taxonomy, the two separate
+controls (bot mode = restart, data view = instant), the corrected suffix rule, and the
+handover: remove `VIRTUAL_ONLY`, add credentials, and it becomes the live bot.
 
 - [ ] **Step 4: Run the full suite and commit**
 
 ```bash
-python3 -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
 git add docker-compose.yml FEATURES.md
-git commit -m "feat(deploy): bot_live — live market, virtual only, no keys"
+git commit -m "feat(deploy): bot_mirror — opposite mode, virtual only, no keys"
 ```
 
-- [ ] **Step 5: STOP — get explicit deploy approval**
+- [ ] **Step 5: STOP. Ask for explicit deploy approval.**
 
-Report what will start, that the testnet bot is unchanged, and wait.
+Do not deploy. Report what is ready and wait. CLAUDE.md: never deploy without explicit
+user confirmation.
 
-- [ ] **Step 6: Deploy**
+- [ ] **Step 6: After approval — deploy and verify both instances**
+
+Follow `/bfb-deploy`, then confirm the two instances resolved **different** modes:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
-  "cd /opt/bot && git pull origin feature/mean-reversion-overlay && \
-   docker compose up -d --build 2>&1 | tail -10"
+  "docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'bot|dashboard'; \
+   echo '--- resolved modes ---'; \
+   grep -h 'Bot starting' /opt/bot/logs/bot.log /opt/bot/logs/bot_live.log 2>/dev/null | tail -2; \
+   echo '--- mirror must hold no keys ---'; \
+   docker exec bot_mirror printenv BINANCE_API_KEY | wc -c"
 ```
 
-- [ ] **Step 7: Verify every guarantee in production**
+Expected: both containers `Up`, the two `Bot starting` lines show **different** modes, and
+the key length is 1 (a bare newline).
+
+- [ ] **Step 7: Verify the mirror actually places no real order**
+
+After one full candle, the mirror must have virtual activity and zero real orders:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14.105 \
-  "cd /opt/bot
-   echo '--- credentials absent (expect 1) ---';        docker exec bot_live printenv | grep -c 'BINANCE_API_KEY=$'
-   echo '--- virtual-only banner ---';                  docker exec bot_live grep -c 'VIRTUAL-ONLY instance' /app/logs/bot_live.log
-   echo '--- real orders in live mode (MUST be 0) ---'; ls data/real_orders_*_live.json 2>/dev/null | wc -l
-   echo '--- live virtual orders appearing ---';        ls data/virtual_orders_rank2_*_live.json 2>/dev/null | wc -l
-   echo '--- PID belongs to the trading bot ---';       cat data/bot_pid.json
-   echo '--- shared config untouched ---';              md5sum risk_config.json symbol_registry.json
-   echo '--- risk_state not zeroed ---';                head -c 200 dashboard/public/risk_state.json
-   echo '--- testnet bot healthy ---';                  docker exec bot tail -2 /app/logs/bot.log"
+  "grep -ciE 'placing real|order placed|futures_create_order' /opt/bot/logs/bot_live.log; \
+   grep -c 'VIRTUAL-ONLY instance' /opt/bot/logs/bot_live.log; \
+   ls -la /opt/bot/data/preset_efficiency_live.json"
 ```
 
-Expected: credentials absent, banner present, **zero** `real_orders_*_live.json`, live
-virtual files appearing, `bot_pid.json` holding the **trading** bot's PID, config
-checksums unchanged, `risk_state.json` showing real balances, testnet bot logging.
+Expected: `0` real-order lines, `1` virtual-only banner, and the live efficiency file
+present and growing.
 
-Record the config checksums before deploying so the comparison is meaningful.
+- [ ] **Step 8: Verify the mirror flips on a bot-mode change**
+
+This is the amendment's core behaviour and the one thing no unit test can prove. Do it
+**only** while the primary is in test mode and has no open positions, and revert
+immediately — flipping `bot_mode.json` also changes what the primary would do on its next
+restart.
+
+```bash
+ssh ... "python3 -c \"
+import json,pathlib
+p=pathlib.Path('/opt/bot/data/bot_mode.json')
+p.write_text(json.dumps({'mode':'live'}))
+print('set live')\""
+# wait ~90s (two 30s confirmations plus restart), then:
+ssh ... "docker ps --format '{{.Names}}\t{{.Status}}' | grep bot_mirror; \
+         grep 'Bot starting' /opt/bot/logs/bot_test.log | tail -1"
+# revert:
+ssh ... "python3 -c \"
+import json,pathlib
+pathlib.Path('/opt/bot/data/bot_mode.json').write_text(json.dumps({'mode':'test'}))
+print('reverted')\""
+```
+
+Expected: `bot_mirror` shows a fresh `Up` (seconds, not hours), and `bot_test.log`
+carries a `Bot starting | mode=test` line. After reverting, it flips back to live.
+Confirm the **primary** never restarted and never changed mode: its uptime in
+`docker ps` must be unbroken.
 
 ---
 

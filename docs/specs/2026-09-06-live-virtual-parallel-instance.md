@@ -148,3 +148,84 @@ These are **not** suffixed and must be, or the two instances corrupt each other:
 4. The comparison answers: **do the presets currently selected on testnet also rank well
    on real charts?** A "no" is a valuable answer — it would mean the current preset
    rankings should not be trusted when going live.
+
+---
+
+## Amendment 2026-09-07: the secondary is a mirror, not a pinned live instance
+
+Confirmed with the owner. Supersedes the "Decisions" row on deployment and the
+"handover, later" assumption that the secondary is stopped when the primary goes live.
+
+### The shape
+
+The secondary always runs **the mode the primary is not running**.
+
+| dashboard mode | primary | secondary |
+|---|---|---|
+| test | test — real + virtual, testnet REST/WS | live — virtual only, production REST/WS |
+| live | live — real + virtual, production REST/WS | test — virtual only, testnet REST/WS |
+
+Two independent controls, deliberately:
+
+- **Bot mode** (Settings → Trading Mode) decides who trades. Takes effect **on restart**.
+- **Data view** (Trades page) decides whose files the dashboard reads. **Instant**, client-side,
+  never touches bot state.
+
+### Why restart, and why that is not a compromise
+
+The primary already only changes mode on restart. `POST /api/mode`
+(`dashboard/app/api/mode/route.ts:39`) writes `bot_mode.json` directly and returns
+`via: 'direct'`; nothing in the dashboard ever writes a `switch_mode` command, so
+`ModeManager.switch_mode()` and `main.on_switch_mode()` are unreachable from the UI.
+`current_mode` is captured once at `main.py:158` and only `_write_mode()` mutates it.
+
+So "mirror by restart" is the model the primary already follows. The secondary adopts it:
+resolve `opposite(bot_mode.json)` at startup, watch the file, and **exit cleanly** when the
+opposite no longer matches. `restart: unless-stopped` restarts it into the new mode with
+no partially-reinitialised state. Reusing `on_switch_mode()` in-process was rejected: it
+closes orders, refetches balance and rebuilds every mode-scoped object, so a partial
+failure would leave one instance writing to a mix of both suffixes.
+
+`bot_mode.json` is written atomically (tmp + rename) by both writers, so the watcher
+cannot read a torn file.
+
+### Suffix rule — corrected
+
+The original constraint said suffixes apply **only off test mode**. Under the mirror that
+is wrong: with the primary in live mode, a mode-keyed rule hands the *secondary* the
+canonical unsuffixed names — including `dashboard/public/risk_state.json`, which the
+secondary would write with balance 0 and blank the trading bot's risk page.
+
+**Corrected rule: category-B files are suffixed when `virtual_only`, not when mode != test.**
+The primary always owns the unsuffixed name; the secondary always writes
+`<name>_{its mode}`. Consequences:
+
+- Every existing dashboard reader keeps working unchanged, in either mode.
+- The secondary's chart/log/state files never mix two markets, because its suffix tracks
+  the market it is actually reading.
+- The handover is unaffected: the preset statistics that matter
+  (`preset_efficiency_{mode}.json`, `virtual_orders_rank{N}_{symbol}_{mode}.json`,
+  `virtual_orders_{mode}.json`) are already keyed on `current_mode`, so a future live
+  primary reads exactly the files the live secondary filled.
+
+### Suffix vocabulary: `_live`, not `_public`
+
+Not a preference. A live primary derives every path from `current_mode == "live"`. Naming
+the secondary's output `_public` would make the accumulated preset knowledge invisible at
+the moment it is needed. The suffix must equal the mode string.
+
+### Two latent bugs found while verifying this
+
+Both are dormant today (`TRADING_MODE=test` and `bot_mode.json` absent → both resolve to
+test) and both fire the first time the mode actually changes.
+
+1. **The mode-switch dialog promises what the code does not do.**
+   `TradingMode.tsx:62` warns "All open orders will be closed at market price" and
+   "Real orders will be placed with real money". Neither happens — the route writes a
+   file. The running bot keeps trading in its old mode with its positions open.
+2. **Two independent sources of truth for mode.** `current_mode` comes from
+   `bot_mode.json`; `DataFeed` is built from `settings.trading_mode` (env `TRADING_MODE`,
+   `main.py:320`). If they disagree after a restart, the bot writes `_live`-suffixed files
+   while talking to testnet.
+
+Both must be fixed before the primary is ever run in live mode. Tracked as Task 1c.

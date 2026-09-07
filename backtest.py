@@ -25,7 +25,7 @@ from config.presets import ALL_PRESETS, LOCKED_PRESETS
 from bot.analyzer import Analyzer
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
-from bot.exporter import export
+from bot.exporter import export, _results_path
 from bot.instance_paths import backtest_results_name
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config, _CONFIG_PATH as RISK_CONFIG_PATH
@@ -36,6 +36,26 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger('backtest')
+
+
+def _is_mirror() -> bool:
+    """True when this backtest belongs to the virtual-only mirror instance.
+
+    main.py runs this module as a subprocess, so the container's VIRTUAL_ONLY comes
+    along for free. The dashboard's own /api/run-backtest runs without it, so a
+    user-triggered backtest correctly writes the primary's files.
+    """
+    return os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+
+
+def _env_mode() -> str:
+    """The effective trading mode, read at call time.
+
+    --mode assigns os.environ['TRADING_MODE'] in main() before settings load, so this
+    must not be captured at import. 'testnet' is the deprecated alias load_settings()
+    still accepts; the filename has to agree with it rather than invent a third name.
+    """
+    return 'live' if os.getenv('TRADING_MODE', 'test').lower() == 'live' else 'test'
 
 
 def _dashboard_path(symbol: str) -> Path:
@@ -49,12 +69,8 @@ def _dashboard_path(symbol: str) -> Path:
     Read at call time, not import time: --mode assigns os.environ['TRADING_MODE'] in
     main() before settings load, and this must see that value.
     """
-    mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
-    raw = os.getenv('TRADING_MODE', 'test').lower()
-    # 'testnet' is the deprecated alias load_settings() still accepts; the filename has
-    # to agree with it rather than inventing a third name.
-    mode = 'live' if raw == 'live' else 'test'
-    return Path('dashboard') / 'public' / backtest_results_name(symbol, mode, mirror)
+    return Path('dashboard') / 'public' / backtest_results_name(
+        symbol, _env_mode(), _is_mirror())
 
 
 def run_for_symbol(symbol: str, args) -> None:
@@ -103,8 +119,12 @@ def run_for_symbol(symbol: str, args) -> None:
             recommendations=_analyzer.get_recommendations(),
             all_points_history=_analyzer.get_all_points(),
             best_recommendation=_analyzer.get_best_recommendation(),
+            # Without this the mirror's backtest would overwrite the chart data the
+            # dashboard shows for the trading bot.
+            mirror=_is_mirror(),
         )
-        logger.info(f"[{symbol}] Strategy results written to dashboard/public/results_{symbol}.json")
+        logger.info(f"[{symbol}] Strategy results written to "
+                    f"{_results_path(symbol, _env_mode(), _is_mirror())}")
     except Exception as _e:
         logger.warning(f"[{symbol}] Failed to write strategy results: {_e}")
 

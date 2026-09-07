@@ -20,8 +20,8 @@ from bot import analysis_log
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
-from bot.mode_manager import ModeManager
-from bot.instance_paths import backtest_results_name
+from bot.mode_manager import ModeManager, opposite_mode, read_mode_file
+from bot.instance_paths import backtest_results_name, instance_path
 from bot.notifier import Notifier
 from bot.telegram_menu import TelegramMenu
 from bot.order_executor import BotHaltError, OrderExecutor, OrderState
@@ -99,12 +99,34 @@ async def _heartbeat_loop(mode_manager: ModeManager, started_at: str,
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
 
+# Re-exported so main.py refers to per-instance paths by one name. The primitive lives
+# in bot/ because backtest.py and bot/risk_manager.py need it too and cannot import main.
+_instance_path = instance_path
+
+
+def _log_paths() -> tuple[Path, Path]:
+    """(bot.log, trades.log) for this instance.
+
+    Runs before Settings and ModeManager exist, so it reads the two inputs directly.
+    A mirror's log name must track the market it reads — the opposite of the primary's
+    recorded mode — and not TRADING_MODE, which a mirror ignores. The primary's paths
+    do not depend on mode at all, which is what keeps logrotate and every existing
+    `tail` working after a mode switch.
+    """
+    mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    mode = opposite_mode(read_mode_file()) if mirror else 'test'
+    base = Path('logs')
+    return (_instance_path(base, 'bot.log', mode, mirror),
+            _instance_path(base, 'trades.log', mode, mirror))
+
+
 def setup_logging() -> None:
     Path('logs').mkdir(exist_ok=True)
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    _bot_log, _trades_log = _log_paths()
 
     general = logging.handlers.RotatingFileHandler(
-        'logs/bot.log', maxBytes=10 * 1024 * 1024, backupCount=5
+        str(_bot_log), maxBytes=10 * 1024 * 1024, backupCount=5
     )
     general.setFormatter(fmt)
 
@@ -114,7 +136,7 @@ def setup_logging() -> None:
 
     trades_fmt = logging.Formatter('%(asctime)s %(message)s')
     trades_handler = logging.handlers.RotatingFileHandler(
-        'logs/trades.log', maxBytes=10 * 1024 * 1024, backupCount=5
+        str(_trades_log), maxBytes=10 * 1024 * 1024, backupCount=5
     )
     trades_handler.setFormatter(trades_fmt)
     trades_logger = logging.getLogger('trades')
@@ -202,10 +224,20 @@ async def run() -> None:
     # load_settings() normalises trading_mode to exactly 'test' or 'live', the same
     # vocabulary current_mode uses.
     _base_settings = load_settings()
+    # The notifier's own files need a per-instance name, and it is built before
+    # ModeManager exists (ModeManager takes the notifier). Resolve the mode from the
+    # same two inputs ModeManager uses, then assert below that they agree — if they ever
+    # diverged, one instance would split its output across two suffixes.
+    _virtual_only = _base_settings.virtual_only
+    _instance_mode = (
+        opposite_mode(read_mode_file()) if _virtual_only else read_mode_file())
 
     notifier = Notifier(
-        log_path=_PROJECT_ROOT / "data" / "system_log.json",
-        alert_path=_PROJECT_ROOT / "dashboard" / "public" / "alert_state.json",
+        log_path=_instance_path(
+            _PROJECT_ROOT / "data", "system_log.json", _instance_mode, _virtual_only),
+        alert_path=_instance_path(
+            _PROJECT_ROOT / "dashboard" / "public", "alert_state.json",
+            _instance_mode, _virtual_only),
         # A statistics-only mirror sends nothing: it has no trades to report, and two
         # bots alerting on one API ban is worse than one bot doing it. Notifier skips
         # sending when the token is empty, so local logging is unaffected and no code
@@ -222,13 +254,26 @@ async def run() -> None:
     )
     mode_manager = ModeManager(
         notifier=notifier,
-        mirror=_base_settings.virtual_only,
+        mirror=_virtual_only,
     )
     current_mode = _resolve_mode(_base_settings, mode_manager)
+    if _instance_mode != mode_manager.current_mode:
+        # Not reachable: both resolutions read the same validated file through the same
+        # two helpers. Checked rather than assumed because the failure is silent — the
+        # notifier would log to one suffix while everything else used another.
+        raise RuntimeError(
+            f"Mode resolution disagreement: notifier paths used {_instance_mode!r} but "
+            f"ModeManager resolved {mode_manager.current_mode!r}"
+        )
 
     risk_manager = RiskManager(
         mode=current_mode,
         notifier=notifier,
+        # The mirror runs on a zero balance. Sharing risk_state.json would blank the
+        # trading bot's risk page with those zeros.
+        state_path=_instance_path(
+            _PROJECT_ROOT / "dashboard" / "public", "risk_state.json",
+            current_mode, _virtual_only),
         # The mirror reads its own backtest. Without this it would size from
         # backtest_results_{symbol}.json, which the primary owns and sizes real
         # orders from.
@@ -256,7 +301,16 @@ async def run() -> None:
     # to config shared with the trading bot. Every guard below is a plain skip — none
     # of them changes what a real order does.
     global _VIRTUAL_ONLY
-    _virtual_only = _VIRTUAL_ONLY = first_settings.virtual_only
+    # Already resolved above, before the notifier needed it. Re-derived from the
+    # per-symbol Settings only to confirm the two agree: VIRTUAL_ONLY comes from the
+    # environment and is never overridden per symbol, and if that ever changed, some
+    # files would take one name and some the other.
+    if first_settings.virtual_only != _virtual_only:
+        raise RuntimeError(
+            f"virtual_only disagreement: base={_virtual_only}, "
+            f"per-symbol={first_settings.virtual_only}"
+        )
+    _VIRTUAL_ONLY = _virtual_only
     if _virtual_only:
         logger.warning(
             "VIRTUAL-ONLY instance: no real orders, no private endpoints, no Telegram, "
@@ -422,7 +476,10 @@ async def run() -> None:
         min_notionals[sym] = await order_executor.get_min_notional(sym)
 
     analysis_log.configure(
-        _PROJECT_ROOT / 'logs' / 'analysis.jsonl',
+        # analysis_log holds a module-level handler singleton; two instances on one
+        # file would interleave both markets into one analysis stream.
+        _instance_path(_PROJECT_ROOT / 'logs', 'analysis.jsonl',
+                       current_mode, _virtual_only),
         enabled=bool(risk_cfg.get('analysis_log_enabled', True)),
         max_bytes=int(risk_cfg.get('analysis_log_max_mb', 20)) * 1024 * 1024,
         backups=int(risk_cfg.get('analysis_log_backups', 5)),
@@ -447,6 +504,7 @@ async def run() -> None:
             analyzers[symbol].get_current_price(), analyzers[symbol].get_trend(),
             analyzers[symbol].get_klines(), recs,
             analyzers[symbol].get_all_points(), best,
+            mirror=_virtual_only,
         )
 
     # Detect maxQty-constrained symbols now that klines and balance are available
@@ -1493,6 +1551,7 @@ async def run() -> None:
             symbol, timeframe, mode_manager.current_mode,
             analyzer.get_current_price(), analyzer.get_trend(),
             analyzer.get_klines(), recs, analyzer.get_all_points(), best_for_this,
+            mirror=_virtual_only,
         )
 
         try:

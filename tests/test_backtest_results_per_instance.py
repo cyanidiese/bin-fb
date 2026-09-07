@@ -166,5 +166,7 @@ def test_main_seeds_the_tracker_from_its_own_instance_file():
 def test_main_passes_mirror_to_risk_manager():
     src = (Path(__file__).resolve().parents[1] / 'main.py').read_text()
     ctor = src[src.index('risk_manager = RiskManager('):]
-    ctor = ctor[:ctor.index(')')]
+    # slice to the closing paren at statement indentation — the argument list now
+    # contains nested calls, so the first ')' is not the end of the constructor
+    ctor = ctor[:ctor.index('\n    )')]
     assert 'mirror=' in ctor, 'RiskManager must know which instance it serves'

@@ -5,11 +5,24 @@ from pathlib import Path
 from typing import Optional
 
 from bot.recommendation import Recommendation
+from bot.instance_paths import instance_path
 from bot.trend import Trend
 
 logger = logging.getLogger(__name__)
 
 _MAX_KLINES = 1000
+
+
+def _results_path(symbol: str, mode: str, mirror: bool) -> Path:
+    """Where this symbol's chart data goes.
+
+    The primary writes the unsuffixed name in either mode — it is the only name any
+    reader looks for (bot/telegram_menu.py:257 and :324, dashboard app/page.tsx:62,
+    app/trades/page.tsx:204, app/api/symbols/[symbol]/route.ts:24). The mirror writes
+    its own suffixed file, which the Trades-page data toggle fetches explicitly.
+    """
+    return instance_path(Path('dashboard/public'),
+                         f'results_{symbol}.json', mode, mirror)
 
 
 def export(
@@ -22,6 +35,7 @@ def export(
     recommendations: list,
     all_points_history: Optional[list] = None,
     best_recommendation: Optional[Recommendation] = None,
+    mirror: bool = False,
 ) -> None:
     if trend is None:
         return
@@ -93,12 +107,12 @@ def export(
         'best_signal': _rec_dict(best_recommendation) if best_recommendation is not None else None,
     }
 
-    output_path = Path(f'dashboard/public/results_{symbol}.json')
+    output_path = _results_path(symbol, mode, mirror)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(result, indent=2))
     except Exception as e:
-        logger.error(f"Failed to write results_{symbol}.json: {e}")
+        logger.error(f"Failed to write {output_path.name}: {e}")
 
 
 def _rec_dict(rec: Recommendation) -> dict:

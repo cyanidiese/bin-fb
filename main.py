@@ -1722,12 +1722,17 @@ async def run() -> None:
             )
 
         _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
+        # Whether the real-order slot was actually used on this candle. When it was not,
+        # the simulator opens a rank-1 virtual order for the preset that would have
+        # traded, so a blocked signal still produces a data point instead of vanishing.
+        _real_placed = _placed_this_candle.get(symbol) == candle_ts
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
             analyzer=analyzer,
             best_preset_name=virtual_tracker.best_preset(symbol),
             base_settings=settings,
             locked_preset=_locked_preset,
+            real_order_placed=_real_placed,
         )
 
         # save_risk_config() every candle. A virtual-only instance must never retune
@@ -1798,6 +1803,13 @@ async def run() -> None:
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         for vc in virtual_closed:
+            # Rank 1 is recorded but NOT scored yet. It is the new pool that fills in the
+            # signals the real slot could not take; letting it into preset_efficiency
+            # immediately would change preset selection at the same moment the data
+            # changes, leaving no baseline to compare against. Flipping this on is a
+            # separate decision — see docs/specs/2026-09-07-rank1-statistics-gap.md.
+            if vc.get('rank') == 1:
+                continue
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 

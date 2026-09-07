@@ -156,9 +156,17 @@ def make_preset_settings():
 # ── balance initialisation ─────────────────────────────────────────────────
 
 def test_rank_balances_initialised(tmp_path):
+    """Rank 1 gained a pool on 2026-09-07.
+
+    It is the real-order slot, and it now holds a virtual position whenever the real
+    order did NOT happen, so a blocked signal still records what the preset would have
+    done. It needs its own balance like every other rank — sharing the real one would
+    let a virtual fill move real allocation.
+    See docs/specs/2026-09-07-rank1-statistics-gap.md.
+    """
     sim = make_simulator(tmp_path, initial_balance=500.0, rank_max=3)
     balances = sim.get_rank_balances()
-    assert set(balances.keys()) == {2, 3}
+    assert set(balances.keys()) == {1, 2, 3}
     assert all(v == 500.0 for v in balances.values())
 
 

@@ -94,7 +94,11 @@ class VirtualOrderSimulator:
         self._recent_sl_hit: dict[str, dict] = {}
         self._lot_cache: dict = {}
 
-        for r in range(2, self._rank_max + 1):
+        # Rank 1 is the real-order slot. It gets a pool so that when a real order is
+        # NOT placed the preset that would have traded still records what it would have
+        # done — see docs/specs/2026-09-07-rank1-statistics-gap.md. Ranks 2..N keep
+        # their exact existing meaning; 163k historical orders are keyed by rank.
+        for r in range(1, self._rank_max + 1):
             self._rank_open[r] = {}
             self._rank_fake[r] = {}
             self._rank_balance[r] = initial_balance
@@ -149,7 +153,7 @@ class VirtualOrderSimulator:
         Ensures virtual pools begin each session from the same baseline as the real account."""
         if balance <= 0:
             return
-        for rank in range(2, self._rank_max + 1):
+        for rank in range(1, self._rank_max + 1):
             self._rank_balance[rank] = balance
             self._save_rank_balance(rank)
             logger.info(f"Rank-{rank} virtual balance synced to real account: {balance:.2f} USDT")
@@ -176,6 +180,7 @@ class VirtualOrderSimulator:
         base_settings: 'Settings',
         locked_preset: Optional[str] = None,
         virtual_only: bool = False,
+        real_order_placed: bool = False,
     ) -> None:
         # When a preset is manually locked for real orders, exclude it from the
         # virtual pool and shift the rank index so the formerly-best preset fills
@@ -199,7 +204,38 @@ class VirtualOrderSimulator:
         lev = self._get_leverage(symbol)
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
 
-        for rank in range(2, self._rank_max + 1):
+        for rank in range(1, self._rank_max + 1):
+            if rank == 1:
+                # The real-order slot. Only ever holds a virtual position when the real
+                # order did NOT happen, so a blocked signal still produces a data point
+                # instead of vanishing. A disabled symbol already places index 0 at
+                # rank 2, so rank 1 stays empty there and nothing is double-counted.
+                if virtual_only:
+                    continue
+                if real_order_placed:
+                    if symbol in self._rank_open[1]:
+                        await self._evict(symbol, 1, current_price, 'real_order_took_over')
+                    continue
+                # the preset that would have traded: the manual lock, else the best
+                _r1_name = locked_preset or (
+                    self._all_presets and sorted(
+                        self._all_presets.items(),
+                        key=lambda kv: self._virtual_tracker.get_preset_rank_key(symbol, kv[0]),
+                        reverse=True,
+                    )[0][0]
+                )
+                if not _r1_name or _r1_name not in self._all_presets:
+                    continue
+                _r1_existing = self._rank_open[1].get(symbol)
+                if _r1_existing and _r1_existing['preset_name'] != _r1_name:
+                    await self._evict(symbol, 1, current_price, 'rank_change')
+                if symbol not in self._rank_open[1]:
+                    await self._try_open(
+                        symbol, 1, _r1_name, self._all_presets[_r1_name],
+                        base_settings, lev, min_notional, analyzer,
+                    )
+                continue
+
             # Skip this rank if it has been disabled for this symbol
             if self._is_rank_disabled and self._is_rank_disabled(symbol, rank):
                 if symbol in self._rank_open[rank]:

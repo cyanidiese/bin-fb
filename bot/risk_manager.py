@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from bot.instance_paths import backtest_results_name
+
 if TYPE_CHECKING:
     from bot.notifier import Notifier
 
@@ -52,8 +54,13 @@ class RiskManager:
         state_path: Path = _DEFAULT_STATE_PATH,
         backtest_results_dir: Path = _DEFAULT_RESULTS_DIR,
         notifier: Notifier | None = None,
+        mirror: bool = False,
     ) -> None:
         self._mode = mode
+        # Which instance this serves. Defaults to False so the trading bot's behaviour
+        # is unchanged; only the virtual-only mirror passes True, and only so it reads
+        # its own backtest rather than the numbers the primary sizes real orders from.
+        self._mirror = mirror
         self._config_path = config_path
         self._state_path = state_path
         self._results_dir = backtest_results_dir
@@ -434,6 +441,15 @@ class RiskManager:
         self._perf_cache[symbol] = (score, now, pf, raw_pct)
         return score, pf
 
+    def _backtest_path(self, symbol: str) -> Path:
+        """This instance's backtest results for `symbol`.
+
+        Reads self._mode rather than a captured value because reset_for_mode_switch()
+        reassigns it, and the path must follow.
+        """
+        return self._results_dir / backtest_results_name(
+            symbol, self._mode, self._mirror)
+
     def _compute_perf_score(self, symbol: str) -> tuple[float, float, float]:
         """Read backtest_results_{symbol}.json and compute scores.
 
@@ -444,7 +460,7 @@ class RiskManager:
                            weight so that a symbol with +22 % profit gets proportionally more
                            capital than one with +6 %, regardless of their individual preset spreads.
         """
-        path = self._results_dir / f"backtest_results_{symbol}.json"
+        path = self._backtest_path(symbol)
         try:
             data = json.loads(path.read_text())
         except Exception:

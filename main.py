@@ -21,6 +21,7 @@ from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
 from bot.mode_manager import ModeManager
+from bot.instance_paths import backtest_results_name
 from bot.notifier import Notifier
 from bot.telegram_menu import TelegramMenu
 from bot.order_executor import BotHaltError, OrderExecutor, OrderState
@@ -228,6 +229,10 @@ async def run() -> None:
     risk_manager = RiskManager(
         mode=current_mode,
         notifier=notifier,
+        # The mirror reads its own backtest. Without this it would size from
+        # backtest_results_{symbol}.json, which the primary owns and sizes real
+        # orders from.
+        mirror=_base_settings.virtual_only,
     )
 
     # Load settings and build per-symbol state
@@ -386,7 +391,10 @@ async def run() -> None:
         sys.exit(1)
 
     for sym in symbols:
-        bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
+        # Seed from THIS instance's backtest. The mirror backtested the other market;
+        # seeding the primary's file would mix the two markets' preset statistics.
+        bt_path = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
+            sym, current_mode, _virtual_only)
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
     feed = DataFeed(first_settings, live_klines=first_settings.live_klines)
@@ -1580,7 +1588,8 @@ async def run() -> None:
             get_min_trades=_get_min_trades,
         )
         for sym in current_symbols:
-            bt_path = _PROJECT_ROOT / "dashboard" / "public" / f"backtest_results_{sym}.json"
+            bt_path = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
+                sym, mode_manager.current_mode, _virtual_only)
             virtual_tracker.seed_from_backtest(sym, bt_path)
         scenario.reset_for_mode(
             target_mode,

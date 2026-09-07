@@ -15,6 +15,7 @@ Presets live in config/presets.py.
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from bot.analyzer import Analyzer
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
 from bot.exporter import export
+from bot.instance_paths import backtest_results_name
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config, _CONFIG_PATH as RISK_CONFIG_PATH
 
@@ -34,6 +36,25 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger('backtest')
+
+
+def _dashboard_path(symbol: str) -> Path:
+    """Where this run's dashboard results go.
+
+    Reads the environment instead of taking a parameter because main.py invokes this
+    module as a subprocess, so the container's VIRTUAL_ONLY comes along for free. The
+    dashboard's own /api/run-backtest runs without VIRTUAL_ONLY, so a user-triggered
+    backtest correctly writes the primary's file.
+
+    Read at call time, not import time: --mode assigns os.environ['TRADING_MODE'] in
+    main() before settings load, and this must see that value.
+    """
+    mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    raw = os.getenv('TRADING_MODE', 'test').lower()
+    # 'testnet' is the deprecated alias load_settings() still accepts; the filename has
+    # to agree with it rather than inventing a third name.
+    mode = 'live' if raw == 'live' else 'test'
+    return Path('dashboard') / 'public' / backtest_results_name(symbol, mode, mirror)
 
 
 def run_for_symbol(symbol: str, args) -> None:
@@ -104,7 +125,7 @@ def run_for_symbol(symbol: str, args) -> None:
 
     code_locked = set(LOCKED_PRESETS.keys())
     extra_locked: list[str] = []
-    dashboard_path = Path('dashboard') / 'public' / f'backtest_results_{symbol}.json'
+    dashboard_path = _dashboard_path(symbol)
     if dashboard_path.exists():
         try:
             with open(dashboard_path) as f:

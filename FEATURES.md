@@ -749,9 +749,24 @@ Data-backed stop-loss width limits per symbol, protecting against artifact SL ge
 **Files**: `main.py` (_try_place_order), `config/risk_config.py`, server `risk_config.json`
 **Key details**:
 - **Rationale**: Analysis of 260 all-time trades revealed SL-width distribution: 8%+ SL bucket is artifact zone (-$205 net, n=2 outliers including one -$206.12 catastrophic loss), while 4-8% SL bucket is healthy (+$22 net, 45% WR, multiple profitable trades). Root cause: cross-level stop sourcing (session 59 defect #2) produces degenerate geometry with stop distances reaching parent trend extremes unbounded.
-- **Current setting (session 59, 2026-07-16)**: `per_symbol_settings.{TIAUSDT, EIGENUSDT, INJUSDT, MEMEUSDT, DOGEUSDT}.max_sl_pct = 8.0`
-- **Behavior**: Blocks any signal where computed SL distance exceeds 8% of entry. Interim guard until Fix A (same-level stop sourcing, not yet implemented) resolves root cause.
-- **Expected impact**: Eliminates artifact signals with wide SLs, preserves healthy 4-8% range signals.
+- **Current setting (2026-09-07)**: `per_symbol_settings.{TIAUSDT, EIGENUSDT, INJUSDT, MEMEUSDT, DOGEUSDT}.max_sl_pct = 10.0`
+- **Behavior**: Blocks any signal where computed SL distance exceeds 10% of entry (SELL distances are inflated x1.5 before the comparison, see `main.py` `_try_place_order`). Still an interim guard until Fix A (same-level stop sourcing) resolves the root cause.
+- **Raised 8.0 -> 10.0 on 2026-09-07, on a 205x larger sample.** The original 8% rested on n=2 trades. Re-measured across **410 real closed trades**, net PnL by SL width:
+
+  | SL width | n | WR | net USDT | avg/trade |
+  |---|---|---|---|---|
+  | 0-2% | 261 | 23% | **-458.56** | -1.76 |
+  | 2-4% | 98 | 38% | -106.65 | -1.09 |
+  | 4-6% | 28 | 43% | -75.72 | -2.70 |
+  | 6-8% | 18 | 33% | -31.35 | -1.74 |
+  | **8-10%** | 2 | 50% | **+136.26** | +68.13 |
+  | 10-13% | 2 | 100% | +2.31 | +1.15 |
+  | 13%+ | 1 | 0% | **-206.12** | -206.12 |
+
+  The "8%+ is toxic" conclusion came from a single trade: TIAUSDT SELL at **22.52%** SL, -206.12. Everything between 8% and 13% is net **+138.57**. Win rate also rises monotonically with SL width (23% -> 43%), i.e. tight stops are being whipsawed.
+- **Why it mattered**: with the 8% cap, TIAUSDT produced **107 signals that were all rejected** at 8.24-11.72% (median 8.99%) while being the #2 ranked symbol. In one 36h window, 40 TIAUSDT signals were rejected and only 1 real order was placed bot-wide. The rejected signals are invisible in the virtual statistics because `virtual_order_simulator.py:337` applies the same cap.
+- **Why 10 and not removal**: 10% admits the largest rejection cluster (59 of 132, the 8-10% band with the best evidence) while still blocking the 13%+ class that contains the only catastrophic loss. 12.5% would additionally admit EIGENUSDT's 11.65-12.26% cluster (17 signals) but rests on n=2 - revisit once 10% has real trades behind it.
+- **Known asymmetry**: `min_sl_pct` *clamps* the stop ("SL floored: X% -> Y%") but `max_sl_pct` *rejects the signal outright*. Clamping the stop down to the cap instead would admit these signals without widening risk at all; not implemented.
 
 ### Two-Tier Preset Ranking (Session 32)
 Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ranking system. Live-proven presets (≥N real+virtual trades) are always ranked above seed-only presets (backtest-only), regardless of seed magnitude. Solves the TIAUSDT problem where a less-profitable preset with a large backtest seed outranked a better-performing preset with fewer live trades.

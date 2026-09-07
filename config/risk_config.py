@@ -5,6 +5,8 @@ import json
 import threading
 from pathlib import Path
 
+from config.safe_write import write_json
+
 _LOCK = threading.Lock()
 
 DEFAULT_CONFIG: dict = {
@@ -108,9 +110,15 @@ def save_risk_config(config: dict, path: Path = _CONFIG_PATH) -> None:
 
 
 def _atomic_write(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(path)
+    """Persist config, atomically where the filesystem allows it.
+
+    This used to be tmp+rename only, which cannot work on risk_config.json inside the
+    container: it is bind-mounted as a single file, so the path is itself a mount point
+    and rename fails with EBUSY (verified on the server 2026-09-07). The only
+    in-container caller is weight_rebalancer, which is disabled — so this would have
+    started raising the day rebalancing was switched on.
+    """
+    write_json(path, data)
 
 
 def get_min_trades_for_ranking(cfg: dict, symbol: str) -> int:

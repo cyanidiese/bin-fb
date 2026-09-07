@@ -151,3 +151,21 @@ def test_main_passes_read_only_from_virtual_only():
     ctor = src[src.index('SymbolRegistry('):]
     ctor = ctor[:ctor.index(')')]
     assert 'read_only=' in ctor, 'the mirror must not be able to write shared config'
+
+
+def test_persist_lands_even_when_rename_is_busy(tmp_path, monkeypatch):
+    """symbol_registry.json is bind-mounted as a single file, so inside the container
+    rename over it fails with EBUSY. The write must still land, or every pause, disable
+    and weight change would silently stop persisting."""
+    import config.safe_write as sw
+    path = tmp_path / 'symbol_registry.json'
+    r = SymbolRegistry(seed_symbols=['INJUSDT'], registry_path=path)
+
+    def busy(self, target):
+        raise OSError(16, 'Device or resource busy')
+
+    monkeypatch.setattr(Path, 'replace', busy)
+    sw._warned.clear()
+    r.pause_symbol('INJUSDT')
+    assert json.loads(path.read_text())['paused'], 'the pause was not persisted'
+    assert list(tmp_path.glob('*.tmp')) == []

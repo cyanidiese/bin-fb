@@ -12,6 +12,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Callable, Literal
 
+from config.safe_write import write_json
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PATH = Path('symbol_registry.json')
@@ -252,22 +254,17 @@ class SymbolRegistry:
             logger.debug(
                 f"SymbolRegistry: read-only instance — not writing {self._path}")
             return
-        # tmp+replace, matching risk_config._atomic_write(). Two processes read this
-        # file now; a plain write_text() lets the other one catch it truncated, and
-        # _load() answers unparseable JSON with a write of its own.
-        tmp = self._path.with_suffix('.json.tmp')
+        # write_json prefers tmp+rename and falls back to an in-place write on a
+        # bind-mounted file, where rename returns EBUSY. Two processes read this file
+        # now, so the atomic path matters wherever it is available; where it is not,
+        # _load() tolerates a torn read and refuses to overwrite what it cannot parse.
         try:
-            tmp.write_text(json.dumps(data, indent=2))
-            tmp.replace(self._path)
+            write_json(self._path, data)
         except Exception as exc:
-            # Never propagate. _persist() is called from __init__ and from every
-            # pause/disable/weight change; raising here would take the whole instance
-            # down over a disk problem while its in-memory state is perfectly usable.
+            # Never propagate. _persist() runs from __init__ and from every
+            # pause/disable/weight change; dying over a disk problem while the
+            # in-memory state is perfectly usable is the wrong trade.
             logger.error(f"SymbolRegistry: failed to write {self._path}: {exc}")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
 
     def _fire(self, event: Event, symbol: str) -> None:
         for cb in self._subscribers:

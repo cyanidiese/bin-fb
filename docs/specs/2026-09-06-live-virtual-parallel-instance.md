@@ -229,3 +229,51 @@ test) and both fire the first time the mode actually changes.
    while talking to testnet.
 
 Both must be fixed before the primary is ever run in live mode. Tracked as Task 1c.
+
+---
+
+## Amendment 2026-09-07 (b): rename over a bind-mounted file fails with EBUSY
+
+Found while verifying the registry change, not by reading code. The two config files are
+bind-mounted as **single files**:
+
+```
+./risk_config.json:/app/risk_config.json
+./symbol_registry.json:/app/symbol_registry.json
+```
+
+Inside the container each of those paths is itself a mount point, so renaming over it
+fails. Measured on the server:
+
+```
+rename over bind-mounted file: FAILS -> OSError [Errno 16] Device or resource busy
+```
+
+This matters twice:
+
+1. **It would have broken the trading bot.** Making `SymbolRegistry._persist()` atomic
+   with tmp+rename — the obvious fix for the truncated-read problem — fails with EBUSY
+   inside the container. Combined with tolerating a failed write, every pause, disable
+   and weight change would have **silently stopped persisting**. The textbook fix was
+   the wrong fix for this deployment.
+
+2. **`risk_config._atomic_write()` has always had the same bug.** It is tmp+rename, and
+   the only in-container caller is `weight_rebalancer`, which is disabled
+   (`weight_rebalancer.enabled = false`) — so it has never fired. It would have started
+   raising the day rebalancing was switched on. The config edits that do land come from
+   the host via `/bfb-config`, where the path is an ordinary file and rename works.
+
+`config/safe_write.write_json()` now serves both: prefer tmp+rename, fall back to an
+in-place write on `OSError`, and still raise for a genuine failure. Verified on the
+server against both real files — each falls back to in-place with content preserved and
+no `.tmp` left behind.
+
+The fallback is not atomic, which is why the reader side matters: `SymbolRegistry._load()`
+tolerates a torn read and deliberately does **not** overwrite a file it could not parse.
+Before this change it answered a parse failure by reseeding from the `SYMBOL` env var and
+writing — so a transient truncated read would have discarded 15 weights and 7 disabled
+entries that the next restart could have recovered.
+
+**Generalisation worth remembering:** on this deployment, any new atomic write to a
+bind-mounted single file is broken by construction. Route it through
+`config.safe_write.write_json()`.

@@ -46,12 +46,33 @@ def test_lets_one_probe_through_after_the_probe_interval(g, clock):
     assert g.blocked_for('testnet') > 0
 
 
-def test_successful_probe_clears_the_block_early(g, clock):
+def _recover(g, clock, key='testnet'):
+    """Drive a full recovery: one authorised probe that works, then settling elapses.
+
+    A success no longer clears the block on its own — it starts a settling window, and
+    blocked_for() lifts the block once that window passes with no further rejection.
+    Settling is time-based, so nothing else has to call for it to finish.
+    """
+    clock['t'] += rlg._PROBE_FIRST_S + 1
+    assert g.blocked_for(key) == 0.0, 'no probe slot offered'
+    g.note_success(key)
+    clock['t'] += rlg._SETTLE_S + 1
+    assert g.blocked_for(key) == 0.0, 'settling did not complete'
+
+
+def test_successful_probes_clear_the_block_early(g, clock):
+    g.note_exception('testnet', _ban(3000))
+    _recover(g, clock)
+    assert g.is_blocked('testnet') is False
+
+
+def test_a_single_successful_probe_is_not_enough(g, clock):
+    """The stampede guard: one success must not re-open the endpoint for 15 symbols."""
     g.note_exception('testnet', _ban(3000))
     clock['t'] += rlg._PROBE_FIRST_S + 1
-    g.blocked_for('testnet')          # probe allowed
-    g.note_success('testnet')         # it worked
-    assert g.is_blocked('testnet') is False
+    assert g.blocked_for('testnet') == 0.0
+    g.note_success('testnet')
+    assert g.is_blocked('testnet') is True
 
 
 def test_failed_probe_backs_off(g, clock):
@@ -89,9 +110,7 @@ def test_messages_carry_no_html_markup(g, clock):
     """Notifier.notify() html-escapes the body, so markup here renders literally."""
     sent = _capture(g)
     g.note_exception('testnet', _ban(3000))
-    clock['t'] += rlg._PROBE_FIRST_S + 1
-    g.blocked_for('testnet')
-    g.note_success('testnet')
+    _recover(g, clock)
     assert len(sent) == 2
     for _lvl, title, body, _src in sent:
         for tag in ('<b>', '</b>', '<i>', '<code>', '&lt;'):
@@ -115,9 +134,7 @@ def test_ban_start_is_announced_with_expiry_and_mode(g, clock):
 def test_ban_end_is_announced(g, clock):
     sent = _capture(g)
     g.note_exception('testnet', _ban(3000))
-    clock['t'] += rlg._PROBE_FIRST_S + 1
-    g.blocked_for('testnet')
-    g.note_success('testnet')
+    _recover(g, clock)
     assert len(sent) == 2
     lvl, title, body, _ = sent[1]
     assert lvl == 'info'

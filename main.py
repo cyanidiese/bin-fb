@@ -14,7 +14,7 @@ from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import load_settings, Settings, max_profit_cap_applies
-from bot.rate_limit_guard import guard as rl_guard
+from bot.rate_limit_guard import guard as rl_guard, RateLimited, _SETTLE_S
 from bot.analyzer import Analyzer
 from bot import analysis_log
 from bot.data_feed import DataFeed
@@ -48,6 +48,9 @@ _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
 KLINE_REFRESH_EVERY = 4   # refresh once every N candles per symbol
 KLINE_STAGGER_SECS = 2    # seconds between each symbol's background refresh task
+# Long enough to clear the rate-limit guard's settling window, so a gap refresh
+# suppressed by settling is retried once rather than waiting a whole candle.
+_KLINE_RETRY_AFTER_S = _SETTLE_S + 1.0
 
 
 def _tf_to_ms(timeframe: str) -> int:
@@ -1175,10 +1178,28 @@ async def run() -> None:
     async def _refresh_klines_bg(symbol: str, count: int, stagger: float) -> None:
         if stagger > 0:
             await asyncio.sleep(stagger)
-        try:
-            await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, count)
-        except Exception as _e:
-            logger.debug(f"[{symbol}] Background kline refresh failed: {_e}")
+        for _attempt in (1, 2):
+            try:
+                await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, count)
+                return
+            except RateLimited as _rl:
+                # The guard suppressed this, so no request was made and the ban was not
+                # extended. The common cause is the settling window right after a probe
+                # succeeded: gap refreshes for all 15 symbols land within a second of
+                # the candle close and meet a closed gate. Without this retry the gap
+                # would stay unfilled for a whole candle. One retry only, and it goes
+                # back through the guard — if the ban is still real it is suppressed
+                # again rather than extending anything.
+                if _attempt == 2:
+                    logger.debug(
+                        f"[{symbol}] Kline refresh still rate-limited after retry "
+                        f"({_rl.remaining:.0f}s left) — will retry next candle"
+                    )
+                    return
+                await asyncio.sleep(_KLINE_RETRY_AFTER_S)
+            except Exception as _e:
+                logger.debug(f"[{symbol}] Background kline refresh failed: {_e}")
+                return
 
     async def on_candle_close(symbol: str, kline: list) -> None:
         nonlocal risk_cfg, _active_scenario_name, scenario

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -52,6 +53,24 @@ _MAX_BLOCK_S = 3600.0
 # keeps a genuinely long ban from costing many wasted calls.
 _PROBE_FIRST_S = 60.0
 _PROBE_MAX_S = 600.0
+
+# A probe that works proves one request got through. It does not prove the ban has
+# lifted for a burst of fifteen. Measured on the server 2026-09-07: after a probe
+# succeeded and the block cleared, three kline fetches failed within 130ms and pushed
+# the expiry out 4 minutes — because after a ban blackout every symbol has a kline gap,
+# so main.py fires _refresh_klines_bg(stagger=0) for all 15 at once.
+#
+# So a successful probe starts a short SETTLING period instead of opening the gate: the
+# block stays on, probes continue once a second, and the block lifts only if nothing
+# fails for _SETTLE_S. A burst arriving during settling meets a closed gate.
+#
+# Deliberately time-based, not success-count-based. An earlier version required three
+# successful probes and was strictly worse: between candle closes there is almost no
+# traffic, so nothing arrived to consume the probe slots and recovery waited whole
+# candles — replay measured up to +1800s of extra suppression to save 4 minutes of
+# extension. Settling costs a fixed ~3s whether or not anything else is calling.
+_SETTLE_S = 3.0
+_SETTLE_PROBE_S = 1.0
 
 
 # Epoch timestamps Binance embeds in its error text. Bounded to a plausible window so
@@ -130,6 +149,14 @@ class RateLimitGuard:
     """
 
     def __init__(self) -> None:
+        # main.py fires create_task(_refresh_klines_bg(..., stagger=0)) per symbol and
+        # each hops to a worker thread via asyncio.to_thread, so every method here can
+        # be called concurrently from 15 threads. Without this lock two of them read
+        # the same probe deadline before either advanced it, and both went to the
+        # network — which is how three ARMED lines landed in the same 130ms.
+        self._lock = threading.RLock()
+        self._probe_inflight: dict[str, bool] = {}   # key -> a probe we authorised is out
+        self._settle_until: dict[str, float] = {}    # key -> monotonic end of settling
         self._blocked_until: dict[str, float] = {}   # key -> monotonic deadline
         self._announced: dict[str, float] = {}       # key -> deadline already logged
         self._next_probe: dict[str, float] = {}      # key -> monotonic time of next probe
@@ -175,9 +202,19 @@ class RateLimitGuard:
         if remaining <= 0:
             return False
 
+        with self._lock:
+            return self._arm(key, msg, expiry_ms, remaining)
+
+    def _arm(self, key: str, msg: str, expiry_ms, remaining: float) -> bool:
         now = time.monotonic()
         deadline = now + remaining
         was_blocked = self._blocked_until.get(key, 0.0) > now
+
+        # This request failed, so any probe we had outstanding is answered — and the
+        # answer is no. Reset recovery progress: a success arriving after this must not
+        # be counted towards re-opening, or a half-working endpoint would flap.
+        self._probe_inflight[key] = False
+        self._settle_until.pop(key, None)
 
         # A failed probe means the ban is still real: back the probe interval off so we
         # stop paying for attempts that only extend it.
@@ -229,31 +266,96 @@ class RateLimitGuard:
         single probe. The stated expiry is an upper bound — Binance lifted one 41 minutes
         early on 2026-09-06 — so we test rather than wait it out.
         """
-        deadline = self._blocked_until.get(key)
-        if deadline is None:
+        # Fast path without the lock: the overwhelming majority of calls are made when
+        # nothing is banned, and taking a lock 15 times a candle for that is waste.
+        # A dict .get() on CPython is atomic, and a stale read here only means one
+        # request is made a moment after a ban started — which note_exception then
+        # records.
+        if self._blocked_until.get(key) is None:
             return 0.0
-        now = time.monotonic()
-        remaining = deadline - now
-        if remaining <= 0:
-            self._clear(key, 'stated ban expired')
-            return 0.0
-        # Half-open: let exactly one request through, then reset the probe timer so the
-        # next caller is blocked again until either it succeeds (clearing the block) or
-        # note_exception re-arms with a longer backoff.
-        next_probe = self._next_probe.get(key)
-        if next_probe is not None and now >= next_probe:
-            self._next_probe[key] = now + self._probe_delay.get(key, _PROBE_FIRST_S)
-            logger.info(
-                f"Rate-limit guard probing '{key}' (stated ban has "
-                f"{remaining / 60:.0f} min left) — letting one request through"
-            )
-            return 0.0
-        return remaining
+
+        with self._lock:
+            deadline = self._blocked_until.get(key)
+            if deadline is None:
+                return 0.0
+            now = time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                self._clear(key, 'stated ban expired')
+                return 0.0
+
+            # Settling finished with no further rejection: the endpoint really works.
+            settle = self._settle_until.get(key)
+            if settle is not None and now >= settle:
+                self._clear(
+                    key,
+                    f'probe succeeded and {_SETTLE_S:.0f}s settled with no further '
+                    f'rejection — endpoint is working again')
+                return 0.0
+
+            # Half-open, single flight. Authorising a probe advances the deadline
+            # inside the lock, so of fifteen threads arriving together exactly one is
+            # let through — previously two could both read the old deadline and both
+            # go to the network.
+            next_probe = self._next_probe.get(key)
+            if next_probe is not None and now >= next_probe:
+                settling = settle is not None
+                # While settling we are testing whether the ban really lifted, so the
+                # next test comes in a second rather than after the failure backoff.
+                interval = (_SETTLE_PROBE_S if settling
+                            else self._probe_delay.get(key, _PROBE_FIRST_S))
+                self._next_probe[key] = now + interval
+                self._probe_inflight[key] = True
+                stage = (f" (settling, {settle - now:.0f}s to go)" if settling else "")
+                logger.info(
+                    f"Rate-limit guard probing '{key}' (stated ban has "
+                    f"{remaining / 60:.0f} min left) — letting one request "
+                    f"through{stage}"
+                )
+                return 0.0
+            return remaining
 
     def note_success(self, key: str) -> None:
-        """A request got through. If we thought we were banned, we were wrong — clear it."""
-        if self._blocked_until.get(key):
-            self._clear(key, 'probe succeeded — endpoint is working again')
+        """A request got through.
+
+        Only counts towards re-opening when it answers a probe we authorised. A success
+        from a call the guard never let through proves nothing about the ban — on
+        2026-09-07 one of those un-armed the guard 119ms after it armed, and the next
+        request extended the ban again.
+
+        Even an authorised probe is not enough on its own. One request succeeding does
+        not mean the endpoint will serve a batch of fifteen, so a success starts a
+        short settling window instead of opening the gate; blocked_for() lifts the
+        block once that window passes without a rejection.
+        """
+        # Fast path: nothing blocked, nothing to do. Keeps the normal case lock-free.
+        if not self._blocked_until.get(key):
+            return
+
+        with self._lock:
+            if not self._blocked_until.get(key):
+                return
+            if not self._probe_inflight.get(key):
+                logger.debug(
+                    f"Rate-limit guard: unauthorised success on '{key}' ignored — "
+                    f"only a probe can re-open the endpoint"
+                )
+                return
+            self._probe_inflight[key] = False
+            now = time.monotonic()
+            if key not in self._settle_until:
+                # Begin settling. The gate stays shut so a 15-symbol burst cannot pile
+                # in behind this one success; probes continue once a second, and
+                # blocked_for() lifts the block once the window passes without a
+                # rejection. Time-based, so it completes even if nothing else calls.
+                self._settle_until[key] = now + _SETTLE_S
+                self._next_probe[key] = now + _SETTLE_PROBE_S
+                logger.info(
+                    f"Rate-limit guard: probe succeeded on '{key}' — settling for "
+                    f"{_SETTLE_S:.0f}s before resuming normal traffic"
+                )
+                return
+            self._next_probe[key] = now + _SETTLE_PROBE_S
 
     def _clear(self, key: str, reason: str) -> None:
         stated = self._banned_until_wall.pop(key, None)
@@ -261,6 +363,8 @@ class RateLimitGuard:
         self._announced.pop(key, None)
         self._next_probe.pop(key, None)
         self._probe_delay.pop(key, None)
+        self._probe_inflight.pop(key, None)
+        self._settle_until.pop(key, None)
         logger.info(f"Rate-limit guard CLEARED for '{key}' ({reason}) — resuming requests.")
         early = ''
         if stated and stated > time.time():
@@ -276,7 +380,18 @@ class RateLimitGuard:
         )
 
     def is_blocked(self, key: str) -> bool:
-        return self.blocked_for(key) > 0.0
+        """Whether traffic is currently held back.
+
+        Read-only, unlike blocked_for(): it never consumes the probe slot and never
+        clears an expired ban. blocked_for() has to have those side effects — it is how
+        a single request gets authorised — which makes it the wrong thing to call just
+        to ask a question. Nothing in production calls this today; keeping it pure means
+        adding a monitoring or dashboard read later cannot silently steal probes from
+        the caller that actually needs one.
+        """
+        with self._lock:
+            deadline = self._blocked_until.get(key)
+            return deadline is not None and deadline > time.monotonic()
 
     def reset(self, key: Optional[str] = None) -> None:
         """Clear state. Used by tests and on a deliberate mode switch."""
@@ -286,12 +401,16 @@ class RateLimitGuard:
             self._next_probe.clear()
             self._probe_delay.clear()
             self._banned_until_wall.clear()
+            self._probe_inflight.clear()
+            self._settle_until.clear()
         else:
             self._blocked_until.pop(key, None)
             self._announced.pop(key, None)
             self._next_probe.pop(key, None)
             self._probe_delay.pop(key, None)
             self._banned_until_wall.pop(key, None)
+            self._probe_inflight.pop(key, None)
+            self._settle_until.pop(key, None)
 
 
 class RateLimited(Exception):

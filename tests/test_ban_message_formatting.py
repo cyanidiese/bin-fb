@@ -103,7 +103,13 @@ def test_ban_ended_body_has_no_markup():
 
     def scenario(g):
         g.note_exception('testnet', Exception(msg))
+        # A success starts a settling window rather than clearing outright, so drive
+        # settling to completion to reach the ban-ended announcement.
+        g._next_probe['testnet'] = time.monotonic() - 1
+        assert g.blocked_for('testnet') == 0.0
         g.note_success('testnet')
+        g._settle_until['testnet'] = time.monotonic() - 0.01
+        assert g.blocked_for('testnet') == 0.0
 
     _, sent = _capture(scenario)
     ended = [s for s in sent if 'ended' in s[1]]

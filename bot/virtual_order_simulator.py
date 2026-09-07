@@ -226,9 +226,19 @@ class VirtualOrderSimulator:
                 )
                 if not _r1_name or _r1_name not in self._all_presets:
                     continue
+                # Rank 1 DOES still evict on a change of top preset: unlike ranks >= 2
+                # it must represent whatever would trade right now, and be free the
+                # instant a real order is placed.
                 _r1_existing = self._rank_open[1].get(symbol)
                 if _r1_existing and _r1_existing['preset_name'] != _r1_name:
                     await self._evict(symbol, 1, current_price, 'rank_change')
+                # Promotion frees the preset. Without this the duplicate guard would
+                # leave the about-to-trade preset stuck holding a stale practice
+                # position in another slot, so the real-order slot could not represent
+                # its own preset.
+                _elsewhere = self._preset_is_open(symbol, _r1_name, except_rank=1)
+                if _elsewhere:
+                    await self._evict(symbol, _elsewhere, current_price, 'promoted_to_real')
                 if symbol not in self._rank_open[1]:
                     await self._try_open(
                         symbol, 1, _r1_name, self._all_presets[_r1_name],
@@ -253,17 +263,62 @@ class VirtualOrderSimulator:
 
             preset_name, overrides = sorted_presets[rank_idx]
 
-            # Evict if the preset at this rank changed
+            # A reshuffle does NOT kill the open position any more. This slot holds
+            # whichever preset was Nth-best when it opened; the rankings move
+            # constantly, and closing on that produced 60,266 of 163,668 records at
+            # whatever price happened to be current — averaging +0.31 against real
+            # exits of -3.89/+4.63/+11.10, which diluted every preset's score toward
+            # zero. Leave the trade to reach its own target or stop; the slot picks up
+            # the then-correct preset once it frees.
             existing = self._rank_open[rank].get(symbol)
             if existing and existing['preset_name'] != preset_name:
-                await self._evict(symbol, rank, current_price, 'rank_change')
+                continue
 
-            # Open if slot is empty
+            # Open if slot is empty. _try_open enforces one position per preset.
             if symbol not in self._rank_open[rank]:
                 await self._try_open(
                     symbol, rank, preset_name, overrides,
                     base_settings, lev, min_notional, analyzer,
                 )
+
+    def _max_age_minutes(self) -> float:
+        """Maximum practice-position age, from risk_config, in minutes."""
+        try:
+            from config.risk_config import load_risk_config
+            candles = int(load_risk_config().get('virtual_max_age_candles', 96))
+        except Exception:
+            candles = 96
+        return max(0, candles) * 15.0   # 15m timeframe
+
+    @staticmethod
+    def _age_minutes(record: dict) -> float:
+        """Minutes since the position opened. 0 when the timestamp is unusable, so a
+        malformed record is never force-closed on a parse error."""
+        ot = record.get('open_time')
+        if not ot:
+            return 0.0
+        try:
+            opened = datetime.fromisoformat(ot)
+        except (TypeError, ValueError):
+            return 0.0
+        return (datetime.now(timezone.utc) - opened).total_seconds() / 60.0
+
+    def _preset_is_open(self, symbol: str, preset_name: str, except_rank: int = 0) -> int:
+        """The rank holding an open position for this preset on this symbol, else 0.
+
+        Eviction used to guarantee one position per preset for free: every slot always
+        held the currently-correct preset, so a preset could not appear twice. Now that
+        a reshuffle leaves positions running, a preset can be stale in one slot while
+        being assigned to another — giving it two concurrent positions, both recording
+        PnL into its own statistics.
+        """
+        for rank, by_sym in self._rank_open.items():
+            if rank == except_rank:
+                continue
+            rec = by_sym.get(symbol)
+            if rec and rec.get('preset_name') == preset_name:
+                return rank
+        return 0
 
     async def _evict(self, symbol: str, rank: int, price: float, reason: str) -> None:
         record = self._rank_open[rank].pop(symbol, None)
@@ -305,6 +360,19 @@ class VirtualOrderSimulator:
         min_notional: float,
         analyzer: 'Analyzer',
     ) -> None:
+        # One open position per preset per symbol. Eviction used to guarantee this for
+        # free — every slot always held the currently-correct preset — but positions now
+        # survive a reshuffle, so a preset can be stale in one slot while being assigned
+        # to another. Two concurrent positions would both record PnL into that preset's
+        # own statistics. Enforced here rather than at the call site so it holds for
+        # every caller, rank 1 included.
+        _held = self._preset_is_open(symbol, preset_name, except_rank=rank)
+        if _held:
+            logger.debug(
+                f"[{symbol}] Rank-{rank} not opened: {preset_name} already open "
+                f"at rank {_held}"
+            )
+            return
         # Load config before any filter — global_min_sl_pct and per-trade caps must be
         # available during signal evaluation, not only during sizing (original position was line ~361).
         _risk_cfg = load_risk_config()
@@ -563,9 +631,17 @@ class VirtualOrderSimulator:
 
     async def check_prices(self, symbol: str, price: float) -> list[dict]:
         closed: list[dict] = []
+        _max_age_min = self._max_age_minutes()
         for rank in range(1, self._rank_max + 1):
             fake = self._rank_fake[rank].get(symbol)
             record = self._rank_open[rank].get(symbol)
+            # Positions no longer die on a reshuffle, so a stuck trade would hold its
+            # slot forever — the longest observed ran 11 days. Close it, labelled so it
+            # is distinguishable from a real exit and excluded from scoring.
+            if record is not None and _max_age_min > 0:
+                if self._age_minutes(record) > _max_age_min:
+                    await self._evict(symbol, rank, price, 'max_age')
+                    continue
             if fake is None or record is None:
                 continue
 

@@ -352,8 +352,18 @@ async def test_check_prices_returns_rank_in_closed_dict(tmp_path):
 # ── rank eviction ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_rank_change_evicts_old_preset(tmp_path):
-    """When the rank-2 preset changes, the old position is evicted."""
+async def test_rank_change_leaves_the_open_position_running(tmp_path):
+    """A reshuffle must NOT close an open practice position (changed 2026-09-07).
+
+    Ranks are slots holding whichever preset is currently Nth-best, and the rankings
+    move constantly — closing on that produced 60,266 of 163,668 records at whatever
+    price happened to be current, averaging +0.31 against real exits of
+    -3.89/+4.63/+11.10, diluting every preset's score toward zero.
+
+    The slot is skipped instead, and picks up the then-correct preset once the trade
+    reaches its own target or stop. Rank 1 is the exception and still evicts.
+    See docs/specs/2026-09-07-stop-evicting-on-rank-change.md.
+    """
     # Start: preset_a best, preset_b rank-2
     scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
     vt = make_vt_with_scores(scores)
@@ -387,13 +397,26 @@ async def test_rank_change_evicts_old_preset(tmp_path):
         mock_dc.replace.return_value = make_preset_settings()
         await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
 
-    # preset_b evicted, preset_c now in rank-2 slot
-    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_c'
+    # preset_b's trade is still running; the slot was skipped, not reassigned
+    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_b', \
+        'the reshuffle killed a live position'
+
+    # and nothing was recorded as a rank_change exit at this rank
+    rank_file = tmp_path / 'data' / 'virtual_orders_rank2_BTCUSDT_test.json'
+    if rank_file.exists():
+        recs = json.loads(rank_file.read_text())
+        assert not [r for r in recs if r.get('result') == 'rank_change'], \
+            'a bookkeeping exit was still written'
+
 
 
 @pytest.mark.asyncio
-async def test_evicted_order_written_to_rank_file(tmp_path):
-    """Evicted position is persisted to virtual_orders_rank2_{symbol}_{mode}.json."""
+async def test_no_rank_change_record_is_written_at_rank_2(tmp_path):
+    """The counterpart of the above: no rank_change record appears at ranks >= 2.
+
+    Positions are persisted when they close for a real reason (target, stop, trail) or
+    for a labelled bookkeeping reason at rank 1; a reshuffle is no longer one of them.
+    """
     scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
     vt = make_vt_with_scores(scores)
     sim = VirtualOrderSimulator(
@@ -424,11 +447,11 @@ async def test_evicted_order_written_to_rank_file(tmp_path):
         await sim.on_candle_close('BTCUSDT', make_analyzer(price=51000.0), 'preset_a', MagicMock())
 
     rank_file = tmp_path / 'data' / 'virtual_orders_rank2_BTCUSDT_test.json'
-    assert rank_file.exists()
-    records = json.loads(rank_file.read_text())
-    evicted = [r for r in records if r.get('result') == 'rank_change']
-    assert len(evicted) == 1
-    assert evicted[0]['preset_name'] == 'preset_b'
+    records = json.loads(rank_file.read_text()) if rank_file.exists() else []
+    assert not [r for r in records if r.get('result') == 'rank_change'], \
+        'a reshuffle still produced a bookkeeping record at rank 2'
+    # the position is still open, which is the point
+    assert sim._rank_open[2]['BTCUSDT']['preset_name'] == 'preset_b'
 
 
 # ── close_all_open ────────────────────────────────────────────────────────

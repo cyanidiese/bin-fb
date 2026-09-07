@@ -1810,6 +1810,12 @@ async def run() -> None:
             # separate decision — see docs/specs/2026-09-07-rank1-statistics-gap.md.
             if vc.get('rank') == 1:
                 continue
+            # Bookkeeping exits, not strategy outcomes: 'promoted_to_real' frees a
+            # preset so the real-order slot can use it, and 'max_age' closes a position
+            # that would otherwise hold its slot forever. Neither says anything about
+            # whether the preset works, so neither belongs in the ranking.
+            if vc.get('result') in ('promoted_to_real', 'max_age'):
+                continue
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 

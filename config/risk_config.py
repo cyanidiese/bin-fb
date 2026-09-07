@@ -21,6 +21,10 @@ DEFAULT_CONFIG: dict = {
     "drawdown_warning_pct": 10.0,
     "drawdown_hard_stop_pct": 20.0,
     "backtest_initial_balance_usdt": 1000.0,
+    # A practice (virtual) position older than this is closed with result 'max_age'.
+    # Positions no longer die on a rank reshuffle, so without a ceiling one stuck trade
+    # blocks its slot indefinitely — the longest observed ran 11 days. 96 x 15m = 24h.
+    "virtual_max_age_candles": 96,
     "backtest_klines": 1500,
     # Run a full backtest on bot start. OFF by default: it is a blocking subprocess
     # that measured 256-567s (worst 9m11s) across 15 symbols, during which there is no

@@ -61,13 +61,13 @@ class TestRankingExclusion:
 
     def test_main_skips_rank_1_when_updating_efficiency(self):
         i = MAIN.index('virtual_tracker.record_closed_trade(symbol, vc[')
-        near = MAIN[max(0, i - 500):i]
+        near = MAIN[max(0, i - 1400):i]
         assert "vc.get('rank')" in near or "vc['rank']" in near, \
             'rank 1 must not feed preset_efficiency yet'
 
     def test_the_exclusion_is_documented_where_it_happens(self):
         i = MAIN.index('virtual_tracker.record_closed_trade(symbol, vc[')
-        assert 'rank 1' in MAIN[max(0, i - 700):i].lower(), \
+        assert 'rank 1' in MAIN[max(0, i - 1600):i].lower(), \
             'a future reader must see why rank 1 is skipped'
 
 

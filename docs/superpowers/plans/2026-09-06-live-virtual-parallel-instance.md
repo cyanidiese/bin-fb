@@ -735,6 +735,9 @@ Verified before choosing this: `results_{symbol}_{mode}.json` is read by **nothi
 So the primary needs to write only that one name, exactly as today.
 
 **Files:**
+- Create: `bot/instance_paths.py` — holds `instance_path()`, because Task 4c needs it in
+  `backtest.py`, `bot/risk_manager.py` and `bot/symbol_discovery.py`, none of which can
+  import `main`. `main._instance_path` is a re-export.
 - Modify: `main.py` (bot.log + trades.log handlers, analysis.jsonl, system_log, alert_state, RiskManager `state_path`)
 - Modify: `bot/exporter.py:96`
 - Modify: `bot/mode_manager.py` — expose `read_mode_file()` for use before `ModeManager` exists
@@ -933,6 +936,222 @@ git commit -m "feat(paths): give the mirror instance its own per-instance files
 Keyed on which instance writes, not on the mode: the primary keeps the unsuffixed
 name in either mode, so switching to live cannot hand the mirror the trading bot's
 risk_state.json and blank it with a zero balance."
+```
+
+---
+
+### Task 4c: `backtest_results_{symbol}.json` must be per-instance
+
+**Found 2026-09-07 while implementing Task 1c. This is the most damaging collision in the
+design and the original spec's path table missed it entirely.**
+
+The chain, every line verified:
+
+1. The mirror runs the obligatory startup backtest — `main.py:378` is **not** gated by
+   `virtual_only`, and it passes `--mode current_mode`, so the mirror backtests the live
+   market. It runs again on `main.py:1583`.
+2. `backtest.py:107` writes `dashboard/public/backtest_results_{symbol}.json` —
+   **unsuffixed**. The mirror therefore overwrites the primary's testnet backtest with
+   live-market results.
+3. `bot/risk_manager.py:447` reads that exact path in `_compute_perf_score()` and returns
+   `(intra_score, best_pf, raw_profit_pct)`.
+4. `intra_score` sets **leverage** (`risk_manager.py:417`). `raw_profit_pct` is, per its
+   own docstring, the **cross-symbol allocation weight** — "a symbol with +22 % profit
+   gets proportionally more capital than one with +6 %".
+
+So the mirror would silently reset the trading bot's leverage and capital allocation from
+a different market's backtest, on real orders, at every startup. `_PERF_CACHE_TTL` delays
+it; it does not prevent it.
+
+Other readers of the same unsuffixed name: `bot/symbol_discovery.py:104` and `:125`,
+`bot/telegram_menu.py:425` (mirror does not run the menu — no change needed),
+`dashboard/app/backtest/page.tsx` and `dashboard/app/api/trades/route.ts:41` (both read
+the primary's, which is correct).
+
+**Files:**
+- Modify: `backtest.py:107`
+- Modify: `bot/risk_manager.py:53-59,447`
+- Modify: `bot/symbol_discovery.py:104,125`
+- Modify: `main.py:389,1583` (the two `seed_from_backtest` call sites)
+- Test: `tests/test_backtest_results_per_instance.py`
+
+**Interfaces:**
+- Consumes: `instance_path()` from `bot/instance_paths.py` (Task 4)
+- Produces: `RiskManager(..., mirror: bool = False, mode: str = 'test')`;
+  `backtest_results_name(symbol, mode, mirror) -> str` in `bot/instance_paths.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_backtest_results_per_instance.py
+"""The mirror must never overwrite the primary's backtest results.
+
+risk_manager._compute_perf_score() reads backtest_results_{symbol}.json and derives
+leverage and cross-symbol capital allocation from it. A mirror running the other market
+would rewrite that file at startup and change what the trading bot risks on real orders.
+"""
+from pathlib import Path
+
+from bot.instance_paths import backtest_results_name
+from bot.risk_manager import RiskManager
+
+
+def test_primary_uses_the_historical_name_in_both_modes():
+    for mode in ('test', 'live'):
+        assert backtest_results_name('INJUSDT', mode, mirror=False) == \
+            'backtest_results_INJUSDT.json'
+
+
+def test_mirror_is_suffixed_with_its_own_market():
+    assert backtest_results_name('INJUSDT', 'live', mirror=True) == \
+        'backtest_results_INJUSDT_live.json'
+    assert backtest_results_name('INJUSDT', 'test', mirror=True) == \
+        'backtest_results_INJUSDT_test.json'
+
+
+def test_risk_manager_reads_the_primary_file_by_default(tmp_path):
+    """Default construction must be byte-identical to today."""
+    rm = RiskManager(mode='test', backtest_results_dir=tmp_path)
+    assert rm._backtest_path('INJUSDT') == tmp_path / 'backtest_results_INJUSDT.json'
+
+
+def test_risk_manager_in_a_mirror_reads_its_own_file(tmp_path):
+    rm = RiskManager(mode='live', backtest_results_dir=tmp_path, mirror=True)
+    assert rm._backtest_path('INJUSDT') == tmp_path / 'backtest_results_INJUSDT_live.json'
+
+
+def test_a_live_primary_still_reads_the_unsuffixed_file(tmp_path):
+    """The regression to avoid: going live must not make the trading bot read the
+    mirror's file."""
+    rm = RiskManager(mode='live', backtest_results_dir=tmp_path)
+    assert rm._backtest_path('INJUSDT') == tmp_path / 'backtest_results_INJUSDT.json'
+
+
+def test_backtest_writes_the_mirror_name_when_virtual_only(monkeypatch):
+    import importlib
+    monkeypatch.setenv('VIRTUAL_ONLY', '1')
+    monkeypatch.setenv('TRADING_MODE', 'live')
+    import backtest
+    importlib.reload(backtest)
+    assert backtest._dashboard_path('INJUSDT').name == 'backtest_results_INJUSDT_live.json'
+
+
+def test_backtest_writes_the_primary_name_otherwise(monkeypatch):
+    import importlib
+    monkeypatch.delenv('VIRTUAL_ONLY', raising=False)
+    monkeypatch.setenv('TRADING_MODE', 'test')
+    import backtest
+    importlib.reload(backtest)
+    assert backtest._dashboard_path('INJUSDT').name == 'backtest_results_INJUSDT.json'
+```
+
+- [ ] **Step 2: Run it to make sure it fails**
+
+Run: `.venv/bin/python -m pytest tests/test_backtest_results_per_instance.py -q`
+Expected: FAIL — `ImportError: cannot import name 'backtest_results_name'`
+
+- [ ] **Step 3: Add the name helper to `bot/instance_paths.py`**
+
+```python
+def backtest_results_name(symbol: str, mode: str, mirror: bool) -> str:
+    """Filename for a symbol's backtest results.
+
+    The primary keeps the historical name in either mode — risk_manager derives
+    leverage and cross-symbol capital allocation from it, and the dashboard's backtest
+    page reads it. The mirror gets its own file suffixed with the market it backtested,
+    so it can never rewrite the numbers the trading bot sizes real orders from.
+    """
+    return instance_path(Path('.'), f'backtest_results_{symbol}.json', mode, mirror).name
+```
+
+- [ ] **Step 4: Route the writer**
+
+In `backtest.py`, replace line 107's inline path:
+
+```python
+def _dashboard_path(symbol: str) -> Path:
+    """Where this run's dashboard results go.
+
+    Reads the environment rather than taking a parameter because main.py invokes this
+    as a subprocess and the container's VIRTUAL_ONLY comes along for free. The
+    dashboard's own /api/run-backtest runs without VIRTUAL_ONLY, so a user-triggered
+    backtest correctly writes the primary's file.
+    """
+    mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    mode = 'test' if os.getenv('TRADING_MODE', 'test') in ('test', 'testnet') else 'live'
+    return Path('dashboard') / 'public' / backtest_results_name(symbol, mode, mirror)
+```
+
+`--mode` already sets `os.environ['TRADING_MODE']` at `backtest.py:201`, before settings
+load, so this reads the effective mode and not a stale env value. Verify that ordering
+holds after editing.
+
+- [ ] **Step 5: Route the readers**
+
+`bot/risk_manager.py` — accept the flags and add one accessor, so there is a single
+place to test:
+
+```python
+        mirror: bool = False,
+```
+```python
+        self._mirror = mirror
+
+    def _backtest_path(self, symbol: str) -> Path:
+        return self._results_dir / backtest_results_name(symbol, self._mode, self._mirror)
+```
+
+Replace the inline path at `risk_manager.py:447` with `self._backtest_path(symbol)`.
+Check what `self._mode` is actually called in that class before writing this — it may be
+`self.mode`.
+
+`bot/symbol_discovery.py:104,125` — same substitution. It already computes a mode suffix
+at line 154 for a different purpose; do not reuse that variable, it is not mirror-aware.
+
+`main.py:389` and `main.py:1583` — the two `seed_from_backtest` call sites:
+
+```python
+        bt_path = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
+            sym, current_mode, _virtual_only)
+```
+
+At line 1583 use `mode_manager.current_mode` and `_virtual_only`.
+
+Pass `mirror=_base_settings.virtual_only` where `RiskManager` is constructed
+(`main.py:~190`) and wherever `SymbolDiscovery` is constructed.
+
+- [ ] **Step 6: Run the tests, then the full suite**
+
+Run: `.venv/bin/python -m pytest tests/test_backtest_results_per_instance.py -q` → 7 passed
+Run: `.venv/bin/python -m pytest tests/ -q` → previous + 7
+
+- [ ] **Step 7: Prove the primary's numbers are untouched**
+
+The point of the task is that real-order sizing does not change. Confirm the default
+construction resolves to the same file it always did:
+
+```bash
+.venv/bin/python -c "
+from pathlib import Path
+from bot.risk_manager import RiskManager
+for mode in ('test','live'):
+    rm = RiskManager(mode=mode, backtest_results_dir=Path('dashboard/public'))
+    p = rm._backtest_path('INJUSDT')
+    assert p == Path('dashboard/public/backtest_results_INJUSDT.json'), (mode, p)
+print('primary leverage/allocation inputs unchanged in both modes')
+"
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backtest.py bot/risk_manager.py bot/symbol_discovery.py bot/instance_paths.py \
+        main.py tests/test_backtest_results_per_instance.py
+git commit -m "fix(mirror): backtest_results must be per-instance
+
+The mirror's startup backtest wrote the unsuffixed backtest_results_{symbol}.json,
+which risk_manager reads to derive leverage and cross-symbol capital allocation.
+A live-market backtest would silently resize the testnet bot's real orders."
 ```
 
 ---

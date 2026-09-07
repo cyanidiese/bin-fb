@@ -58,10 +58,17 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
     const target = mode === 'test' ? 'live' : 'test'
     const botRunning = botState?.running ?? false
     const symbolCount = registry?.symbols.length ?? 0
+    // This writes data/bot_mode.json and nothing else. The dialog used to promise that
+    // open orders would be closed at market and that real money would start trading
+    // immediately; neither happens. The running bot captures its mode once at startup
+    // (main.py) and nothing in this app writes a switch_mode command, so the change
+    // takes effect only on restart. Saying so is the whole point of the fix.
     const msg = botRunning
-      ? target === 'live'
-        ? `Switch to LIVE mode? Real orders will be placed with real money.\n\nBacktests for all ${symbolCount} symbols will re-run automatically after switching.`
-        : `Switch to TEST mode? All open orders will be closed at market price.\n\nBacktests for all ${symbolCount} symbols will re-run automatically after switching.`
+      ? `Save ${target.toUpperCase()} as the bot mode?\n\n`
+        + `The running bot is NOT switched by this — it keeps trading in `
+        + `${mode.toUpperCase()} with its open positions until it is restarted.\n\n`
+        + `Backtests for all ${symbolCount} symbols will re-run now to load `
+        + `${target}-mode klines.`
       : `Switch to ${target.toUpperCase()} mode?\n\nThe bot is not running — the mode preference will be saved and used on next start.\n\nBacktests for all ${symbolCount} symbols will re-run automatically to load ${target}-mode kline data.`
     if (!confirm(msg)) return
     setSwitching(true)

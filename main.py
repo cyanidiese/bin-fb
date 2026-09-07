@@ -122,6 +122,66 @@ def setup_logging() -> None:
     trades_logger.propagate = False
 
 
+def _resolve_mode(base_settings: "Settings", mode_manager: "ModeManager") -> str:
+    """Return the one mode this process runs, and make the feed agree with it.
+
+    current_mode names every data file; Settings.trading_mode picks the REST and
+    WebSocket endpoints. These came from two independent sources — data/bot_mode.json
+    and the TRADING_MODE env var — so a disagreement meant writing '_live'-suffixed
+    files while reading testnet prices, or the reverse. They agree on the server today,
+    which is the only reason it has never bitten; nothing kept them in step.
+
+    Stamping the resolved mode back onto Settings makes the market the bot reads and the
+    market its filenames claim the same thing by construction. bot_mode.json wins
+    because that is what the dashboard writes and what current_mode already used.
+    """
+    resolved = mode_manager.current_mode
+    if base_settings.trading_mode != resolved:
+        logging.getLogger('main').warning(
+            f"Mode source disagreement: TRADING_MODE={base_settings.trading_mode!r}, "
+            f"resolved={resolved!r} (mirror={base_settings.virtual_only}). "
+            f"Using {resolved!r} for both filenames and endpoints."
+        )
+    base_settings.trading_mode = resolved
+    return resolved
+
+
+async def _mirror_watch(mode_manager: "ModeManager") -> None:
+    """Exit when the primary's mode changes, so the container restarts as its opposite.
+
+    Restarting beats switching in place: on_switch_mode() closes orders, refetches the
+    balance and rebuilds every mode-scoped object, and a partial failure would leave
+    this instance writing to a mix of both suffixes. A fresh process cannot be
+    half-switched.
+
+    Two consecutive confirmations 30s apart are required. bot_mode.json is written
+    atomically by both its writers so a torn read is not possible, but the dashboard
+    re-runs every backtest immediately after writing it — exiting mid-backtest for a
+    value that is about to settle would be churn for nothing.
+    """
+    confirmations = 0
+    while True:
+        await asyncio.sleep(30.0)
+        if not mode_manager.mirror_target_changed():
+            confirmations = 0
+            continue
+        confirmations += 1
+        if confirmations < 2:
+            logging.getLogger('main').info(
+                "Mirror: primary mode change seen, confirming in 30s"
+            )
+            continue
+        logging.getLogger('main').warning(
+            f"Mirror: primary mode changed — this instance ran "
+            f"{mode_manager.current_mode!r}. Exiting so the container restarts as the "
+            f"new opposite."
+        )
+        # os._exit rather than sys.exit or a raise: this is a background task, where an
+        # exception would be swallowed by the task and never reach the event loop. The
+        # mirror holds no positions and no credentials, so there is nothing to flush.
+        os._exit(0)
+
+
 async def run() -> None:
     logger = logging.getLogger('main')
     trades_logger = logging.getLogger('trades')
@@ -161,9 +221,9 @@ async def run() -> None:
     )
     mode_manager = ModeManager(
         notifier=notifier,
-        forced_mode=_base_settings.trading_mode if _base_settings.virtual_only else None,
+        mirror=_base_settings.virtual_only,
     )
-    current_mode = mode_manager.current_mode
+    current_mode = _resolve_mode(_base_settings, mode_manager)
 
     risk_manager = RiskManager(
         mode=current_mode,
@@ -175,6 +235,10 @@ async def run() -> None:
     analyzers: dict = {}
     for symbol in symbols:
         s = load_settings(symbol)
+        # DataFeed is built from a per-symbol Settings, not from _base_settings, so
+        # stamping only the base object would leave the endpoint free to disagree with
+        # the mode that names the files. See _resolve_mode().
+        s.trading_mode = current_mode
         sym_settings[symbol] = s
         engine = RecommendationEngine(s)
         analyzers[symbol] = Analyzer(s.swing_neighbours, engine)
@@ -1600,6 +1664,12 @@ async def run() -> None:
     if not _virtual_only:
         _menu_task = asyncio.create_task(telegram_menu.run())
 
+    # Only the mirror self-exits on a bot-mode change. The primary keeps its mode until
+    # it is restarted deliberately — nothing may restart the bot that holds positions.
+    _mirror_task = None
+    if _virtual_only:
+        _mirror_task = asyncio.create_task(_mirror_watch(mode_manager))
+
     try:
         await feed.stream_combined(
             get_symbols=symbol_registry.get_symbols,
@@ -1615,7 +1685,8 @@ async def run() -> None:
     finally:
         # _menu_task is None on a virtual-only instance, which does not run the
         # Telegram menu — filter before cancelling or shutdown raises AttributeError.
-        _tasks = [t for t in (_poll_task, _hb_task, _watchdog_task, _menu_task) if t is not None]
+        _tasks = [t for t in (_poll_task, _hb_task, _watchdog_task, _menu_task,
+                              _mirror_task) if t is not None]
         for t in _tasks:
             t.cancel()
         for t in _tasks:

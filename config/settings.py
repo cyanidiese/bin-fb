@@ -171,6 +171,8 @@ def load_settings(symbol: str | None = None) -> Settings:
             "TRADING_MODE=testnet is deprecated — treating as 'test'. Update your .env."
         )
 
+    _virtual_only = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+
     if trading_mode == 'test':
         api_key = os.getenv('TESTNET_API_KEY', '')
         api_secret = os.getenv('TESTNET_API_SECRET', '')
@@ -181,10 +183,27 @@ def load_settings(symbol: str | None = None) -> Settings:
         key_names = ('API_KEY', 'API_SECRET')
 
     missing = []
-    if not api_key:
-        missing.append(key_names[0])
-    if not api_secret:
-        missing.append(key_names[1])
+    if _virtual_only:
+        # The mirror instance must hold no credentials — that is the entire safety
+        # argument for running it against the live market: python-binance refuses
+        # private endpoints without a secret, so it is structurally unable to place an
+        # order rather than merely configured not to. Requiring keys from the one
+        # instance that must not have them was contradictory, and it crash-looped the
+        # mirror on first deploy.
+        #
+        # Blanked rather than just unchecked, so a key leaking in from the environment
+        # cannot quietly make this instance able to trade.
+        if api_key or api_secret:
+            _logging.getLogger(__name__).warning(
+                "VIRTUAL_ONLY is set, so %s are being ignored — this instance must "
+                "not be able to trade.", ' and '.join(key_names)
+            )
+        api_key = api_secret = ''
+    else:
+        if not api_key:
+            missing.append(key_names[0])
+        if not api_secret:
+            missing.append(key_names[1])
 
     resolved_symbol = symbol.upper() if symbol else os.getenv('SYMBOL', '').upper()
     if not resolved_symbol:

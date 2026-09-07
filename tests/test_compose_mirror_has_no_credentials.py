@@ -67,9 +67,27 @@ def test_mirror_has_no_env_file(mirror):
 
 
 def test_mirror_credentials_are_explicitly_empty(mirror):
+    """The names must be the ones config/settings.py actually reads.
+
+    The first version of this block set BINANCE_API_KEY / BINANCE_API_SECRET, which
+    this project does not use anywhere — so it looked safe while doing nothing, and
+    load_settings() then crash-looped the container demanding TESTNET_API_KEY.
+    """
     env = mirror['environment']
-    assert 'BINANCE_API_KEY: ""' in env
-    assert 'BINANCE_API_SECRET: ""' in env
+    for name in ('TESTNET_API_KEY', 'TESTNET_API_SECRET', 'API_KEY', 'API_SECRET'):
+        assert f'{name}: ""' in env, f'{name} must be present and empty'
+    assert not any('BINANCE_API' in line for line in env), \
+        'BINANCE_API_* is not a name this project reads — it protects nothing'
+
+
+def test_mirror_gets_symbol_but_nothing_else_from_dotenv(mirror):
+    """SYMBOL seeds the registry and is not a secret. It must come through compose
+    interpolation of exactly one variable, never via env_file, which would inject the
+    real API keys alongside it."""
+    env = mirror['environment']
+    symbol = [l for l in env if l.startswith('SYMBOL:')]
+    assert symbol, 'SYMBOL is required by load_settings() and would crash the mirror'
+    assert '${SYMBOL' in symbol[0], 'SYMBOL should be interpolated, not duplicated'
 
 
 def test_mirror_is_virtual_only(mirror):

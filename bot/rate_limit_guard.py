@@ -69,7 +69,17 @@ _PROBE_MAX_S = 600.0
 # traffic, so nothing arrived to consume the probe slots and recovery waited whole
 # candles — replay measured up to +1800s of extra suppression to save 4 minutes of
 # extension. Settling costs a fixed ~3s whether or not anything else is calling.
-_SETTLE_S = 3.0
+#
+# Measured live on 2026-09-07 after the first deploy, which used 3.0s and still leaked:
+#     13:15:00.86  settling starts (3s -> ends 13:15:03.86)
+#     13:15:04.61  CLEARED
+#     13:15:05.85  ARMED   <- kline burst landed 4.99s after settling started
+#     13:15:05.98  ARMED      two calls, +4 min on the ban
+# The burst is created by on_candle_close as create_task(_refresh_klines_bg, stagger=0)
+# but only runs once the balance fetch and analyzer work have yielded, so it lands ~5s
+# after the probe rather than immediately. 8s covers that with margin and still costs
+# nothing when the ban has genuinely lifted.
+_SETTLE_S = 8.0
 _SETTLE_PROBE_S = 1.0
 
 

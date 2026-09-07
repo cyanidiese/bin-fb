@@ -191,3 +191,11 @@ def test_a_full_candle_batch_makes_no_call_while_banned():
     _ban(g)
     calls = sum(1 for _ in range(16) if _probe(g))
     assert calls == 0, f'{calls} calls leaked immediately after arming'
+
+
+def test_settling_covers_the_measured_burst_delay():
+    """The candle-close kline burst was measured landing 4.99s after the probe on
+    2026-09-07, which a 3s window did not cover — it cleared, then two calls leaked
+    and added 4 minutes to the ban."""
+    assert _SETTLE_S >= 5.5, (
+        f'_SETTLE_S={_SETTLE_S} does not cover the measured 4.99s burst delay')

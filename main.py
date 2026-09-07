@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
-from config.settings import load_settings, Settings, max_profit_cap_applies
+from config.settings import (
+    load_settings, Settings, max_profit_cap_applies, clamp_sl_to_max,
+)
 from bot.rate_limit_guard import guard as rl_guard, RateLimited, _SETTLE_S
 from bot.analyzer import Analyzer
 from bot import analysis_log
@@ -809,16 +811,27 @@ async def run() -> None:
                 preset_name=preset_name, scenario=_active_scenario_name,
             )
 
-        # max_sl_pct filter
-        if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
+        # max_sl_pct: clamp the stop, do not discard the signal.
+        # Mirrors the SL floor above, which has always widened rather than rejected.
+        # Pulling the stop in only reduces risk, and everything below — the ATR floor
+        # and min_profit_loss_ratio/sl_adjust_to_rr — still runs on the clamped value,
+        # so the trade is accepted only if it satisfies the preset's own geometry.
+        _pre_clamp_sl, _pre_clamp_pct = sl, sl_dist_pct
+        sl, sl_dist_pct, _sl_clamped = clamp_sl_to_max(
+            entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
+        if _sl_clamped:
+            logger.info(
+                f"[{symbol}] SL clamped: {_pre_clamp_pct:.3f}% → {sl_dist_pct:.3f}%"
+                f" ({_pre_clamp_sl:.6g} → {sl:.6g}) preset={preset_name}"
+            )
             dl_record(
                 dl_path, candle_ts=candle_ts, symbol=symbol,
-                decision='skip_max_sl_pct',
-                reason=f'sl_dist={sl_dist_pct:.2f}% > max={preset_settings.max_sl_pct}%',
+                decision='clamp_max_sl_pct',
+                reason=(f'sl_dist={_pre_clamp_pct:.2f}% clamped to '
+                        f'max={preset_settings.max_sl_pct}%'),
                 balance=balance, leverage=0, efficiency_score=_eff_for_dl,
                 preset_name=preset_name, scenario=_active_scenario_name,
             )
-            return 0.0
 
         # ATR-based SL floor (instrument-agnostic structural filter)
         if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:

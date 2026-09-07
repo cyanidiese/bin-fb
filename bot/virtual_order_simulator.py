@@ -12,7 +12,7 @@ from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config
 from bot import analysis_log
-from config.settings import max_profit_cap_applies
+from config.settings import max_profit_cap_applies, clamp_sl_to_max
 
 if TYPE_CHECKING:
     from bot.analyzer import Analyzer
@@ -334,8 +334,11 @@ class VirtualOrderSimulator:
             else:
                 sl = entry * (1.0 + _effective_min_sl / 1.5 / 100.0)
             sl_dist_pct = _effective_min_sl
-        if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
-            return
+        # Clamp rather than reject, identically to main.py — if these two disagree the
+        # virtual statistics measure a different strategy than the one that trades,
+        # which is exactly how 107 rejected TIAUSDT signals stayed invisible.
+        sl, sl_dist_pct, _ = clamp_sl_to_max(
+            entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
 
         if preset_settings.min_sl_atr_mult > 0 and preset_settings.atr_lookback > 0:
             _klines = analyzer.get_klines()

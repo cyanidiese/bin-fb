@@ -328,6 +328,43 @@ def _apply_symbol_overrides(settings: Settings, symbol: str) -> Settings:
     return dataclasses.replace(settings, **overrides) if overrides else settings
 
 
+def clamp_sl_to_max(
+    entry: float,
+    sl: float,
+    sl_dist_pct: float,
+    side: str,
+    max_sl_pct: float,
+) -> tuple[float, float, bool]:
+    """Pull an over-wide stop in to `max_sl_pct` instead of discarding the signal.
+
+    Returns (sl, sl_dist_pct, clamped).
+
+    `min_sl_pct` has always *widened* a too-tight stop; `max_sl_pct` used to *reject the
+    signal*. That asymmetry cost real trades: TIAUSDT, the #2 ranked symbol, had 107
+    signals rejected at 8.24-11.72% against an 8% cap, and those rejections were
+    invisible in the virtual statistics because the simulator applied the same cap — so
+    there was no evidence either way for two months.
+
+    Clamping is also safer than rejecting at the extreme end. The worst trade in 410
+    real closed orders was a SELL with a 22.52% stop (-206.12); under a cap it risks the
+    cap instead. It only ever reduces risk — never widens.
+
+    SELL distances carry the same x1.5 weighting the rest of the filter chain uses
+    ("SELL SL spikes are harsher"), so the inverse divides by 1.5 — identical to the
+    existing min_sl_pct floor.
+
+    Callers must apply this BEFORE the ATR floor and the RR rules, so a clamped stop is
+    still checked against the preset's own geometry: pulling the stop in raises RR, and
+    if it lands too tight for the instrument's volatility min_sl_atr_mult rejects it.
+    """
+    if max_sl_pct <= 0 or sl_dist_pct <= max_sl_pct:
+        return sl, sl_dist_pct, False
+    if side == 'BUY':
+        return entry * (1.0 - max_sl_pct / 100.0), max_sl_pct, True
+    # sl_dist_pct is inflated x1.5 for SELL — invert to get the actual price distance
+    return entry * (1.0 + max_sl_pct / 1.5 / 100.0), max_sl_pct, True
+
+
 def max_profit_cap_applies(settings: "Settings", level: "int | None") -> bool:
     """Whether the max_profit_pct cap governs a signal at this trend level.
 

@@ -563,7 +563,7 @@ class VirtualOrderSimulator:
 
     async def check_prices(self, symbol: str, price: float) -> list[dict]:
         closed: list[dict] = []
-        for rank in range(2, self._rank_max + 1):
+        for rank in range(1, self._rank_max + 1):
             fake = self._rank_fake[rank].get(symbol)
             record = self._rank_open[rank].get(symbol)
             if fake is None or record is None:
@@ -620,7 +620,7 @@ class VirtualOrderSimulator:
     async def close_all_open(self, symbols: list[str], feed: 'DataFeed') -> None:
         price_cache: dict[str, float] = {}
         for symbol in symbols:
-            for rank in range(2, self._rank_max + 1):
+            for rank in range(1, self._rank_max + 1):
                 if symbol not in self._rank_open[rank]:
                     continue
                 if symbol not in price_cache:
@@ -667,7 +667,7 @@ class VirtualOrderSimulator:
         return raw - fees
 
     def _save_all_rank_balances(self) -> None:
-        for rank in range(2, self._rank_max + 1):
+        for rank in range(1, self._rank_max + 1):
             self._save_rank_balance(rank)
 
     async def _append_rank_closed(self, symbol: str, rank: int, record: dict) -> None:

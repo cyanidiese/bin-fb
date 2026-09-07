@@ -343,7 +343,10 @@ async def test_check_prices_returns_rank_in_closed_dict(tmp_path):
     closed = await sim.check_prices('BTCUSDT', 55001.0)
     for c in closed:
         assert 'rank' in c
-        assert c['rank'] in (2, 3, 4, 5, 6)
+        # rank 1 is valid since 2026-09-07: it is the real-order slot's virtual
+        # stand-in, opened when no real order was placed. main.py filters it out of the
+        # ranking feed on this same key, so the key must be present for every rank.
+        assert c['rank'] in (1, 2, 3, 4, 5, 6)
 
 
 # ── rank eviction ─────────────────────────────────────────────────────────

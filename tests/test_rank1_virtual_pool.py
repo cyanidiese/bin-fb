@@ -76,3 +76,27 @@ def test_ranks_2_and_up_are_untouched():
     invalidate every one of them."""
     assert 'rank_idx = rank - (2 if is_locked else 1)' in SIM, \
         'the existing rank-to-preset mapping must not change'
+
+
+class TestRank1Closes:
+    """The opening side alone is worse than nothing: a rank-1 position that never
+    closes produces no statistics while looking like the feature works. Three loops
+    still iterated from rank 2 after the first implementation pass — check_prices,
+    close_all_open and _save_all_rank_balances."""
+
+    def test_every_rank_loop_includes_rank_1(self):
+        assert 'range(2, self._rank_max + 1)' not in SIM, \
+            'a loop still skips rank 1 — its positions would never close'
+
+    def test_check_prices_covers_rank_1(self):
+        i = SIM.index('async def check_prices')
+        body = SIM[i:i + 900]
+        assert 'range(1,' in body, 'rank 1 never checked for TP/SL/trail'
+
+    def test_close_all_open_covers_rank_1(self):
+        i = SIM.index('async def close_all_open')
+        assert 'range(1,' in SIM[i:i + 900], 'rank 1 left open on shutdown'
+
+    def test_balances_are_saved_for_rank_1(self):
+        i = SIM.index('def _save_all_rank_balances')
+        assert 'range(1,' in SIM[i:i + 500], 'rank 1 balance never persisted'

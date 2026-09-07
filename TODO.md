@@ -4,6 +4,87 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 67 (2026-09-07) — SL-width analysis over 163k orders (LOGGED, NOT APPLIED)
+
+- [ ] **Per-symbol stop-loss bands — the largest measured lever, deliberately not applied.**
+
+      Measured over **163,581 closed orders** (163,169 virtual + 412 real, all 15
+      symbols) by natural SL distance, using the same x1.5 SELL weighting the live
+      filter applies. Not a backtest — actual recorded outcomes.
+
+      **All symbols combined:**
+
+      | SL band | n | win% | net USDT | avg/trade |
+      |---|---|---|---|---|
+      | 0-1% | 81,894 | 40.9% | -11,122 | -0.136 |
+      | 1-2% | 40,639 | 41.2% | -10,312 | -0.254 |
+      | 2-3% | 15,708 | 44.9% | -2,087 | -0.133 |
+      | 3-4% | 8,114 | 45.8% | -1,282 | -0.158 |
+      | **4-5%** | 5,260 | 44.8% | **+3,978** | **+0.756** |
+      | 5-7% | 6,538 | 45.5% | -6,390 | -0.977 |
+      | 7%+ | 5,428 | 45.7% | -17,067 | -3.144 |
+
+      Win rate is **flat (41-46%) across every band** — width does not change how often
+      we win, it changes how much we lose when wrong.
+
+      **Per symbol (bands with >=30 trades):**
+
+      | symbol | best band | avg/trade | n | net <4% | net >=4% |
+      |---|---|---|---|---|---|
+      | INJUSDT | 4-5% | +10.41 | 269 | -1,976 | **+5,655** |
+      | TIAUSDT | 3-4% | +13.20 | 717 | **+3,198** | **-13,076** |
+      | EIGENUSDT | 4-5% | +2.05 | 639 | -5,282 | -8,549 |
+      | DOGEUSDT | 5-7% | +2.45 | 627 | -16,281 | +1,390 |
+      | SOLUSDT | 4-5% | +5.57 | 171 | -953 | -801 |
+      | WLDUSDT | 3-4% | +1.11 | 416 | +279 | -2,366 |
+      | 1000PEPEUSDT | 2-3% | +0.19 | 888 | -3,143 | -1,205 |
+      | ETHFIUSDT | 2-3% | +0.45 | 1,972 | +146 | -442 |
+      | THETAUSDT | 4-5% | +0.19 | 105 | -185 | -198 |
+      | APTUSDT, AVAXUSDT, JUPUSDT, MEMEUSDT, REZUSDT, 1000SHIBUSDT | 7%+ | +0.14..+0.36 | 225-409 | ~0 | ~0 |
+
+      **Findings**
+
+      1. **There is no single global floor.** Optima scatter across 2-3%, 3-4%, 4-5%,
+         5-7% and 7%+. A global `global_min_sl_pct` change is the wrong shape of fix.
+      2. **A global 4.5% floor would have hurt several symbols**: TIAUSDT -13,076,
+         EIGENUSDT -8,549, WLDUSDT -2,366, SOLUSDT -801 on the >=4% population. It would
+         have pushed TIAUSDT, our #2 ranked symbol, into its worst zone.
+      3. **The six low-activity symbols are noise** (+0.14 to +0.36 avg); their "7%+ is
+         best" is not a signal worth acting on.
+      4. **78-95% of all trades sit below 4%**, where most losses are — but the fix is
+         not uniformly "widen", because for TIAUSDT and WLDUSDT the sub-4% population is
+         the profitable one.
+
+      **Why this was NOT applied**
+
+      The analysis measures **naturally-occurring** SL widths, not what a floor would
+      produce. A trade whose structure gave a 0.5% stop, widened to 4%, is a different
+      trade: same target, worse R:R. So the data justifies **filtering** on SL width far
+      more than **widening** to it. `sl_clamp_enabled` (shipped 2026-09-07, off) is the
+      interesting lever here, since it converts out-of-band signals into in-band trades
+      rather than discarding them.
+
+      **If picked up, start with the two where evidence and money coincide:**
+      - INJUSDT -> `min_sl_pct: 4` (>=4% is +5,655 vs -1,976 below; +10.41/trade in band)
+      - TIAUSDT -> band around 3-4%, NOT wider
+
+- [ ] **Re-examine today's TIAUSDT `max_sl_pct` 8 -> 10 change — it looks wrong.**
+      Applied 2026-09-07 on a 410-trade sample that pooled all symbols. TIAUSDT's own
+      163k-order data says its wide stops are its worst: **5-7% = -2.72/trade, 7%+ =
+      -20.50/trade over 510 trades**, while 3-4% is +13.20. Widening its ceiling was
+      likely the wrong direction. Revert to 8, or tighten toward 4-5. **Live config is
+      currently 10** on TIAUSDT, EIGENUSDT, INJUSDT, MEMEUSDT, DOGEUSDT.
+
+- [ ] **The generic finding worth keeping**: win rate is nearly constant across SL
+      widths; only the payoff changes. Any future SL work should target loss *size*, not
+      hit *rate*.
+
+**Analysis scripts** (reusable, no API calls): `/tmp/sl_analysis.py` and
+`/tmp/sl_per_symbol.py` on the server; they read `data/virtual_orders_rank*_test.json`
+and `data/real_orders_*_test.json` directly.
+
+---
+
 ## Session 66 (2026-09-06) — API bans diagnosed; failed-close bug fixed
 
 - [x] **Deployed `725288f`** — circuit breaker, balance TTL 5s→60s, failed-close fix.

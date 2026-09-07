@@ -1,5 +1,35 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
+## Session 67 (2026-09-07) — SL-width analysis over 163k orders (logged, not applied)
+
+**Decision: log, do not implement.** The largest measured lever we have found, but the
+analysis measures *naturally-occurring* SL widths, not what a floor would produce, so it
+justifies filtering far more than widening. Full tables in TODO.md session 67;
+reproducible via `scripts/analyze_sl_bands.py`.
+
+Key numbers: across 163,581 closed orders (163,169 virtual + 412 real, all 15 symbols),
+win rate is **flat at 41-46% across every SL band** — width does not change how often we
+win, only how much we lose when wrong. Only the 4-5% band is net positive overall
+(+3,978); 7%+ is catastrophic (-17,067, -3.14/trade).
+
+**Correction recorded against my own earlier recommendation in this session.** Off a
+3-symbol backtest sweep I proposed raising `global_min_sl_pct` 0.7 -> 4.5. The 163k-order
+data says that would have hurt TIAUSDT (-13,076 on its >=4% population), EIGENUSDT
+(-8,549), WLDUSDT and SOLUSDT — pushing our #2 ranked symbol into its worst zone. The
+optimum genuinely differs per symbol (2-3% through 7%+), so no single global floor fits.
+The user pushed back and asked for all symbols and real order data before applying; that
+was the right call and nothing was applied.
+
+**Open flag**: today's `max_sl_pct` 8 -> 10 (TIAUSDT, EIGENUSDT, INJUSDT, MEMEUSDT,
+DOGEUSDT) was applied from a 410-trade pooled sample. TIAUSDT's own data contradicts it —
+5-7% = -2.72/trade, 7%+ = -20.50/trade over 510 trades. Live config is still 10.
+
+**Also this session, deployed**: startup backtest made optional (577s -> 7s restarts),
+startup API calls 35 -> 5-11, WS candles now persisted to the kline cache (`append_kline`
+existed but was never called), rate-limit settling window 3s -> 8s, dangling ban alert
+closed on restart, per-symbol SL clamping shipped but disabled, Trades symbol picker
+markers, Dockerfile layer reorder.
+
 ## Last updated: 2026-08-29 (session 63 — allocation corrected to INJUSDT; geometry tuning proven futile)
 
 ---

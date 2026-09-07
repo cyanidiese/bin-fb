@@ -22,6 +22,14 @@ DEFAULT_CONFIG: dict = {
     "drawdown_hard_stop_pct": 20.0,
     "backtest_initial_balance_usdt": 1000.0,
     "backtest_klines": 1500,
+    # Run a full backtest on bot start. OFF by default: it is a blocking subprocess
+    # that measured 256-567s (worst 9m11s) across 15 symbols, during which there is no
+    # WebSocket, no candle processing and no position monitoring. Deploys are the main
+    # source of restarts, so the cost is paid constantly for data that persists in
+    # dashboard/public/backtest_results_*.json anyway. Turn it on from the dashboard
+    # Settings page when a fresh backtest is actually wanted, or run one on demand from
+    # the Backtest page.
+    "startup_backtest": False,
     # BGF scenario: cap allocation to top-N symbols by score (0 = no cap, use all)
     "bgf_top_n": 0,
     "symbol_weights": {},

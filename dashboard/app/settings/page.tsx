@@ -6,6 +6,7 @@ import BotControl from '@/components/settings/BotControl'
 import TradingMode from '@/components/settings/TradingMode'
 import SymbolRegistry from '@/components/settings/SymbolRegistry'
 import TelegramSettings from '@/components/settings/TelegramSettings'
+import StartupBacktest from '@/components/settings/StartupBacktest'
 import UIPreview from '@/components/settings/UIPreview'
 import { useLocalStorage } from '@/lib/useLocalStorage'
 
@@ -102,6 +103,8 @@ export default function SettingsPage() {
 
         {/* Column 3: UI & display */}
         <div className="space-y-6">
+          <StartupBacktest />
+
           <TelegramSettings />
           <UIPreview />
           <section className="space-y-3">

@@ -444,19 +444,61 @@ async def run() -> None:
         f"symbols={','.join(symbols)} | timeframe={timeframe}"
     )
 
-    # Run obligatory startup backtest
-    notifier.notify("info", "Running obligatory backtest", f"mode={current_mode}", "main")
+    # Optional startup backtest — off by default (risk_config.startup_backtest).
+    #
+    # It is a blocking subprocess across all 15 symbols and it dominated every restart:
+    # measured 256-567s, worst 9m11s, with 551s of completely silent log between
+    # "Bot starting" and the feed being built — about 96% of startup. For that whole
+    # window there is no WebSocket, no candle processing and no position monitoring in
+    # this process (open positions are covered only by their exchange-side stop-loss).
+    # Deploys are the main source of restarts, so that cost was being paid constantly
+    # for results that persist in dashboard/public/backtest_results_*.json regardless.
+    #
+    # Enable it from the dashboard Settings page when a fresh backtest is wanted, or
+    # run one on demand from the Backtest page. When it IS requested and fails, startup
+    # still aborts — that fail-closed behaviour is deliberately unchanged.
     _startup_cfg = load_risk_config()
-    _bt_klines = int(_startup_cfg.get("backtest_klines", 1500))
-    bt_result = subprocess.run(
-        [sys.executable, "backtest.py", "--mode", current_mode, "--klines-count", str(_bt_klines)],
-        capture_output=True,
-        cwd=str(_PROJECT_ROOT),
-    )
-    if bt_result.returncode != 0:
-        notifier.notify("emergency", "Obligatory backtest failed — cannot start",
-                        bt_result.stderr.decode()[:500], "main")
-        sys.exit(1)
+    if _startup_cfg.get("startup_backtest", False):
+        notifier.notify("info", "Running startup backtest", f"mode={current_mode}", "main")
+        _bt_klines = int(_startup_cfg.get("backtest_klines", 1500))
+        _bt_started = time.monotonic()
+        bt_result = subprocess.run(
+            [sys.executable, "backtest.py", "--mode", current_mode, "--klines-count", str(_bt_klines)],
+            capture_output=True,
+            cwd=str(_PROJECT_ROOT),
+        )
+        if bt_result.returncode != 0:
+            notifier.notify("emergency", "Startup backtest failed — cannot start",
+                            bt_result.stderr.decode()[:500], "main")
+            sys.exit(1)
+        logger.info(
+            f"Startup backtest finished in {time.monotonic() - _bt_started:.0f}s "
+            f"({len(symbols)} symbols, {_bt_klines} klines)"
+        )
+    else:
+        # Say how stale the seeds are. Silently reusing month-old backtest results
+        # would be a trap: they feed RiskManager's leverage and cross-symbol allocation
+        # as well as the virtual tracker's preset seeds.
+        _ages, _missing = [], []
+        for _sym in symbols:
+            _bt_file = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
+                _sym, current_mode, _virtual_only)
+            if _bt_file.exists():
+                _ages.append((time.time() - _bt_file.stat().st_mtime) / 3600.0)
+            else:
+                _missing.append(_sym)
+        if _ages:
+            logger.info(
+                f"Startup backtest skipped (risk_config.startup_backtest=false) — "
+                f"reusing existing results, age {min(_ages):.1f}-{max(_ages):.1f}h "
+                f"(median {sorted(_ages)[len(_ages) // 2]:.1f}h)"
+            )
+        if _missing:
+            logger.warning(
+                f"Startup backtest skipped and no results exist for "
+                f"{', '.join(_missing)} — these symbols start with no preset seeds and "
+                f"base leverage until a backtest is run from the dashboard"
+            )
 
     for sym in symbols:
         # Seed from THIS instance's backtest. The mirror backtested the other market;

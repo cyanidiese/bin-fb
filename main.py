@@ -213,22 +213,28 @@ async def run() -> None:
 
     # Load symbol registry — source of truth for active symbols
     seed_symbols = [s.strip().upper() for s in os.getenv('SYMBOL', '').split(',') if s.strip()]
-    symbol_registry = SymbolRegistry(seed_symbols=seed_symbols)
+    # Loaded before the registry because virtual_only decides whether the registry may
+    # be written at all, and _load() writes on its seed path. It is also needed before
+    # the Notifier (virtual_only decides whether Telegram is wired) and before the
+    # ModeManager (current_mode names every data file). load_settings() normalises
+    # trading_mode to exactly 'test' or 'live', the same vocabulary current_mode uses.
+    _base_settings = load_settings()
+    _virtual_only = _base_settings.virtual_only
+    symbol_registry = SymbolRegistry(
+        seed_symbols=seed_symbols,
+        # Shared config is input only for the mirror. Task 2 skips the callers that
+        # mutate it; this closes the one write reachable from __init__.
+        read_only=_virtual_only,
+    )
     symbols = symbol_registry.get_symbols()
     if not symbols:
         logger.error("No active symbols in registry — cannot start")
         sys.exit(1)
 
-    # Loaded before the Notifier because virtual_only decides whether Telegram is wired
-    # at all, and before the ModeManager because current_mode names every data file.
-    # load_settings() normalises trading_mode to exactly 'test' or 'live', the same
-    # vocabulary current_mode uses.
-    _base_settings = load_settings()
     # The notifier's own files need a per-instance name, and it is built before
     # ModeManager exists (ModeManager takes the notifier). Resolve the mode from the
-    # same two inputs ModeManager uses, then assert below that they agree — if they ever
+    # same two inputs ModeManager uses, then check below that they agree — if they ever
     # diverged, one instance would split its output across two suffixes.
-    _virtual_only = _base_settings.virtual_only
     _instance_mode = (
         opposite_mode(read_mode_file()) if _virtual_only else read_mode_file())
 

@@ -24,8 +24,13 @@ class SymbolRegistry:
         self,
         seed_symbols: list[str],
         registry_path: Path = _DEFAULT_PATH,
+        read_only: bool = False,
     ) -> None:
         self._path = registry_path
+        # The mirror instance mounts symbol_registry.json :ro — it shares the trading
+        # bot's rules and must never mutate them. Defaults to False so the trading
+        # bot is unaffected.
+        self._read_only = read_only
         self._lock = Lock()
         self._symbols: list[str] = []
         self._status: dict[str, dict] = {}
@@ -192,7 +197,8 @@ class SymbolRegistry:
     # ── internal ────────────────────────────────────────────────────────
 
     def _load(self, seed: list[str]) -> None:
-        if self._path.exists():
+        existed = self._path.exists()
+        if existed:
             try:
                 data = json.loads(self._path.read_text())
                 self._symbols = [s.upper() for s in data.get('symbols', seed)]
@@ -207,7 +213,7 @@ class SymbolRegistry:
                 )
                 return
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     f"SymbolRegistry: cannot read {self._path} ({exc}) "
                     f"— falling back to config seed"
                 )
@@ -218,6 +224,16 @@ class SymbolRegistry:
         self._disabled_ranks: dict[str, list[int]] = {}
         self._paused: dict[str, dict] = {}
         self._leverage_overrides: dict[str, int] = {}
+        if existed:
+            # The file is there but unreadable. Persisting the seed here would replace
+            # real weights, disabled, paused and leverage_overrides with defaults — and
+            # a truncated read is transient, so the next restart could have recovered
+            # them. Run from the seed in memory and leave the file alone.
+            logger.error(
+                f"SymbolRegistry: running from the config seed in memory; "
+                f"{self._path} left untouched so a later restart can recover it"
+            )
+            return
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
@@ -232,7 +248,26 @@ class SymbolRegistry:
             'paused': self._paused,
             'leverage_overrides': self._leverage_overrides,
         }
-        self._path.write_text(json.dumps(data, indent=2))
+        if self._read_only:
+            logger.debug(
+                f"SymbolRegistry: read-only instance — not writing {self._path}")
+            return
+        # tmp+replace, matching risk_config._atomic_write(). Two processes read this
+        # file now; a plain write_text() lets the other one catch it truncated, and
+        # _load() answers unparseable JSON with a write of its own.
+        tmp = self._path.with_suffix('.json.tmp')
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.replace(self._path)
+        except Exception as exc:
+            # Never propagate. _persist() is called from __init__ and from every
+            # pause/disable/weight change; raising here would take the whole instance
+            # down over a disk problem while its in-memory state is perfectly usable.
+            logger.error(f"SymbolRegistry: failed to write {self._path}: {exc}")
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _fire(self, event: Event, symbol: str) -> None:
         for cb in self._subscribers:

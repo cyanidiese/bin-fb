@@ -51,7 +51,13 @@ _VIRTUAL_ONLY: bool = False
 _BOT_PID_PATH = _PROJECT_ROOT / "data" / "bot_pid.json"
 _BOT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "bot_state.json"
 _HEARTBEAT_INTERVAL = 10  # seconds
-KLINE_REFRESH_EVERY = 4   # refresh once every N candles per symbol
+# Periodic REST re-fetch per symbol, as a sanity check against WebSocket drift.
+# Was 4 (15 calls/hour). Since on_candle_close() now appends every WS candle to the
+# cache, the cache tracks the stream continuously and this is no longer how history is
+# maintained — it only guards against silent drift. A genuine missed candle is still
+# caught immediately by feed.has_gap(), which triggers a repair fetch, so once a day per
+# symbol is enough: 15 calls/hour -> 15 calls/day.
+KLINE_REFRESH_EVERY = int(os.getenv('KLINE_REFRESH_EVERY', '96'))
 KLINE_STAGGER_SECS = 2    # seconds between each symbol's background refresh task
 # Long enough to clear the rate-limit guard's settling window, so a gap refresh
 # suppressed by settling is retried once rather than waiting a whole candle.
@@ -717,6 +723,25 @@ async def run() -> None:
             return bal
         return cached_val
 
+    def _after_or_computed(closed: dict, wallet_after: float) -> tuple[float, bool]:
+        """(balance_after, was_computed) for a close notification.
+
+        A successful wallet read is always preferred. When it fails — an API ban makes
+        fetch_account_balance() return 0.0 — the message used to print "n/a" for the
+        figure the reader most wants. The bot already knows the pre-trade wallet and the
+        net PnL, so it can compute the settled figure itself; the caller flags it so the
+        notifier labels it rather than passing it off as exchange-confirmed.
+
+        Returns (0.0, False) when neither is available, which still renders as "n/a".
+        """
+        if wallet_after > 0:
+            return wallet_after, False
+        before = float(closed.get('wallet_at_open') or 0.0)
+        pnl = closed.get('pnl_usdt')
+        if before > 0 and pnl is not None:
+            return before + float(pnl), True
+        return 0.0, False
+
     async def _read_wallet_now() -> float:
         """Uncached wallet read for figures we report to the user. 0.0 = unavailable.
 
@@ -1131,11 +1156,17 @@ async def run() -> None:
 
         precision = best.getPrecision() if hasattr(best, 'getPrecision') else 0.0
 
-        # The "Before" figure for this trade's close notification. Read here — the last
-        # moment the wallet is genuinely pre-trade — and carried on the OpenOrder, so it
-        # cannot be confused with a post-close read. Note `balance` above is the
-        # allocated per-symbol trade cap, not the wallet.
-        wallet_before = await _read_wallet_now()
+        # The "Before" figure for this trade's close notification. The TTL cache is the
+        # right source here and costs nothing: on_candle_close() called
+        # _get_fresh_balance() moments ago in this same handler, so the cached figure is
+        # both fresh and genuinely pre-trade. It is carried on the OpenOrder so it can
+        # never be confused with a post-close read.
+        #
+        # The post-close "After" figure is the one that must NOT come from this cache —
+        # see _read_wallet_now(), which exists because the cache once served a pre-close
+        # balance as the settled one. `balance` above is the allocated per-symbol trade
+        # cap, not the wallet.
+        wallet_before = await _get_fresh_balance()
 
         placed = await order_executor.place_order(
             symbol=symbol,
@@ -1402,6 +1433,22 @@ async def run() -> None:
         recs = analyzer.add_candle(candle_to_add)
         best_for_this = analyzer.get_best_recommendation()
 
+        # Persist the candle the WebSocket just delivered. append_kline() existed but
+        # was never called, so the on-disk cache only advanced when a REST refresh ran:
+        # every restart needed a 15-call gap fetch to recover candles the stream had
+        # already given us, and during an API ban the cache froze entirely, so a restart
+        # mid-ban came back with stale history. With this the cache tracks the stream,
+        # so candle history no longer depends on REST at all.
+        #
+        # Off the event loop: 15 symbols x ~640KB read+parse+write per candle close
+        # would otherwise stall it for most of a second. After add_candle(), so a disk
+        # problem can never delay or affect a trading decision — and swallowed for the
+        # same reason.
+        try:
+            await asyncio.to_thread(feed.append_kline, symbol, timeframe, candle_to_add)
+        except Exception as _cache_exc:
+            logger.debug(f"[{symbol}] WS kline cache append failed: {_cache_exc}")
+
         # Fetch balance once per candle batch (TTL shared across all symbols)
         balance = await _get_fresh_balance()
         if balance > 0:
@@ -1656,8 +1703,9 @@ async def run() -> None:
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
                 balance_before=c.get('wallet_at_open', 0.0),
-                balance_after=wallet_after,
+                balance_after=_after_or_computed(c, wallet_after)[0],
                 fee_usdt=c.get('fee_usdt', 0.0),
+                balance_estimated=_after_or_computed(c, wallet_after)[1],
             )
 
         _locked_preset = risk_cfg.get("locked_presets", {}).get(symbol)
@@ -1730,8 +1778,9 @@ async def run() -> None:
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
                 balance_before=c.get('wallet_at_open', 0.0),
-                balance_after=wallet_after,
+                balance_after=_after_or_computed(c, wallet_after)[0],
                 fee_usdt=c.get('fee_usdt', 0.0),
+                balance_estimated=_after_or_computed(c, wallet_after)[1],
             )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)

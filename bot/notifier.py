@@ -160,7 +160,16 @@ class Notifier:
         balance_after: float = 0.0,
         fee_usdt: float = 0.0,
         balance_before: float = 0.0,
+        balance_estimated: bool = False,
     ) -> None:
+        """Report a closed real trade.
+
+        `balance_estimated` marks `balance_after` as computed from
+        balance_before + net PnL rather than read from the exchange. That happens when
+        the post-close wallet read fails — an API ban returns 0.0 — where the message
+        previously showed "n/a". Defaults to False so a figure is treated as
+        exchange-read unless a caller explicitly says otherwise.
+        """
         win = pnl_usdt >= 0
         emoji = "✅" if win else "❌"
         result = "Win" if win else "Loss"
@@ -170,7 +179,8 @@ class Notifier:
             f"Before: {self._fmt_balance(balance_before)}\n"
             f"Net PnL: <b>{sign}{pnl_usdt:.2f} USDT</b> <i>(net of fee)</i>\n"
             f"Fee: {fee_usdt:.4f} USDT\n"
-            f"After: {self._fmt_balance(balance_after)}\n"
+            f"After: {self._fmt_balance(balance_after)}"
+            f"{' <i>(computed — wallet read unavailable)</i>' if balance_estimated else ''}\n"
             f"Entry: {self._fmt_price(entry_price)} → Close: {self._fmt_price(close_price)}\n"
             f"Preset: {html.escape(preset_name)}"
         )

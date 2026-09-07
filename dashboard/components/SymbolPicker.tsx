@@ -31,7 +31,13 @@ export default function SymbolPicker({
   if (symbols.length === 0) return null
   const where = instanceLabel ? ` on ${instanceLabel}` : ''
 
+  const anyReal = symbols.some(s => openReal?.has(s))
+  const anyVirtual = symbols.some(s => openVirtual?.has(s))
+  const anyDisabled = symbols.some(s => disabled?.has(s))
+  const anyDimmed = symbols.some(s => dimmed?.has(s))
+
   return (
+    <div className="space-y-1.5">
     <div className="flex flex-wrap gap-1.5">
       {symbols.map(sym => {
         const isDisabled = disabled?.has(sym) ?? false
@@ -62,16 +68,20 @@ export default function SymbolPicker({
           >
             {sym}
 
-            {/* Gold dot, top-right: a position is open right now in the viewed
-                instance. Bright for real, faint for virtual — a ring keeps the bright
-                one legible against the indigo of the selected button. */}
+            {/* Top-right: a position is open right now in the viewed instance.
+                A REAL order is the one with money behind it, so it gets a large
+                saturated yellow dot with a dark ring for contrast against both the
+                grey and the indigo button. The first version used amber-300 vs
+                amber-400/60 at the same 1.5px size, which was not distinguishable —
+                the data was correct but the marker was invisible in practice. */}
             {openKind && (
               <span
-                className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
+                className={
                   openKind === 'real'
-                    ? 'bg-amber-300 ring-1 ring-amber-200/70'
-                    : 'bg-amber-400/60'
-                }`}
+                    ? 'absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-yellow-400 '
+                      + 'ring-2 ring-gray-950 shadow-[0_0_5px_rgba(250,204,21,0.9)]'
+                    : 'absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400/50'
+                }
               />
             )}
 
@@ -83,6 +93,37 @@ export default function SymbolPicker({
           </button>
         )
       })}
+    </div>
+
+    {/* Only legend the markers actually on screen, so it stays quiet when nothing
+        is open. */}
+    {(anyReal || anyVirtual || anyDisabled || anyDimmed) && (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500">
+        {anyReal && (
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 ring-1 ring-gray-950" />
+            real order open
+          </span>
+        )}
+        {anyVirtual && (
+          <span className="inline-flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400/50" />
+            virtual only
+          </span>
+        )}
+        {anyDisabled && (
+          <span className="inline-flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+            disabled
+          </span>
+        )}
+        {anyDimmed && (
+          <span className="inline-flex items-center gap-1 opacity-60">
+            dimmed — no orders on {instanceLabel || 'this instance'}
+          </span>
+        )}
+      </div>
+    )}
     </div>
   )
 }

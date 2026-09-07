@@ -61,10 +61,38 @@ interface PresetRow {
   partials: number
   trails: number
   losses: number
+  /** Closes that were not strategy exits, keyed by reason. See BOOKKEEPING_LABELS. */
+  bookkeeping: Record<string, number>
   winPct: number | null
   profitPct: number | null
   totalPnl: number
   totalVirtualPnl: number
+}
+
+/** The four ways a position actually exits on strategy. Anything else is bookkeeping. */
+const STRATEGY_RESULTS = ['win', 'partial', 'trail', 'loss']
+
+/** Why a position was closed without the strategy deciding to. */
+const BOOKKEEPING_LABELS: Record<string, string> = {
+  rank_change:         'reshuffled away (rank changed)',
+  closed_early:        'force-closed by a restart',
+  promoted_to_real:    'released — preset promoted to the real-order slot',
+  max_age:             'aged out',
+  real_order_took_over:'replaced by a real order',
+  rank_disabled:       'rank pool disabled',
+  insufficient_presets:'too few presets to fill the rank',
+}
+
+function bookkeepingTooltip(row: PresetRow): string | undefined {
+  const entries = Object.entries(row.bookkeeping).sort((a, b) => b[1] - a[1])
+  if (entries.length === 0) return undefined
+  const total = entries.reduce((s, [, n]) => s + n, 0)
+  const lines = entries.map(([k, n]) => `  ${n} ${BOOKKEEPING_LABELS[k] ?? k}`)
+  return [
+    `${total} of these closes were bookkeeping, not strategy exits —`,
+    'which is why they appear in the trade count but in no outcome column:',
+    ...lines,
+  ].join('\n')
 }
 
 function buildPresetRows(data: TradesData): PresetRow[] {
@@ -85,6 +113,15 @@ function buildPresetRows(data: TradesData): PresetRow[] {
     const partials = real.filter(o => o.result === 'partial').length + virt.filter(o => o.result === 'partial').length
     const trails   = real.filter(o => o.result === 'trail').length  + virt.filter(o => o.result === 'trail').length
     const losses   = real.filter(o => o.result === 'loss').length   + virt.filter(o => o.result === 'loss').length
+
+    // Everything that is not one of the four strategy exits. Counted here rather than
+    // enumerated from BOOKKEEPING_LABELS so a reason added in the bot still shows up.
+    const bookkeeping: Record<string, number> = {}
+    for (const o of [...real, ...virt]) {
+      const r = o.result
+      if (r == null || STRATEGY_RESULTS.includes(r)) continue
+      bookkeeping[r] = (bookkeeping[r] ?? 0) + 1
+    }
 
     const totalPnl        = real.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
     const totalVirtualPnl = virt.reduce((s, o) => s + (o.pnl_usdt ?? 0), 0)
@@ -116,6 +153,7 @@ function buildPresetRows(data: TradesData): PresetRow[] {
       partials,
       trails,
       losses,
+      bookkeeping,
       winPct,
       profitPct,
       totalPnl,
@@ -710,6 +748,7 @@ export default function TradesPage() {
                 const isSelected = selectedPreset === row.name
                 const gained = row.totalPnl + row.totalVirtualPnl
                 const totalCount = row.realCount + row.virtualCount
+                const bookTip = bookkeepingTooltip(row)
 
                 let tradesLabel = '—'
                 if (row.realCount > 0 && row.virtualCount > 0) {
@@ -784,7 +823,10 @@ export default function TradesPage() {
                     <td className={`py-1.5 pr-4 text-right text-xs ${row.rank != null && row.rank >= 2 ? 'text-gray-300' : 'text-gray-600'}`}>
                       {vBalLabel}
                     </td>
-                    <td className={`py-1.5 pr-4 text-right ${totalCount > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
+                    <td
+                      className={`py-1.5 pr-4 text-right ${totalCount > 0 ? 'text-gray-300' : 'text-gray-600'} ${bookTip ? 'decoration-dotted underline underline-offset-4 decoration-gray-600' : ''}`}
+                      title={bookTip}
+                    >
                       {tradesLabel}
                     </td>
                     <td className={`py-1.5 pr-4 text-right ${row.wins > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>

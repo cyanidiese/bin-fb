@@ -34,17 +34,26 @@ def _tf_to_ms(timeframe: str) -> int:
 
 class VirtualOrderSimulator:
     """
-    Tracks rank-based virtual positions for the top N non-best presets per symbol.
+    Tracks rank-based virtual positions per symbol, one balance pool per rank,
+    each pool shared across all symbols.  At any candle close a symbol holds at
+    most one open position per rank, and a preset holds at most one open
+    position per symbol across all ranks.
 
-    Rank 1 = best preset → real order (not tracked here).
-    Ranks 2..rank_max → each rank has one independent balance pool shared across
-    all symbols.  At any candle close, each symbol contributes at most one open
-    position per rank.
+    Rank 1 stands in for the real-order slot.  It opens only when no real order
+    was placed for that symbol on that candle, so a blocked signal still records
+    an outcome; a real order evicts it (`real_order_took_over`).  It is the one
+    rank that still evicts when its preset changes, because it has to represent
+    whatever would trade right now.
 
-    When the preset holding rank N for a symbol changes (efficiency rankings
-    shift), the existing position is evicted at the current price and the new
-    rank-N preset opens fresh.  This means the rank-N pool always tracks
-    "how would you do if you always traded whichever preset is currently rank N?"
+    Ranks 2..rank_max do NOT evict on a rank change.  An open position runs to
+    its own exit — target, stop, or trail — and the slot is simply skipped until
+    it frees.  Evicting them recorded an exit at whatever price happened to be
+    current, which was 36.8% of all closed virtual orders and diluted the
+    ranking key toward zero.  The valves that still close a position without the
+    strategy deciding to: `promoted_to_real` (the preset was promoted to rank 1
+    and must be free to trade) and `max_age` (older than
+    `virtual_max_age_candles`, default 96 = 24h on 15m).  Both are labelled so
+    scoring can exclude them.
 
     Real balance (RiskManager) is never touched here.
     """

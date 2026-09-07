@@ -424,17 +424,25 @@ Symbols with allocation weight set to 0 are excluded from both real order placem
 - Prevents accidental trading of disabled symbols when weight is set to 0 without calling `disable()`
 
 ### Virtual Order Simulation (Rank-Based Pools)
-Tracks N independent virtual positions for the top non-best presets (ranks 2–6). Each rank has a shared balance pool across all symbols. When a preset's rank changes (efficiency rankings shift), the old position is evicted at current price and the new rank-N preset opens fresh.
+Tracks one virtual position per rank per symbol, with a balance pool per rank shared across all symbols. `rank_max` is passed at runtime as `len(all_presets)` — currently 86 pools per symbol, not 6.
 
 **Files**: `bot/virtual_order_simulator.py`, `bot/virtual_tracker.py`
 **Key details**:
 
 **Architecture**:
-- Rank 1 = best preset → real order (not tracked here)
-- Ranks 2..6 = virtual positions, one independent pool per rank
-- At any time, each symbol contributes ≤1 open position per rank
-- When preset efficiency rankings change, rank-N position switches to new preset
-- Position switchover recorded as `rank_change` result (evict at current price)
+- Rank 1 stands in for the real-order slot. It opens **only** when no real order was placed for that symbol on that candle, so a blocked signal still records an outcome. A real order evicts it (`real_order_took_over`). Rank 1 is the one rank that still evicts on a preset change, because it must represent whatever would trade now.
+- Ranks 2..rank_max = virtual positions, one independent pool per rank
+- At any time, each symbol contributes ≤1 open position per rank, **and a preset holds ≤1 open position per symbol across all ranks**
+- Ranks ≥2 do **not** evict on a rank change (changed 2026-09-07). The position runs to its own exit and the slot is skipped until it frees. Previously this eviction was 36.8% of all closed virtual orders, recording exits at an arbitrary current price and diluting the ranking key (`sum(recent_trades[-10:])`) toward zero.
+- Remaining non-strategy closes: `promoted_to_real` (preset promoted to rank 1, released so it can trade), `max_age` (older than `virtual_max_age_candles`, default 96 = 24h on 15m), `closed_early` (restart force-close), `rank_disabled`, `insufficient_presets`
+- `promoted_to_real` and `max_age` are excluded from `preset_efficiency`, as rank 1 already is
+
+**Bookkeeping tooltip (dashboard)**:
+- A preset can show trades in the count with nothing in Wins/Part/Trail/Losses — those closes were bookkeeping, not strategy exits
+- The trade-count cell carries a dotted underline and a `title` tooltip breaking down the reasons, e.g. `12 reshuffled away (rank changed)`
+- Rejected a dedicated column: the reasons are diagnostic and would compete with real outcomes
+- Counting is derived (anything outside win/partial/trail/loss), so a reason added in the bot still surfaces; `tests/test_bookkeeping_tooltip.py` fails if the bot emits a reason the dashboard cannot name
+- **Files**: `dashboard/app/trades/page.tsx` (`BOOKKEEPING_LABELS`, `bookkeepingTooltip`)
 
 **Preset efficiency scoring (session 32 refinement — two-tier ranking)**:
 - Two-tier tuple system: `(tier: int, value: float)` where tier 1 (live-proven) always beats tier 0 (seed-only)

@@ -1376,6 +1376,116 @@ All parameters loaded from `.env` and `config/settings.py`. Supports per-symbol 
 
 ---
 
+## Mirror Instance (parallel virtual-only bot) — not yet deployed
+
+### What it is
+
+A second container, `bot_mirror`, running the **same image** as the trading bot but
+always in **the mode the primary is not running**, with virtual orders only. Its job is
+to accumulate preset statistics on the other market, in exactly the files a same-mode
+main bot will later read — so switching to live does not mean starting preset selection
+from scratch with real money.
+
+| dashboard bot mode | primary (`bot`) | mirror (`bot_mirror`) |
+|---|---|---|
+| test | test — real + virtual orders, testnet REST/WS | live — virtual only, production REST/WS |
+| live | live — real + virtual orders, production REST/WS | test — virtual only, testnet REST/WS |
+
+**Files**: `docker-compose.yml` (`bot_mirror` service), `bot/instance_paths.py`,
+`bot/mode_manager.py`, `main.py`, `config/settings.py`, `bot/exporter.py`,
+`bot/risk_manager.py`, `bot/symbol_registry.py`, `backtest.py`,
+`dashboard/components/InstanceToggle.tsx`, `dashboard/app/trades/page.tsx`,
+`dashboard/app/api/trades/route.ts`
+
+### It cannot trade — structurally, not by configuration
+
+`VIRTUAL_ONLY=1` plus **no credentials at all** (`environment:` with empty keys, never
+`env_file: .env`). python-binance refuses private endpoints without a secret, before any
+request reaches Binance. `tests/test_compose_mirror_has_no_credentials.py` enforces this
+in CI and is verified non-vacuous — adding `env_file: .env` makes it fail.
+
+`VIRTUAL_ONLY` only ever makes the process **skip** work. It never changes what a real
+order does. Guarded: real-order placement, private endpoints, balance fetch, Telegram
+(token blanked at construction), the command poller, `bot_pid.json`, `bot_state.json`,
+the Telegram menu, and shared-config writes.
+
+### Two independent controls
+
+| control | where | effect |
+|---|---|---|
+| **Bot mode** | Settings → Trading Mode | decides who trades; takes effect **on restart** |
+| **Data view** | Trades page → Instance | decides whose files the dashboard reads; **instant** |
+
+The data-view toggle never writes `bot_mode.json` or `bot_command.json`. Defaults to
+`primary`, so the page behaves exactly as before.
+
+The bot-mode control has always taken effect only on restart: `POST /api/mode` writes
+`bot_mode.json` directly and nothing in the dashboard writes a `switch_mode` command, so
+`ModeManager.switch_mode()` and `main.on_switch_mode()` are unreachable from the UI. The
+dialog now says so (it previously promised order closing and immediate live trading that
+never happened).
+
+### How the mirror follows a mode change
+
+`opposite_mode(read_mode_file())` at startup, then `_mirror_watch()` polls every 30s and
+**exits 0** when the primary's mode changes; `restart: unless-stopped` brings it back as
+the new opposite. Requires two consecutive confirmations, and treats an absent, torn or
+out-of-vocabulary file as "no change" — the mirror acts by exiting, and a restart loop
+has no way out.
+
+Restarting rather than switching in place is deliberate: `on_switch_mode()` closes
+orders, refetches balance and rebuilds every mode-scoped object, and a partial failure
+would leave one instance writing to a mix of both suffixes.
+
+### File naming: keyed on the instance, not the mode
+
+`bot/instance_paths.py` — `instance_path(base, name, mode, mirror)`:
+
+- **primary** → the historical unsuffixed name, **in either mode**
+- **mirror** → `<stem>_{its mode}.<ext>`
+
+Keying on the mode instead looks equivalent today and breaks the moment the primary goes
+live: the mirror would become the test-mode process and claim every unsuffixed name,
+including `dashboard/public/risk_state.json`, which it writes with a zero balance.
+
+Covers `bot.log`, `trades.log`, `analysis.jsonl`, `data/system_log.json`,
+`alert_state.json`, `risk_state.json`, `results_{symbol}.json` and
+`backtest_results_{symbol}.json`. Everything else in `data/` was already `_{mode}`
+suffixed. `symbols.json` stays shared — both write an identical list.
+
+`backtest_results_{symbol}.json` is the one that matters most: `RiskManager` reads it to
+derive **leverage** and **cross-symbol capital allocation**, so a mirror writing the
+primary's copy would silently resize the trading bot's real orders from a backtest of a
+different market.
+
+`bot.log`/`trades.log` resolve through `main._log_paths()` before Settings exist, from
+`VIRTUAL_ONLY` plus the recorded mode.
+
+### One source of truth for mode
+
+`main._resolve_mode()` stamps the resolved mode onto every `Settings` object the feed is
+built from. Previously `current_mode` (from `bot_mode.json`) named every data file while
+`Settings.trading_mode` (from env `TRADING_MODE`) picked the REST/WebSocket endpoints,
+from two independent sources — so a disagreement meant writing `_live` files while
+reading testnet prices. `ModeManager._read_mode()` now also validates the vocabulary;
+an unrecognised value used to give the primary `_garbage`-suffixed data files.
+
+### Deploy notes
+
+- Log rotation lists **explicit paths**; extend `/etc/logrotate.d/bot` to
+  `/opt/bot/logs/bot*.log /opt/bot/logs/trades*.log` (globs, because the mirror's log
+  name changes when the mode flips) or `bot_mirror_stdout.log` grows without limit.
+- Resource headroom measured 2026-09-06: 1,998 MB RAM available, `bot` uses 138 MB at
+  0.44 % CPU, 5.0 GB disk free with `data/` at 144 MB.
+- Startup cost: 1500 klines × 15 symbols on first run (~150 weight, one-off).
+- **Handover**: to go live, remove `VIRTUAL_ONLY`, add credentials, and stop the mirror.
+  The `_live` files it filled are exactly the ones a live primary reads.
+
+**Spec**: `docs/specs/2026-09-06-live-virtual-parallel-instance.md`
+**Plan**: `docs/superpowers/plans/2026-09-06-live-virtual-parallel-instance.md`
+
+---
+
 ## Deployment & Infrastructure
 
 ### Critical Docker Build Requirement (Session 51)

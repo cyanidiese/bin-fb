@@ -14,6 +14,43 @@ services:
     restart: unless-stopped
     stop_grace_period: 60s
 
+  # The mirror. Runs whichever mode the primary is not running, with virtual orders
+  # only, so preset statistics accumulate on the other market in exactly the files a
+  # same-mode main bot will later read.
+  #
+  # Deliberately has NO credentials: python-binance refuses private endpoints without a
+  # secret, so this container cannot place an order even if the code asked it to.
+  # TRADING_MODE is intentionally absent — a mirror derives its mode as the opposite of
+  # data/bot_mode.json (see _resolve_mode in main.py), and an env value here would only
+  # be misleading. `environment:` rather than `env_file: .env` is what keeps the real
+  # keys out.
+  #
+  # restart: unless-stopped is load-bearing, not just resilience: on a bot-mode change
+  # the mirror exits 0 and this policy brings it back up as the new opposite.
+  bot_mirror:
+    build: .
+    container_name: bot_mirror
+    environment:
+      VIRTUAL_ONLY: "1"
+      BINANCE_API_KEY: ""
+      BINANCE_API_SECRET: ""
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./dashboard/public:/app/dashboard/public
+      # Read-only: shared config is input only, so both instances run identical rules
+      # and any difference between them is the market. main.py skips the writers;
+      # :ro is the backstop if one is ever missed, and SymbolRegistry(read_only=True)
+      # closes the one write reachable from its constructor.
+      - ./risk_config.json:/app/risk_config.json:ro
+      - ./symbol_registry.json:/app/symbol_registry.json:ro
+    # Python's own handler writes logs/bot_{mode}.log; this redirect only catches
+    # crashes that happen before logging initialises. Both need rotation.
+    command: >
+      sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot_mirror_stdout.log 2>&1'
+    restart: unless-stopped
+    stop_grace_period: 60s
+
   dashboard:
     build: .
     container_name: dashboard

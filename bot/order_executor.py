@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -83,6 +84,13 @@ class OpenOrder:
     # the "Before" figure in the trade-close notification; balance_at_open above is
     # the allocated per-symbol trade cap, which is a different (much smaller) number.
     wallet_at_open: float = 0.0
+
+
+# Both startup callers — check_symbols_on_exchange() and _ensure_lot_size() — pull the
+# same ~735-symbol exchangeInfo payload, which measured about 2s each. Cached briefly so
+# a restart makes one call instead of two. Kept short: listings and lot filters do
+# change, and this must never serve stale precision to an order.
+_EXCHANGE_INFO_TTL_S = 300.0
 
 
 class OrderExecutor:
@@ -1139,12 +1147,26 @@ class OrderExecutor:
     # TRADIFI_PERPETUAL = gold/silver (XAUUSDT, XAGUSD) — behave like regular perps
     _VALID_CONTRACT_TYPES = {'PERPETUAL', 'TRADIFI_PERPETUAL'}
 
+    async def _exchange_info_cached(self) -> dict:
+        """exchangeInfo, reused for _EXCHANGE_INFO_TTL_S.
+
+        Startup called this twice for the same ~735-symbol payload, once to validate
+        the symbol list and once to pre-warm the lot cache.
+        """
+        now = time.monotonic()
+        cached = getattr(self, '_ex_info_cache', None)
+        if cached is not None and now - cached[0] < _EXCHANGE_INFO_TTL_S:
+            return cached[1]
+        info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
+        self._ex_info_cache = (now, info)
+        return info
+
     async def check_symbols_on_exchange(self, symbols: list[str]) -> None:
         """Startup check: disable any symbol that is not TRADING or is not a supported perpetual type."""
         if self._feed is None or self._symbol_registry is None:
             return
         try:
-            info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
+            info = await self._exchange_info_cached()
             exchange_map = {s['symbol']: s for s in info.get('symbols', [])}
             for symbol in list(symbols):
                 sym_info = exchange_map.get(symbol)
@@ -1189,13 +1211,42 @@ class OrderExecutor:
         return self._bracket_max.get(symbol, 20)
 
     async def fetch_leverage_brackets(self, symbols: list[str]) -> None:
-        """
-        Fetch leverage brackets for each symbol from the exchange and cache the max leverage.
-        Processes symbols individually to ensure one failure doesn't block the rest.
+        """Cache each symbol's max leverage from the exchange.
+
+        One call for every symbol, not one per symbol: `symbol` is optional on
+        /fapi/v1/leverageBracket, the weight is 1 either way, and the response is the
+        same array of {symbol, brackets}. That turned 15 startup requests into 1.
+
+        Falls back to the per-symbol form if the batch call fails, so a change at the
+        exchange cannot leave us with no brackets at all — every symbol would then
+        silently use the default ceiling of 20.
         """
         if self._feed is None:
             return
-        for symbol in symbols:
+        wanted = set(symbols)
+        try:
+            result = await asyncio.to_thread(self._feed.client.futures_leverage_bracket)
+            found = 0
+            for entry in (result or []):
+                sym = entry.get('symbol')
+                if sym not in wanted:
+                    continue
+                brackets = entry.get('brackets') or []
+                if brackets:
+                    self._bracket_max[sym] = int(brackets[0]['initialLeverage'])
+                    found += 1
+            if found:
+                logger.info(
+                    f"Leverage brackets cached for {found}/{len(wanted)} symbols "
+                    f"in a single request"
+                )
+                if found >= len(wanted):
+                    return
+                wanted -= set(self._bracket_max)
+        except Exception as exc:
+            logger.warning(f"Batch leverage-bracket fetch failed: {exc} — per-symbol fallback")
+
+        for symbol in sorted(wanted):
             try:
                 result = await asyncio.to_thread(
                     self._feed.client.futures_leverage_bracket,
@@ -1266,7 +1317,7 @@ class OrderExecutor:
         if self._feed is None:
             return default
         try:
-            info = await asyncio.to_thread(self._feed.client.futures_exchange_info)
+            info = await self._exchange_info_cached()
             for sym_info in info.get('symbols', []):
                 sym = sym_info['symbol']
                 entry: dict = {}

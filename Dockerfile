@@ -17,14 +17,20 @@ RUN python3 -m venv .venv && \
 COPY dashboard/package.json dashboard/package-lock.json ./dashboard/
 RUN cd dashboard && npm ci
 
-# Source
+# ── Dashboard source and build ──────────────────────────────────────────────
+# The dashboard's own sources are copied FIRST and built here, before the Python
+# source. `COPY . .` used to sit above `npm run build`, so any Python change
+# invalidated that layer and rebuilt the whole Next.js app — about 40s of every
+# bot-only deploy, for an artifact the `bot` service never serves.
+COPY dashboard/ ./dashboard/
+RUN cd dashboard && npm run build
+
+# ── Python source ───────────────────────────────────────────────────────────
+# Last, so editing main.py or bot/ leaves the Next build cached.
 COPY . .
 
 # Ensure writable state dirs exist in the image
 RUN mkdir -p /app/data /app/logs
-
-# Build Next.js
-RUN cd dashboard && npm run build
 
 EXPOSE 3000
 

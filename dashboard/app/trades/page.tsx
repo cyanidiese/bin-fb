@@ -155,7 +155,10 @@ export default function TradesPage() {
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [klines, setKlines] = useState<Kline[]>([])
-  const [symbolsWithOrders, setSymbolsWithOrders] = useState<string[]>([])
+  // Order activity per instance, keyed by mode. Both are fetched because the picker
+  // dims symbols that the primary trades but the viewed instance does not.
+  const [ordersByMode, setOrdersByMode] =
+    useState<Record<string, { symbols: string[]; openReal: string[]; openVirtual: string[] }>>({})
   const [realBalance, setRealBalance] = useState<number | null>(null)
   const [rankBalances, setRankBalances] = useState<Record<string, number>>({})
   const [disabledRanks, setDisabledRanks] = useState<number[]>([])
@@ -219,6 +222,48 @@ export default function TradesPage() {
     ? `results_${symbol}.json`
     : `results_${symbol}_${dataMode}.json`
 
+  // ── Symbol picker markers ────────────────────────────────────────────────
+  // The list is the UNION of both instances, so a symbol the primary trades but the
+  // shadow does not stays visible and dimmed rather than vanishing when you switch.
+  const primaryOrders = ordersByMode[botMode]
+  const viewedOrders = ordersByMode[dataMode]
+
+  const symbolsWithOrders = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    // Primary order first — it is the registry order, so the row stays stable.
+    for (const s of [...(primaryOrders?.symbols ?? []), ...(viewedOrders?.symbols ?? [])]) {
+      if (!seen.has(s)) { seen.add(s); out.push(s) }
+    }
+    return out
+  }, [primaryOrders, viewedOrders])
+
+  // Dimmed: traded on the primary, but nothing on the instance being viewed. With
+  // Primary selected the two sets are identical, so nothing dims — no special case.
+  const dimmedSymbols = useMemo(() => {
+    const viewed = new Set(viewedOrders?.symbols ?? [])
+    return new Set((primaryOrders?.symbols ?? []).filter(s => !viewed.has(s)))
+  }, [primaryOrders, viewedOrders])
+
+  const openRealSymbols = useMemo(
+    () => new Set(viewedOrders?.openReal ?? []), [viewedOrders])
+  const openVirtualSymbols = useMemo(
+    () => new Set(viewedOrders?.openVirtual ?? []), [viewedOrders])
+  // disabled lives in symbol_registry.json, so it is the same for both instances.
+  const disabledSymbolSet = useMemo(
+    () => new Set(Object.keys(disabledSymbols)), [disabledSymbols])
+
+  const pickerProps = {
+    symbols: symbolsWithOrders,
+    selected: symbol,
+    onSelect: setSymbol,
+    disabled: disabledSymbolSet,
+    dimmed: dimmedSymbols,
+    openReal: openRealSymbols,
+    openVirtual: openVirtualSymbols,
+    instanceLabel: instance === 'primary' ? `primary (${botMode})` : `shadow (${dataMode})`,
+  }
+
   useEffect(() => {
     if (!symbol) return
     setData(null)
@@ -247,10 +292,25 @@ export default function TradesPage() {
   }, [symbol, resultsFile])
 
   useEffect(() => {
-    fetch('/api/trades/symbols')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.symbols) setSymbolsWithOrders(d.symbols) })
-      .catch(() => {})
+    let cancelled = false
+    Promise.all((['test', 'live'] as const).map(m =>
+      fetch(`/api/trades/symbols?mode=${m}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => [m, d] as const)
+        .catch(() => [m, null] as const)
+    )).then(pairs => {
+      if (cancelled) return
+      const next: Record<string, { symbols: string[]; openReal: string[]; openVirtual: string[] }> = {}
+      for (const [m, d] of pairs) {
+        if (d) next[m] = {
+          symbols: d.symbols ?? [],
+          openReal: d.open_real ?? [],
+          openVirtual: d.open_virtual ?? [],
+        }
+      }
+      setOrdersByMode(next)
+    })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -420,7 +480,7 @@ export default function TradesPage() {
   if (error) return (
     <div className="pt-14 p-4 space-y-4 max-w-7xl mx-auto">
       {symbolsWithOrders.length > 0 && (
-        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+        <SymbolPicker {...pickerProps} />
       )}
       {/* The toggle has to stay reachable here: this is a full-page early return, and
           without it a failed shadow fetch would strand the reader with no way back. */}
@@ -437,7 +497,7 @@ export default function TradesPage() {
   if (!data || !fdata) return (
     <div className="pt-14 p-4 space-y-4 max-w-7xl mx-auto">
       {symbolsWithOrders.length > 0 && (
-        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+        <SymbolPicker {...pickerProps} />
       )}
       <div className="text-gray-400">Loading…</div>
     </div>
@@ -491,7 +551,7 @@ export default function TradesPage() {
   return (
     <div className="pt-14 p-4 space-y-6 max-w-7xl mx-auto">
       {symbolsWithOrders.length > 0 && (
-        <SymbolPicker symbols={symbolsWithOrders} selected={symbol} onSelect={setSymbol} />
+        <SymbolPicker {...pickerProps} />
       )}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-white">{symbol} — Trades</h1>

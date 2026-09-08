@@ -294,6 +294,75 @@ the network at any boundary afterwards.
   making the whole mitigation invisible — the exact failure mode that let #21 and #22
   survive so long. Fixed in `0271fc9`: success at INFO, a missed pre-fetch at WARNING.
 
+### 25. `17:49–18:18` — Ban probing, kline persistence and log-trim fixes
+`c66f511` `78a9fc1` `0271fc9` `d72cf46` — see items 23, 24 and 21 above.
+
+### 26. `18:00` — Probe only near the end of a stated ban
+`aab3c11`
+
+Bans are **per-CloudFront-edge**, not per-account: three edges rejected us that day, each
+with its own expiry (`.97` said 17:44:57 while `.71` said 17:34:57 at the same moment). A
+probe therefore proves only that the edge *it* reached is clear; the next request routes
+elsewhere, is rejected, and adds ~120s to that edge's ban. The guard then re-armed —
+longer — and the loop repeated every candle. **Measured: +336 minutes of ban time in one
+day from 39 probes**, with one episode going from "ends 15:46:54" to "ends 17:48:58".
+
+`_PROBE_AFTER_FRAC = 0.9`: no probe until 90% of the stated ban has elapsed. Safe because
+bans do not block trading — three real orders were placed *inside* stated ban windows and
+the logs hold no order-placement failure at all.
+
+> **Correction recorded:** I had previously concluded these bans came from congestion at
+> the candle boundary (item 24) and moved the balance read for it. That was sampling bias —
+> the call happened at the boundary, so every ban appeared there. After the move the bans
+> moved with it. The ban follows the call; the probe policy was the real lever.
+
+### 27. `19:10` — The probe gate must survive a restart *(committed, awaiting the next deploy)*
+`b33234d`
+
+Item 26 did not hold, and the log said why:
+
+```
+18:37:30  ARMED 3501s (ban until 19:35:51)
+18:56:29  Reconciliation failed: -1003        <- restart, unguarded read
+19:00:00  probing (stated ban has 36 min left) -> SUCCEEDED
+19:01:49  CLEARED
+```
+
+Two holes, both exposed by the three restarts made right after deploying item 26:
+
+- **`_probe_not_before` lived only in memory.** `load_state()` restored the ban expiry from
+  disk but not the gate, and `blocked_for()` *skipped* an absent gate — so every restart
+  during a ban put the flap straight back. It is now restored from what is left of the ban,
+  and derived rather than skipped if any path sets the block directly.
+- **`reconcile_with_exchange()` and `sync_positions_with_exchange()` were unguarded**, and
+  reconciliation runs on every startup — that is the 18:56:29 line. Only 2 of 7 raw call
+  sites in `order_executor` consulted the guard. Skipping is safe: an orphan blocks that
+  symbol's signals but keeps its exchange stop, and the sync re-checks each candle.
+
+Even while leaking, the gate limited the damage: that episode was extended by **0.0
+minutes** (2 rejections), against +129 and +122 minutes earlier the same day.
+
+### 28. `21:00` — Manual order close from the Trades page
+`a6e7f65` (spec) `bf8d7e4`
+
+`LIVE` → `NOW`, a hover tooltip carrying the whole order plus the live unrealised result,
+and a red ✕ that market-closes a real or virtual position after inline confirmation.
+Recorded as `manual_close`, excluded from `preset_efficiency`, and logged three ways.
+Only the running instance can close its own positions.
+
+> **Incident:** the commit used `git add -A` and swept in files that were never meant to be
+> tracked — including `risk_config_template.json`, which contains a **live Telegram bot
+> token**, and it was pushed. Untracked and gitignored in `1c60418`; **the token must be
+> rotated**, since removing it from HEAD does not unpublish it. Checked and not exposed:
+> `.env` (ignored), `.env.example` (placeholders only), `risk_config.json` (untracked), and
+> no Binance key or secret in any tracked file.
+>
+> The same mistake then blocked the deploy — 17 committed bot-output files collided with
+> the server's copies — and a mis-scoped recovery attempt reverted `symbol_registry.json`,
+> silently removing BTCUSDT and re-disabling AVAXUSDT, ETHFIUSDT and REZUSDT. Caught in the
+> startup line ("15 symbols" instead of 16) and repaired from the 08:46 backup with the
+> AVAXUSDT re-enable re-applied. `risk_config.json` was never touched.
+
 ---
 
 ## Verified end state (2026-09-08 ~15:20 UTC)

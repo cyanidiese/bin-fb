@@ -19,6 +19,10 @@ _FUTURES_REST_TESTNET = 'https://testnet.binancefuture.com/fapi'
 _FUTURES_REST_LIVE = 'https://fapi.binance.com/fapi'
 
 # WebSocket stream base URLs
+# A REST kline row has 12 fields. WS closed candles are built to the same width so the
+# cache holds one shape; see _normalise_rows for the legacy 7-field rows.
+_KLINE_FIELDS = 12
+
 _WS_TESTNET = 'wss://stream.binancefuture.com/ws'
 _WS_LIVE = 'wss://fstream.binance.com/ws'
 
@@ -248,6 +252,52 @@ class DataFeed:
             logger.error(f"Failed to fetch klines: {e}")
             raise
 
+    @staticmethod
+    def _ws_kline_to_row(k: dict) -> list:
+        """A closed WS kline as the same 12-field row REST returns.
+
+        Verified against the live stream on 2026-09-08: every field is present and the
+        types match REST exactly — t/T/n are ints, the rest strings. Read with .get() and
+        neutral fallbacks so a schema change at the exchange degrades to a short row
+        (normalised on read) instead of raising inside the stream loop.
+        """
+        return [
+            int(k['t']),            # 0  open time
+            k['o'],                 # 1  open
+            k['h'],                 # 2  high
+            k['l'],                 # 3  low
+            k['c'],                 # 4  close
+            k['v'],                 # 5  base volume
+            int(k['T']),            # 6  close time
+            k.get('q'),             # 7  quote volume
+            k.get('n'),             # 8  trade count
+            k.get('V'),             # 9  taker buy base volume
+            k.get('Q'),             # 10 taker buy quote volume
+            k.get('B'),             # 11 ignore
+        ]
+
+    def _fetch_ticker(self, symbol: str) -> float:
+        """Last price, through the rate-limit guard.
+
+        The price watchdog used to call the client directly, so it kept issuing requests
+        while banned — every 5s per stale symbol, each one adding 120s to the ban. Keyed
+        on the trading endpoint because the ticker is served by the trading host, unlike
+        klines which may come from production while trading testnet.
+        """
+        _key = 'testnet' if self._is_testnet else 'production'
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            raise RateLimited(_key, _wait)
+        try:
+            _res = self._client.futures_symbol_ticker(symbol=symbol)
+            rl_guard.note_success(_key)
+            return float(_res.get('price', 0) or 0)
+        except RateLimited:
+            raise
+        except Exception as e:
+            rl_guard.note_exception(_key, e)
+            raise
+
     # ------------------------------------------------------------------ #
     # WebSocket — live stream                                              #
     # ------------------------------------------------------------------ #
@@ -281,15 +331,7 @@ class DataFeed:
                             await on_price_update(float(k['c']))
 
                         if k['x']:
-                            candle = [
-                                int(k['t']),  # open time ms
-                                k['o'],       # open
-                                k['h'],       # high
-                                k['l'],       # low
-                                k['c'],       # close
-                                k['v'],       # volume
-                                int(k['T']),  # close time ms
-                            ]
+                            candle = self._ws_kline_to_row(k)
                             await on_candle_close(candle)
 
             except asyncio.CancelledError:
@@ -351,10 +393,7 @@ class DataFeed:
                             if open_time > self._last_candle_open.get(symbol, -1):
                                 self._last_candle_open[symbol] = open_time
                                 self._last_candle_ts[symbol] = now
-                                candle = [
-                                    int(k["t"]), k["o"], k["h"], k["l"], k["c"], k["v"],
-                                    int(k["T"]),
-                                ]
+                                candle = self._ws_kline_to_row(k)
                                 try:
                                     await on_candle_close(symbol, candle)
                                 except Exception as exc:
@@ -405,14 +444,20 @@ class DataFeed:
                 for symbol in symbols:
                     if now - self._last_price_ts.get(symbol, now) > stale_threshold_s:
                         try:
-                            ticker = await asyncio.to_thread(
-                                self._client.futures_symbol_ticker, symbol=symbol
-                            )
-                            price = float(ticker.get("price", 0))
+                            price = await asyncio.to_thread(self._fetch_ticker, symbol)
                             if price > 0:
                                 self._last_price_ts[symbol] = now
                                 await on_price_update(symbol, price)
+                        except RateLimited as rl:
+                            # Banned. Do not retry on the next 5s tick: mark the symbol
+                            # fresh so it waits a full staleness window. The guard
+                            # already blocks the network call; this stops the spin.
+                            self._last_price_ts[symbol] = now
+                            logger.debug(
+                                f"[{symbol}] Price watchdog skipped — banned {rl.remaining:.0f}s more"
+                            )
                         except Exception as exc:
+                            self._last_price_ts[symbol] = now
                             logger.warning(f"[{symbol}] Price watchdog fetch failed: {exc}")
 
                 candle_tick += 1
@@ -425,26 +470,34 @@ class DataFeed:
                     if now - self._last_candle_ts.get(symbol, now) <= 1.5 * timeframe_s:
                         continue
                     try:
-                        klines = await asyncio.to_thread(
-                            self._client.futures_klines,
-                            symbol=symbol, interval=timeframe, limit=3,
-                        )
+                        # Through _fetch, not the raw client: it consults the rate-limit
+                        # guard, and it uses the KLINE endpoint. The old direct call used
+                        # the trading client, which under live_klines would have pulled
+                        # testnet candles into a cache the rest of the system fills from
+                        # production.
+                        klines = await asyncio.to_thread(self._fetch, symbol, timeframe, 3)
                         for kline in reversed(klines):
                             if int(kline[6]) < now_ms:
                                 open_time = int(kline[0])
                                 if open_time > self._last_candle_open.get(symbol, -1):
                                     self._last_candle_open[symbol] = open_time
                                     self._last_candle_ts[symbol] = now
-                                    candle = [
-                                        int(kline[0]), kline[1], kline[2], kline[3],
-                                        kline[4], kline[5], int(kline[6]),
-                                    ]
+                                    # Already 12 fields from REST — passing it whole keeps
+                                    # the cache one shape.
                                     try:
-                                        await on_candle_close(symbol, candle)
+                                        await on_candle_close(symbol, list(kline))
                                     except Exception as exc:
                                         logger.warning(f"[{symbol}] Watchdog candle error: {exc}")
                                 break
+                    except RateLimited as rl:
+                        # Banned. Mark fresh so the next attempt waits a full staleness
+                        # window instead of firing again in 30s and extending the ban.
+                        self._last_candle_ts[symbol] = now
+                        logger.debug(
+                            f"[{symbol}] Candle watchdog skipped — banned {rl.remaining:.0f}s more"
+                        )
                     except Exception as exc:
+                        self._last_candle_ts[symbol] = now
                         logger.warning(f"[{symbol}] Candle watchdog fetch failed: {exc}")
 
             except asyncio.CancelledError:
@@ -474,10 +527,30 @@ class DataFeed:
         if path.exists():
             try:
                 with open(path) as f:
-                    return json.load(f)
+                    return DataFeed._normalise_rows(json.load(f))
             except Exception:
                 return []
         return []
+
+    @staticmethod
+    def _normalise_rows(rows: list) -> list:
+        """Pad every row to the 12 fields a REST kline has.
+
+        Closed WS candles used to be stored as 7 fields, so caches hold both shapes
+        (measured: SOLUSDT_15m_test had 4935 rows of 12 and 65 of 7). Consumers should
+        never have to know which era a row came from.
+
+        Padded with None rather than 0 deliberately: a later consumer must be able to
+        tell 'this candle predates full capture' from 'this candle genuinely had zero
+        taker volume'. Zeros would let an average over one of these fields quietly
+        return a wrong number instead of failing loudly. Nothing reads index > 6 today.
+        """
+        out = []
+        for r in rows:
+            if len(r) < _KLINE_FIELDS:
+                r = list(r) + [None] * (_KLINE_FIELDS - len(r))
+            out.append(r)
+        return out
 
     @staticmethod
     def _write_cache(path: Path, klines: list) -> None:

@@ -20,12 +20,27 @@ Fetches real-time kline data via WebSocket (per-symbol) and REST fallback. Detec
 ### Kline Cache with Gap Detection
 Loads up to 1000 recent klines on startup, stores locally, and merges new candles. Detects time gaps and re-fetches if needed. Separate cache per symbol/timeframe/mode.
 
-**Files**: `bot/data_feed.py` (refresh_klines, _merge)
+**Files**: `bot/data_feed.py` (refresh_klines, _merge, append_kline, _normalise_rows, _ws_kline_to_row)
 **Key details**:
-- Cache file: `data/{SYMBOL}_{TIMEFRAME}_{MODE}.json`
-- Max 1000 candles kept (gitignored)
+- Cache file: `data/{SYMBOL}_{TIMEFRAME}_{MODE}.json` — suffix keyed on the **trading** endpoint (`_is_testnet`), so the primary writes `_test` and the live-market mirror writes `_live`; they can never collide
+- `kline_cache_limit` candles kept (5000 in practice, gitignored)
 - Gap detection: if time jump > 1 candle duration, discard stale cache and re-fetch
+- **Mostly WS-fed**: every closed WebSocket candle is appended via `append_kline`, so REST is only a fallback. `KLINE_REFRESH_EVERY` is 96 candles (was 4 — a 24x reduction). Measured REST kline traffic: ~10 calls/day
+- **Row format is the 12-field REST layout.** `_ws_kline_to_row` maps the WS payload onto it 1:1 (`t,o,h,l,c,v,T,q,n,V,Q,B`), verified against the live stream 2026-09-08 with matching types
+- **Legacy 7-field rows**: closed WS candles were stored with only 7 fields before 2026-09-08, so caches hold both shapes (~65 short rows per symbol). `_read_cache` pads every row to 12 on load, filling missing trailing fields with `None` — not `0`, so a consumer can distinguish "predates full capture" from "genuinely zero volume". Files self-heal on the next write; `kline_cache_limit` rotates the rest out in ~52 days at 15m
+- Nothing currently reads an index above 6 (analyser uses `[4]`; data_feed uses `[0]` and `[6]`)
 - Gracefully handles network errors and cache corruption
+
+### Watchdog Rate-Limit Guarding
+The REST watchdogs that back up the WebSocket now refuse to call the API while Binance has us banned, and back off instead of retrying every tick.
+
+**Files**: `bot/data_feed.py` (`start_watchdog`, `_fetch`, `_fetch_ticker`), `bot/rate_limit_guard.py`
+**Key details**:
+- Candle watchdog goes through `_fetch()` (guarded, and uses the **kline** endpoint — it previously used the trading client, which under `live_klines` would have pulled testnet candles into a production-fed cache)
+- Price watchdog goes through the new `_fetch_ticker()`, keyed on the trading endpoint since the ticker is served by the trading host
+- `RateLimited` is caught and the symbol skipped quietly (debug, not warning)
+- **On any failure the staleness timestamp is updated**, so the next attempt waits a full window (22.5 min candles / 15s prices) instead of firing on the next tick. Previously these stamps were set only on success, so a failing symbol retried forever: up to 32 kline calls/min and 192 ticker calls/min across 16 symbols, each adding 120s to the ban — a self-sustaining ban amplifier, dormant whenever the WebSocket is healthy
+- Bans themselves are largely inherited from CloudFront shared edges (`15.158.242.x`), not caused by our own volume
 
 ### Startup Kline Fallback (Rate-Limit Resilience)
 When update fetch fails after startup (e.g., Binance IP ban during initial sync), bot proceeds with cached klines if available instead of crashing. Only raises if no cache exists.
@@ -42,6 +57,7 @@ Bot processes multiple symbols concurrently via asyncio. Symbol list stored in `
 **Files**: `bot/symbol_registry.py`, `main.py` (on_candle_close per symbol)
 **Key details**:
 - Registry persists to `symbol_registry.json` (seed from `SYMBOLS` env var on first startup)
+- **Adding a symbol needs a restart to take effect.** The registry is re-read every candle (`reload_from_disk`) and the WS resubscribes on reconnect, but `analyzers`/`sym_settings` are built once at startup (`main.py:315`) and `on_candle_close` returns early for a symbol missing from them. Nothing subscribes to the registry's add/remove events. Verified 2026-09-08 with BTCUSDT: it sat in the registry collecting nothing until the bot restarted, then appeared as `Combined stream connected (16 symbols)`
 - Per-symbol status tracking: backtest state, active/disabled
 - Subscriber callback system for registry changes
 - Per-rank symbol disable: can disable rank 2–6 positions per symbol without affecting rank 1 (real orders)

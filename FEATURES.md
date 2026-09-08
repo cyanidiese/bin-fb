@@ -446,7 +446,8 @@ Tracks one virtual position per rank per symbol, with a balance pool per rank sh
 **Key details**:
 
 **Architecture**:
-- Rank 1 stands in for the real-order slot. It opens **only** when no real order was placed for that symbol on that candle, so a blocked signal still records an outcome. A real order evicts it (`real_order_took_over`). Rank 1 is the one rank that still evicts on a preset change, because it must represent whatever would trade now.
+- Rank 1 stands in for the real-order slot. It opens **only** while that slot is free — no order placed this candle **and** no position still open for the symbol (`real_slot_busy`, from `_placed_this_candle` OR `get_state(sym) != IDLE`). A busy slot evicts it (`real_order_took_over`). Rank 1 is the one rank that still evicts on a preset change, because it must represent whatever would trade now.
+- The gate was candle-scoped until 2026-09-08, so from the next candle onwards the stand-in ran alongside a live real trade: SOLUSDT held a real `l2_trend_buy` at 102.97 and a rank-1 virtual `l2_trend_buy` at 103.63 simultaneously — two correlated samples of one move, on a trade that could never have been taken (one position per symbol)
 - Ranks 2..rank_max = virtual positions, one independent pool per rank
 - At any time, each symbol contributes ≤1 open position per rank, **and a preset holds ≤1 open position per symbol across all ranks**
 - Ranks ≥2 do **not** evict on a rank change (changed 2026-09-07). The position runs to its own exit and the slot is skipped until it frees. Previously this eviction was 36.8% of all closed virtual orders, recording exits at an arbitrary current price and diluting the ranking key (`sum(recent_trades[-10:])`) toward zero.

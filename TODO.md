@@ -4,6 +4,43 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 68 (2026-09-08) — deployable budget ignores open positions (LOGGED, NOT APPLIED)
+
+- [ ] **`get_deployable_budget()` does not subtract capital already deployed, and there is
+      no global exposure cap.**
+
+      Found while investigating why SOLUSDT and AVAXUSDT held real orders opened on
+      different candles (08:45 and 09:00 UTC). That part is by design — the only
+      real-order limit is one *per symbol*, so different symbols can each hold one.
+
+      The latent issue is sizing. `get_deployable_budget()` is
+      `(balance - reserve) * max_deploy_pct / 100`, computed from wallet balance, which
+      barely moves when a position opens (margin is reserved, not spent). And the TATS
+      single-candidate branch hands out the **full** deployable budget with
+      `max_trade_pct` bypassed. So the same full budget can be granted again on the next
+      candle to a different symbol, with nothing accounting for what is already open.
+      Grep confirms no `max_open_positions`, no total-exposure check anywhere.
+
+      **Not a problem today.** Measured with both positions open:
+
+      | | |
+      |---|---|
+      | balance | 3,075.00 |
+      | deployable (80% of balance − 15% reserve) | 2,091.00 |
+      | SOLUSDT margin (1,302.57 notional @ 5x) | 260.51 |
+      | AVAXUSDT margin (1,045.72 notional @ 5x) | 209.14 |
+      | **total deployed** | **469.66 = 22.5% of deployable** |
+
+      Actual sizing lands far below the cap, so the stacking never bites. It would matter
+      if per-order sizing ever approached the cap, or if many symbols signalled on
+      consecutive candles.
+
+      **Deliberately not applied** — this is a risk parameter, and the rule is not to
+      change one without data showing the current value costs money. Nothing here shows
+      that. Revisit if deployed margin is ever observed above ~60% of the budget.
+
+---
+
 ## Session 67 (2026-09-07) — SL-width analysis over 163k orders (LOGGED, NOT APPLIED)
 
 - [ ] **Per-symbol stop-loss bands — the largest measured lever, deliberately not applied.**

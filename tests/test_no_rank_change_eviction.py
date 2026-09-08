@@ -19,6 +19,18 @@ SIM = (Path(__file__).resolve().parents[1] / 'bot/virtual_order_simulator.py').r
 MAIN = (Path(__file__).resolve().parents[1] / 'main.py').read_text()
 
 
+def _rank1_branch() -> str:
+    """The rank-1 branch itself, not a fixed number of characters after it.
+
+    This was `SIM[i:i + 1800]`, which broke the moment a comment was added inside the
+    branch -- the code was correct and the test failed anyway. Slicing to where the
+    ranks>=2 handling starts keeps it honest as the branch grows.
+    """
+    start = SIM.index('if rank == 1:')
+    end = SIM.index('existing = self._rank_open[rank].get(symbol)', start)
+    return SIM[start:end]
+
+
 class TestNoEvictionAtRanks2Plus:
     def test_a_rank_change_leaves_the_position_running(self):
         """The whole point: the slot is skipped, the trade continues."""
@@ -57,9 +69,7 @@ class TestRank1StillEvicts:
         assert 'real_order_took_over' in SIM
 
     def test_rank_1_still_evicts_on_a_top_preset_change(self):
-        i = SIM.index('if rank == 1:')
-        body = SIM[i:i + 1800]
-        assert "'rank_change'" in body, \
+        assert "'rank_change'" in _rank1_branch(), \
             'rank 1 must represent whatever would trade NOW'
 
 

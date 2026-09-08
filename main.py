@@ -1722,17 +1722,25 @@ async def run() -> None:
             )
 
         _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
-        # Whether the real-order slot was actually used on this candle. When it was not,
-        # the simulator opens a rank-1 virtual order for the preset that would have
-        # traded, so a blocked signal still produces a data point instead of vanishing.
-        _real_placed = _placed_this_candle.get(symbol) == candle_ts
+        # Whether the real-order slot is occupied at all — an order placed on this
+        # candle, or a position still open from an earlier one. When it is free, the
+        # simulator opens a rank-1 virtual order for the preset that would have traded,
+        # so a blocked signal still produces a data point instead of vanishing.
+        #
+        # The open-position half matters: this was candle-scoped, so from the next candle
+        # onwards the stand-in ran alongside a live real trade on the same preset. The
+        # same condition already excludes the symbol from real-order candidates below.
+        _real_slot_busy = (
+            _placed_this_candle.get(symbol) == candle_ts
+            or order_executor.get_state(symbol) != OrderState.IDLE
+        )
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
             analyzer=analyzer,
             best_preset_name=virtual_tracker.best_preset(symbol),
             base_settings=settings,
             locked_preset=_locked_preset,
-            real_order_placed=_real_placed,
+            real_slot_busy=_real_slot_busy,
         )
 
         # save_risk_config() every candle. A virtual-only instance must never retune

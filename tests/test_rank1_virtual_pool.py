@@ -34,16 +34,16 @@ class TestPool:
 
 
 class TestOpening:
-    def test_on_candle_close_takes_real_order_placed(self):
+    def test_on_candle_close_takes_real_slot_busy(self):
         sig = inspect.signature(VirtualOrderSimulator.on_candle_close)
-        assert 'real_order_placed' in sig.parameters
-        assert sig.parameters['real_order_placed'].default is False, \
+        assert 'real_slot_busy' in sig.parameters
+        assert sig.parameters['real_slot_busy'].default is False, \
             'defaulting to True would silently disable the pool'
 
-    def test_rank_1_is_skipped_when_a_real_order_was_placed(self):
+    def test_rank_1_is_skipped_when_the_real_slot_is_busy(self):
         i = SIM.index('for rank in range(1,')
-        body = SIM[i:i + 1600]
-        assert 'real_order_placed' in body, 'rank 1 opens regardless of the real order'
+        body = SIM[i:i + 2400]
+        assert 'real_slot_busy' in body, 'rank 1 opens regardless of the real slot'
 
     def test_a_real_order_evicts_an_open_rank_1_position(self):
         """Otherwise the same signal is counted twice — once virtual, once real."""

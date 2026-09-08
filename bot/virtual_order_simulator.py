@@ -189,7 +189,7 @@ class VirtualOrderSimulator:
         base_settings: 'Settings',
         locked_preset: Optional[str] = None,
         virtual_only: bool = False,
-        real_order_placed: bool = False,
+        real_slot_busy: bool = False,
     ) -> None:
         # When a preset is manually locked for real orders, exclude it from the
         # virtual pool and shift the rank index so the formerly-best preset fills
@@ -215,13 +215,20 @@ class VirtualOrderSimulator:
 
         for rank in range(1, self._rank_max + 1):
             if rank == 1:
-                # The real-order slot. Only ever holds a virtual position when the real
-                # order did NOT happen, so a blocked signal still produces a data point
-                # instead of vanishing. A disabled symbol already places index 0 at
-                # rank 2, so rank 1 stays empty there and nothing is double-counted.
+                # The real-order slot. Only ever holds a virtual position when the slot
+                # is FREE, so a blocked signal still produces a data point instead of
+                # vanishing. A disabled symbol already places index 0 at rank 2, so rank 1
+                # stays empty there and nothing is double-counted.
+                #
+                # `real_slot_busy` covers an open position, not just an order placed on
+                # this candle. It used to be candle-scoped, so from the next candle
+                # onwards the stand-in opened alongside a live real trade: SOLUSDT held a
+                # real l2_trend_buy at 102.97 and a rank-1 virtual l2_trend_buy at 103.63
+                # at the same time. That is two correlated samples of one move, on a
+                # trade we could never have taken -- one position per symbol is the rule.
                 if virtual_only:
                     continue
-                if real_order_placed:
+                if real_slot_busy:
                     if symbol in self._rank_open[1]:
                         await self._evict(symbol, 1, current_price, 'real_order_took_over')
                     continue

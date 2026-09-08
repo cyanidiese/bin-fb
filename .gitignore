@@ -61,3 +61,11 @@ dashboard/.env*.local
 # Bot-generated dashboard data
 dashboard/public/backtest_results_*.json
 tmp_analysis/
+
+# Never commit these — risk_config_template.json carried a live Telegram bot token
+# into a pushed commit on 2026-09-08 via an unscoped `git add -A`.
+risk_config_template.json
+.claude/settings.local.json
+.claude/worktrees/
+server_data/
+sweep_range_position_results.csv

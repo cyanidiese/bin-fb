@@ -782,18 +782,35 @@ async def run() -> None:
         trade_cap: float = 0.0,
         bypass_pct_cap: bool = False,
     ) -> float:
+        # Every rejection is recorded. 17 of the 27 exits below used to return silently,
+        # so a weighted, signalling symbol could produce nothing all day with no trace of
+        # why — measured: 118 floor_sl_pct events with no follow-up decision, and
+        # ETHFIUSDT/REZUSDT reaching "Using manually locked preset" and then vanishing.
+        # decision_log.record()'s own docstring already listed skip_already_open and
+        # skip_no_signal; they were never wired up.
+        def _skip(decision: str, reason: str, preset: str | None = None,
+                  eff: float = 0.0, lev: int = 0) -> float:
+            dl_record(
+                dl_path, candle_ts=candle_ts, symbol=symbol,
+                decision=decision, reason=reason,
+                balance=balance, leverage=lev, efficiency_score=eff,
+                preset_name=preset, scenario=_active_scenario_name,
+            )
+            return 0.0
+
         # Prevent placing more than one real order per symbol per 15m candle batch.
         # Multiple symbols closing at the same timestamp trigger multiple loop runs;
         # if an order closes and resets to IDLE within that window, we'd double-enter.
         if candle_ts > 0 and _placed_this_candle.get(symbol) == candle_ts:
-            return 0.0
+            return _skip('skip_already_placed_this_candle',
+                         f'an order was already placed for {symbol} on this candle')
 
         # Trading blackout hours (UTC): skip real orders during high-volatility windows.
         # Virtual orders are unaffected — data collection continues normally.
         _blackout = set(risk_cfg.get('trading_blackout_hours', []))
         if _blackout and datetime.now(timezone.utc).hour in _blackout:
-            logger.info(f"[{symbol}] Skipping real order: trading blackout H{datetime.now(timezone.utc).hour:02d} UTC")
-            return 0.0
+            return _skip('skip_blackout_hour',
+                         f'trading blackout H{datetime.now(timezone.utc).hour:02d} UTC')
 
         _locked_presets = locked_presets_for(risk_cfg, current_mode)
         is_locked = symbol in _locked_presets
@@ -805,12 +822,12 @@ async def run() -> None:
             if symbol in _substituted_preset:
                 logger.info(f"[{symbol}] Order uses substituted preset: {preset_name}")
             if _active_scenario_name != "tats" and virtual_tracker.is_virtual_only(symbol):
-                logger.info(f"[{symbol}] Virtual-only floor active — skipping real order")
-                return 0.0
+                return _skip('skip_virtual_only_floor',
+                             'virtual-only floor active for this symbol', preset_name)
         _blocklist = risk_cfg.get("preset_blocklist", [])
         if not is_locked and preset_name in _blocklist:
-            logger.info(f"[{symbol}] Preset '{preset_name}' is blocklisted — skipping real order")
-            return 0.0
+            return _skip('skip_blocklisted_preset',
+                         f"preset '{preset_name}' is blocklisted", preset_name)
         overrides = all_presets.get(preset_name or 'default', {})
         preset_settings = dataclasses.replace(settings, **overrides)
 
@@ -833,19 +850,24 @@ async def run() -> None:
         _current_px = analyzers[symbol].get_current_price() if symbol in analyzers else 0.0
         _trend = analyzers[symbol].get_trend() if symbol in analyzers else None
         if _trend is None:
-            return 0.0
+            return _skip('skip_no_trend', 'analyzer has no trend for this symbol', preset_name)
         _preset_entry_px = _current_px if _current_px > 0 else best.getEntryPrice()
         if _preset_entry_px <= 0:
-            return 0.0
+            return _skip('skip_no_price', 'no usable current price or signal entry', preset_name)
         best = RecommendationEngine(preset_settings).generate(_trend, _preset_entry_px)
         if best is None:
-            return 0.0
+            # The candidate loop found a signal under the base/best-preset settings, but
+            # re-running the engine under THIS preset's own settings produces none. For a
+            # locked symbol that means the lock itself is why nothing trades.
+            return _skip('skip_no_signal',
+                         f"preset '{preset_name}' own settings generate no signal here",
+                         preset_name)
 
         # A3: use analyzer's current price (updated by live ticks) instead of stale signal entry
         _raw_entry = best.getEntryPrice()
         entry = _current_px if _current_px > 0 else _raw_entry
         if entry <= 0:
-            return 0.0
+            return _skip('skip_bad_entry', f'entry price {entry}', preset_name)
 
         side = best.getSide()
         raw_tp = best.getTarget()
@@ -853,16 +875,20 @@ async def run() -> None:
 
         # C1: validate geometry (mirrors backtester.py lines 284-296)
         if sl_raw is None or sl_raw <= 0:
-            return 0.0
+            return _skip('skip_bad_geometry', f'stop {sl_raw} is missing or <= 0', preset_name)
         if side == 'BUY':
             if raw_tp is None or raw_tp <= entry or sl_raw >= entry:
-                return 0.0
+                return _skip('skip_bad_geometry',
+                             f'BUY needs tp>entry>sl, got tp={raw_tp} entry={entry} sl={sl_raw}',
+                             preset_name)
             tp = entry + (raw_tp - entry) * preset_settings.tp_multiplier
             sl_dist_pct = (entry - sl_raw) / entry * 100
             profit_dist_pct = (tp - entry) / entry * 100
         else:
             if raw_tp is None or raw_tp >= entry or sl_raw <= entry:
-                return 0.0
+                return _skip('skip_bad_geometry',
+                             f'SELL needs tp<entry<sl, got tp={raw_tp} entry={entry} sl={sl_raw}',
+                             preset_name)
             tp = entry - (entry - raw_tp) * preset_settings.tp_multiplier
             # SELL SL spikes are harsher — apply ×1.5 when checking min_sl_pct (matches backtester)
             sl_dist_pct = (sl_raw - entry) / entry * 100 * 1.5
@@ -872,7 +898,8 @@ async def run() -> None:
 
         # Absolute SL floor: reject if SL is within 0.01% of entry (degenerate signal)
         if abs(sl - entry) < entry * 0.0001:
-            return 0.0
+            return _skip('skip_degenerate_sl',
+                         f'stop within 0.01% of entry (sl={sl}, entry={entry})', preset_name)
 
         _eff_for_dl = virtual_tracker.get_efficiency_score(symbol)
         _global_min_sl = risk_cfg.get("global_min_sl_pct", 0.0)
@@ -977,7 +1004,8 @@ async def run() -> None:
         loss_dist = abs(sl - entry)
 
         if loss_dist == 0:
-            return 0.0
+            return _skip('skip_degenerate_sl', 'loss distance is zero', preset_name,
+                         _eff_for_dl)
 
         # min_profit_loss_ratio — with optional sl_adjust_to_rr (mirrors backtester lines 318-333)
         if profit_dist / loss_dist < preset_settings.min_profit_loss_ratio:
@@ -1042,24 +1070,18 @@ async def run() -> None:
         # Blocks are keyed by symbol:side so a preset switch never resets protection.
         _sk = f"{symbol}:{side}"
         if candle_ts > 0 and _streak_blocked.get(_sk, 0) >= candle_ts:
-            logger.info(
-                f"[{symbol}] Signal skipped — {side} loss streak cooldown (preset={preset_name})"
-            )
-            return 0.0
+            return _skip('skip_loss_streak_cooldown',
+                         f'{side} loss streak cooldown active', preset_name, _eff_for_dl)
 
         # Preset-specific guards (global pause and zone SL — only when preset opts in)
         if preset_settings.loss_streak_max > 0 and candle_ts > 0:
             _pk = f"{symbol}:{preset_name or 'default'}"
             if _global_pause_until.get(_pk, 0) >= candle_ts:
-                logger.info(
-                    f"[{symbol}] Signal skipped — global pause active (preset={preset_name})"
-                )
-                return 0.0
+                return _skip('skip_global_pause',
+                             'preset global pause active', preset_name, _eff_for_dl)
             if preset_settings.zone_sl_max > 0 and _zone_sl_block.get(_sk, 0) >= candle_ts:
-                logger.info(
-                    f"[{symbol}] Signal skipped — {side} zone SL cooldown active (preset={preset_name})"
-                )
-                return 0.0
+                return _skip('skip_zone_sl_cooldown',
+                             f'{side} zone SL cooldown active', preset_name, _eff_for_dl)
 
         bracket_max = order_executor.get_bracket_max(symbol)
         max_policy_lev = risk_cfg.get('max_leverage_level', 5)
@@ -1158,7 +1180,9 @@ async def run() -> None:
         if order_executor._last_opened_preset.get(symbol) != preset_name and not _virtual_only:
             await order_executor.check_symbols_on_exchange([symbol])
             if order_executor.get_state(symbol) != OrderState.IDLE:
-                return 0.0
+                return _skip('skip_already_open',
+                             'exchange still reports a position/order for this symbol',
+                             preset_name, _eff_for_dl)
 
         # 2% buffer ensures step-rounding never drops notional below the exchange floor (-4164 guard).
         quantity = trade_margin * actual_lev * 1.02 / entry

@@ -1039,6 +1039,18 @@ class OrderExecutor:
         """
         if self._feed is None:
             return
+        # Position info is a read that can wait. Calling it while banned extends the
+        # ban by ~120s, and this runs on every startup — measured 2026-09-08 18:56:29,
+        # a restart during a ban took a -1003 here and pushed the expiry out. Skipping
+        # is safe: an orphan blocks that symbol's signals but keeps its
+        # exchange stop, and sync_positions_with_exchange re-checks every candle.
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            logger.warning(
+                f"Skipping startup reconciliation: '{_key}' rate-limit banned for another {_wait:.0f}s"
+            )
+            return
         try:
             positions = await asyncio.to_thread(self._feed.client.futures_position_information)
             closed_count = 0
@@ -1084,12 +1096,27 @@ class OrderExecutor:
                     "order_executor",
                 )
         except Exception as exc:
+            # Arm the guard: a -1003 here used to be logged and forgotten, so the next
+            # scheduled read walked into the same ban.
+            rl_guard.note_exception(_key, exc)
             logger.warning(f"Reconciliation failed: {exc}")
 
     async def sync_positions_with_exchange(self) -> None:
         """Detect positions that were closed externally (e.g. exchange SL fired while bot ran).
         Clears stale _open_orders entries so the symbol becomes IDLE again."""
         if self._feed is None or not self._open_orders:
+            return
+        # Position info is a read that can wait. Calling it while banned extends the
+        # ban by ~120s, and this runs on every startup — measured 2026-09-08 18:56:29,
+        # a restart during a ban took a -1003 here and pushed the expiry out. Skipping
+        # is safe: this runs once per candle, so a skipped check is retried
+        # in 15 minutes, and the position keeps its exchange stop meanwhile.
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        _wait = rl_guard.blocked_for(_key)
+        if _wait > 0:
+            logger.warning(
+                f"Skipping position sync: '{_key}' rate-limit banned for another {_wait:.0f}s"
+            )
             return
         try:
             positions = await asyncio.to_thread(self._feed.client.futures_position_information)

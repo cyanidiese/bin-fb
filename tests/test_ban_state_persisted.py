@@ -73,13 +73,29 @@ class TestLoad:
         g.load_state(p)
         assert g.blocked_for('testnet') <= _MAX_BLOCK_S + 1
 
-    def test_a_restored_ban_still_probes(self, tmp_path):
+    def test_a_restored_ban_does_not_probe_immediately(self, tmp_path):
+        """A restart must not reset the probe gate.
+
+        Measured 2026-09-08: ban until 19:35:51, restart at 18:56:29, probe at 19:00:00
+        with 36 minutes still to run — because load_state restored the expiry but not
+        _probe_not_before, and an absent gate used to mean "probe now". That put the
+        flap straight back after every restart during a ban.
+        """
+        p = tmp_path / 'rl.json'
+        p.write_text(json.dumps({'testnet': time.time() + 600}))
+        g = RateLimitGuard()
+        g.load_state(p)
+        g._next_probe['testnet'] = time.monotonic() - 1     # backoff satisfied
+        assert g.blocked_for('testnet') > 0, 'probed straight after a restore'
+
+    def test_a_restored_ban_still_probes_near_the_end(self, tmp_path):
         """Binance lifts bans early; a restored block must not be waited out blindly."""
         p = tmp_path / 'rl.json'
         p.write_text(json.dumps({'testnet': time.time() + 600}))
         g = RateLimitGuard()
         g.load_state(p)
         g._next_probe['testnet'] = time.monotonic() - 1
+        g._probe_not_before['testnet'] = time.monotonic() - 1   # reached the gate
         assert g.blocked_for('testnet') == 0.0, 'no probe slot offered after a restore'
 
     def test_multiple_endpoints_round_trip(self, tmp_path):

@@ -382,7 +382,14 @@ class RateLimitGuard:
             # fires minutes into an hour-long ban, "succeeds" against a clean edge, and
             # the traffic that follows walks into a banned one and extends it.
             not_before = self._probe_not_before.get(key)
-            if not_before is not None and now < not_before and settle is None:
+            if not_before is None:
+                # A blocked key with no gate means some path set _blocked_until without
+                # going through _arm or load_state. Derive one rather than falling open —
+                # an absent gate used to mean "probe immediately", which is the failure
+                # mode this whole check exists to prevent.
+                not_before = now + remaining * _PROBE_AFTER_FRAC
+                self._probe_not_before[key] = not_before
+            if now < not_before and settle is None:
                 return remaining
 
             next_probe = self._next_probe.get(key)
@@ -544,6 +551,13 @@ class RateLimitGuard:
                 self._banned_until_wall[key] = float(expiry)
                 self._probe_delay[key] = _PROBE_FIRST_S
                 self._next_probe[key] = now_m + _PROBE_FIRST_S
+                # And the probe gate. Without this a restart during a ban lost it, and
+                # since blocked_for() skips an absent gate the old flap came straight
+                # back: measured 2026-09-08, ban until 19:35:51, restart at 18:56:29,
+                # probe at 19:00:00 with 36 min still to run. Derived from what is LEFT
+                # rather than the original window, which is slightly stricter — the
+                # original duration is not recoverable from the persisted expiry.
+                self._probe_not_before[key] = now_m + remaining * _PROBE_AFTER_FRAC
                 restored.append((key, remaining))
         for key, remaining in restored:
             logger.warning(

@@ -122,6 +122,40 @@ class TestReplayOfTheRealEpisode:
                 assert g.blocked_for(KEY) > 0
 
 
+class TestTheGateSurvivesARestart:
+    """The gate lives in memory; the ban expiry is persisted. If a restart restores one
+    without the other, the flap comes back — which is exactly what happened on
+    2026-09-08 after I deployed the gate and then restarted three times."""
+
+    def _restore(self, tmp_path, secs: float):
+        import json, time as _t
+        f = tmp_path / 'rl.json'
+        f.write_text(json.dumps({KEY: _t.time() + secs}))
+        g = RateLimitGuard()
+        g.load_state(f)
+        return g
+
+    def test_load_state_sets_the_gate(self, tmp_path):
+        g = self._restore(tmp_path, 3600)
+        assert g._probe_not_before.get(KEY) is not None, \
+            'a restored ban with no gate probes immediately'
+
+    def test_a_restored_ban_is_not_probed_immediately(self, tmp_path, clock):
+        g = self._restore(tmp_path, 3600)
+        g._next_probe[KEY] = clock['t'] - 1
+        assert g.blocked_for(KEY) > 0
+
+    def test_a_blocked_key_with_no_gate_fails_closed(self, clock):
+        """Any path that sets _blocked_until without going through _arm/load_state must
+        not fall open — an absent gate used to mean 'probe now'."""
+        g = RateLimitGuard()
+        g._blocked_until[KEY] = clock['t'] + 3600
+        g._next_probe[KEY] = clock['t'] - 1
+        assert KEY not in g._probe_not_before        # premise
+        assert g.blocked_for(KEY) > 0
+        assert g._probe_not_before.get(KEY) is not None, 'it should derive and keep one'
+
+
 class TestNothingElseRegressed:
     def test_an_expired_ban_still_clears_without_a_probe(self, clock):
         g = RateLimitGuard()
@@ -143,3 +177,35 @@ class TestNothingElseRegressed:
     def test_an_unbanned_key_is_never_gated(self, clock):
         g = RateLimitGuard()
         assert g.blocked_for('production') == 0.0
+
+
+class TestPositionReadsAreGuardedToo:
+    """A restart during a ban used to extend it through the startup reconciliation.
+
+    Measured 2026-09-08:
+        18:37:30  ARMED 3501s (ban until 19:35:51)
+        18:56:29  Reconciliation failed: -1003   <- restart, unguarded read, +120s
+    """
+
+    @staticmethod
+    def _src(name: str) -> str:
+        import inspect
+        from bot.order_executor import OrderExecutor
+        return inspect.getsource(getattr(OrderExecutor, name))
+
+    def test_startup_reconciliation_checks_the_guard(self):
+        s = self._src('reconcile_with_exchange')
+        assert 'rl_guard.blocked_for' in s
+        assert s.index('rl_guard.blocked_for') < s.index('futures_position_information')
+
+    def test_position_sync_checks_the_guard(self):
+        s = self._src('sync_positions_with_exchange')
+        assert 'rl_guard.blocked_for' in s
+        assert s.index('rl_guard.blocked_for') < s.index('futures_position_information')
+
+    def test_a_rejection_there_arms_the_guard(self):
+        """Otherwise the next scheduled read walks into the same ban."""
+        assert 'rl_guard.note_exception' in self._src('reconcile_with_exchange')
+
+    def test_the_balance_read_is_still_guarded(self):
+        assert 'rl_guard.blocked_for' in self._src('fetch_account_balance')

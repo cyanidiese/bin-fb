@@ -691,7 +691,18 @@ async def run() -> None:
     # candle. Staleness is bounded by real activity rather than by this number: the
     # balance only moves when a position closes, and closes call _read_wallet_now(),
     # which bypasses the TTL and refreshes this cache on the way past.
-    _BALANCE_TTL = 60.0
+    # Raised from 60s to one candle, paired with _balance_prefetch_loop() below. Every
+    # -1003 on 2026-09-08 was this call, and all 13 landed within a second of a candle
+    # boundary (+0.45s..+0.92s) — the instant every bot on the exchange reads its account,
+    # on a CloudFront edge shared with other tenants. A 60s TTL guarantees the boundary
+    # read misses the cache and goes to the network at exactly that spike. One candle means
+    # the pre-fetch, which runs in the quiet middle, still covers the boundary.
+    #
+    # Staleness is not really 900s: the balance only moves when a position closes, and a
+    # close calls _read_wallet_now(), which bypasses the TTL and refreshes this cache on the
+    # way past. If a pre-fetch fails, the next boundary read finds the cache expired and
+    # fetches as before — degrading to the old behaviour rather than serving a stale figure.
+    _BALANCE_TTL = 900.0
 
     # Daily exchange-info refresh: re-fetch leverage brackets + min notionals every 96 candles
     # (96 × 15 min = 24 h). Counter increments only on the first symbol close per candle so
@@ -1984,6 +1995,40 @@ async def run() -> None:
     _hb_task = asyncio.create_task(
         _heartbeat_loop(mode_manager, started_at, symbol_registry)
     )
+    async def _balance_prefetch_loop() -> None:
+        """Read the wallet mid-candle so the candle-close read is a cache hit.
+
+        This is the only call that has been getting banned. Reading it 7.5 minutes into
+        the candle instead of at the boundary takes it off the moment the shared edge is
+        saturated, and costs nothing extra: it is the same one call per candle, just at a
+        quieter time.
+        """
+        period = feed._timeframe_to_ms(timeframe) / 1000.0
+        offset = period / 2.0          # 15m candle -> :07:30, :22:30, :37:30, :52:30
+        while True:
+            now = time.time()
+            nxt = (now // period) * period + offset
+            if nxt <= now:
+                nxt += period
+            await asyncio.sleep(max(1.0, nxt - now))
+            try:
+                bal = await order_executor.fetch_account_balance()
+                if bal > 0:
+                    _balance_cache_inner[0] = (bal, time.monotonic())
+                    logger.debug(f"Balance pre-fetched mid-candle: {bal:.2f} USDT")
+                else:
+                    # Banned or failed. The boundary read will fetch, as it used to.
+                    logger.debug("Mid-candle balance pre-fetch returned 0 — leaving cache")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(f"Mid-candle balance pre-fetch failed: {exc}")
+
+    # Virtual-only has no credentials and sizes from the rank pools, not this balance.
+    _balance_task = None
+    if not _virtual_only:
+        _balance_task = asyncio.create_task(_balance_prefetch_loop())
+
     _watchdog_task = asyncio.create_task(
         feed.start_watchdog(
             get_symbols=symbol_registry.get_symbols,
@@ -2021,7 +2066,7 @@ async def run() -> None:
         # _menu_task is None on a virtual-only instance, which does not run the
         # Telegram menu — filter before cancelling or shutdown raises AttributeError.
         _tasks = [t for t in (_poll_task, _hb_task, _watchdog_task, _menu_task,
-                              _mirror_task) if t is not None]
+                              _mirror_task, _balance_task) if t is not None]
         for t in _tasks:
             t.cancel()
         for t in _tasks:

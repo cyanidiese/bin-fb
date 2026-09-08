@@ -31,6 +31,19 @@ Loads up to 1000 recent klines on startup, stores locally, and merges new candle
 - Nothing currently reads an index above 6 (analyser uses `[4]`; data_feed uses `[0]` and `[6]`)
 - Gracefully handles network errors and cache corruption
 
+### Mid-Candle Balance Pre-Fetch
+The wallet read happens 7.5 minutes into each candle instead of at the candle close, so the close-time read is served from cache and never touches the network at the exchange's most congested instant.
+
+**Files**: `main.py` (`_balance_prefetch_loop`, `_BALANCE_TTL`, `_balance_cache_inner`)
+**Key details**:
+- **Why**: of 15 `-1003` responses on 2026-09-08, **13 were the balance call and every one landed within a second of a candle boundary** (+0.45s..+0.92s). Zero were klines. The banned addresses (`15.158.242.x`) are CloudFront edge addresses shared with other tenants — not our egress (`185.237.14.105`), and not what `fapi`/`testnet` resolve to (`13.35.58.x` / `65.8.131.x`)
+- A 60s TTL *guaranteed* the boundary read missed the cache and hit the network at that spike. `_BALANCE_TTL` is now 900s (one candle) so the pre-fetched value covers the boundary
+- `_balance_prefetch_loop()` targets `candle_boundary + period/2` — :07:30, :22:30, :37:30, :52:30 on 15m. Same one call per candle, at a quieter moment
+- Only caches a positive result: a banned fetch returns 0.0, and caching that would recreate the `balance=0.00 < margin` block
+- Not started on the virtual-only mirror (no credentials; virtual sizing uses the rank pools)
+- Cancelled on shutdown alongside the other background tasks
+- Staleness is bounded by activity, not by the TTL: a position close calls `_read_wallet_now()`, which bypasses the TTL and refreshes the cache. If a pre-fetch fails, the next boundary read finds the cache expired and fetches as before
+
 ### Watchdog Rate-Limit Guarding
 The REST watchdogs that back up the WebSocket now refuse to call the API while Binance has us banned, and back off instead of retrying every tick.
 

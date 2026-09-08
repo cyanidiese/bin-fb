@@ -56,6 +56,39 @@ def record(
     _append(path, entry)
 
 
+# 'placed' rows are the real-order records every profitability analysis reads. Skips are
+# far more numerous and individually far less valuable, so a plain tail-trim throws away
+# exactly the rows worth keeping. Measured 2026-09-08: adding reasons to the 17 silent
+# rejection paths evicted 15 of 79 'placed' rows within four hours, and shrank the log's
+# window from 27 days to 18.
+# A protected FLOOR, not a ceiling: the newest MAX_PLACED 'placed' rows are exempt from
+# eviction, and any older ones still compete for the remaining slots by recency. So a log
+# that is mostly 'placed' still fills to MAX_ENTRIES rather than shrinking to MAX_PLACED.
+MAX_PLACED = 1_000   # ~3 real orders/day measured -> years of protected history
+
+
+def _trim(rows: list) -> list:
+    """Trim to MAX_ENTRIES, keeping recent 'placed' rows in preference to skips.
+
+    Preserves original order. Never grows the file beyond MAX_ENTRIES, so the
+    read-modify-write cost per decision is unchanged.
+    """
+    keep_ids = {
+        id(e) for e in
+        [e for e in rows if e.get('decision') == 'placed'][-MAX_PLACED:]
+    }
+    budget = MAX_ENTRIES - len(keep_ids)
+    kept = []
+    for e in reversed(rows):          # newest first, so the budget keeps the newest skips
+        if id(e) in keep_ids:
+            kept.append(e)         # protected: never evicted while under MAX_ENTRIES
+        elif budget > 0:
+            kept.append(e)         # everything else, newest first, incl. older 'placed'
+            budget -= 1
+    kept.reverse()
+    return kept
+
+
 def _append(path: Path, entry: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     existing: list = []
@@ -67,7 +100,7 @@ def _append(path: Path, entry: dict) -> None:
             existing = []
     existing.append(entry)
     if len(existing) > MAX_ENTRIES:
-        existing = existing[-MAX_ENTRIES:]
+        existing = _trim(existing)
     # PID-qualified tmp name prevents collision when multiple processes write concurrently
     tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(existing))

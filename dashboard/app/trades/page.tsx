@@ -8,6 +8,8 @@ import InstanceToggle, { oppositeMode, type Instance } from '@/components/Instan
 import { lockedPresetsFor } from '@/app/api/_locked-presets'
 import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
+import RealOrdersWidget from '@/components/RealOrdersWidget'
+import { fmtDuration, durationSeconds } from '@/lib/datetime'
 import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
   filterTradesData, filterKlines,
@@ -698,6 +700,14 @@ export default function TradesPage() {
       {symbolsWithOrders.length > 0 && (
         <SymbolPicker {...pickerProps} />
       )}
+      {/* Real orders across every symbol. The table further down is scoped to the
+          selected symbol; real orders are few and are the only ones that move money, so
+          the useful overview is all of them at once. Clicking a row selects that symbol. */}
+      <RealOrdersWidget
+        mode={dataMode}
+        selectedSymbol={symbol}
+        onSelectSymbol={setSymbol}
+      />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-white">{symbol} — Trades</h1>
         <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400">{data.mode}</span>
@@ -1019,6 +1029,7 @@ export default function TradesPage() {
                   <th className="py-2 pr-3 text-right">Close</th>
                   <th className="py-2 pr-3 text-right">PnL USDT</th>
                   <th className="py-2 pr-3">Result</th>
+                  <th className="py-2 pr-3 text-right" title="How long the order was open. Counts up while it is still running.">Duration</th>
                   <th className="py-2 text-right">Time</th>
                 </tr>
               </thead>
@@ -1086,6 +1097,9 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-gray-600">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
+                      {fmtDuration(durationSeconds(order.open_time))}
+                    </td>
                     <td className="py-1.5 text-right text-gray-500 text-xs">
                       {order.open_time ? new Date(order.open_time).toLocaleString() : '—'}
                     </td>
@@ -1153,6 +1167,9 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-gray-600">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
+                      {fmtDuration(durationSeconds(order.open_time))}
+                    </td>
                     <td className="py-1.5 text-right text-gray-500 text-xs">
                       {new Date(order.open_time).toLocaleString()}
                     </td>
@@ -1199,6 +1216,9 @@ export default function TradesPage() {
                         {pnl != null ? pnlFmt(pnl) : '—'}
                       </td>
                       <td className={`py-1.5 pr-3 capitalize ${resultColor(String(result))}`}>{result || '—'}</td>
+                      <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
+                        {fmtDuration(durationSeconds(order.open_time, closedAt))}
+                      </td>
                       <td className="py-1.5 text-right text-gray-500 text-xs">
                         {closedAt ? new Date(closedAt).toLocaleString() : '—'}
                       </td>

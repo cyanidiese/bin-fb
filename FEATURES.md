@@ -35,6 +35,21 @@ Loads up to 1000 recent klines on startup, stores locally, and merges new candle
 - Nothing currently reads an index above 6 (analyser uses `[4]`; data_feed uses `[0]` and `[6]`)
 - Gracefully handles network errors and cache corruption
 
+### Order Duration, and a Cross-Symbol Real-Orders Widget
+A `Duration` column on the Trades orders table for open and closed orders alike, plus a compact real-orders table across every symbol, under the symbol selector.
+
+**Files**: `dashboard/lib/datetime.ts` (`fmtDuration`, `durationSeconds`), `dashboard/components/RealOrdersWidget.tsx`, `dashboard/app/api/trades/real/route.ts`, `dashboard/app/trades/page.tsx`
+**Key details**:
+- **Duration column** sits between `Result` and `Time`. An open order counts up to now, a closed one measures open→close, so both read the same way. Formatted `42s` / `7m` / `1h 12m` / `2d 3h`; `—` when the timestamp is unusable, never `0s`
+- The helpers live in `lib/datetime.ts` and are shared by the table and the widget, so the two cannot disagree
+- **The widget is cross-symbol on purpose.** The main table is scoped to the selected symbol; real orders are few (79 in a month) and are the only ones that move money, so the useful overview is all of them at once rather than a filtered copy of the table below
+- `GET /api/trades/real?mode=&limit=` aggregates `real_orders_{SYM}_{mode}.json` across the registry **and** the open positions from `open_positions_{mode}.json` — the per-symbol files are only written on close, so an open order appears nowhere else
+- Open orders sort first (they can still be acted on), then newest closed. `limit` is bounded by `MAX_LIMIT`
+- Header totals (`net`, win %, counts) span **every** real order on disk, not just the rows shown, so the figure describes the book rather than the page
+- Open rows show the unrealised result from the snapshot and carry a `NOW` badge; a footnote gives the snapshot time, since it is written once per candle
+- Clicking a row selects that symbol on the page
+- Column alignment is asserted in tests: `levelCell()` renders one `<td>` that is not literal in the row markup, so the expected literal count is one below the header count
+
 ### Manual Order Close from the Trades Page
 The open-position rows carry a `NOW` badge with a full hover tooltip, and a red ✕ that market-closes that position — real or virtual — after inline confirmation.
 

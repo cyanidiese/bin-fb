@@ -47,3 +47,37 @@ export function datetimeLocalToCandleIndex(dt: string, klines: Kline[]): number 
   }
   return lo
 }
+
+
+/**
+ * Seconds → a compact human duration: "42s", "7m", "1h 12m", "2d 3h".
+ *
+ * Used for order duration in both the Trades orders table and the real-orders widget,
+ * so an open position and a closed one read the same way. Null in, em dash out.
+ */
+export function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '—'
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${m % 60}m`
+  return `${Math.floor(h / 24)}d ${h % 24}h`
+}
+
+/**
+ * Seconds between two ISO timestamps. `to` omitted means "until now", which is how an
+ * open position gets a duration. Null when `from` is missing or unparseable.
+ */
+export function durationSeconds(
+  from?: string | null,
+  to?: string | null,
+): number | null {
+  if (!from) return null
+  const a = Date.parse(from)
+  if (Number.isNaN(a)) return null
+  const b = to ? Date.parse(to) : Date.now()
+  if (Number.isNaN(b)) return null
+  return Math.max(0, Math.round((b - a) / 1000))
+}

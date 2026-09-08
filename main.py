@@ -1460,6 +1460,15 @@ async def run() -> None:
                 locked_preset=_locked_preset,
                 virtual_only=True,
             )
+            # Persist the candle for disabled symbols too. This branch used to return
+            # before the append below, so their caches never advanced from the stream and
+            # every restart re-fetched all of them: measured 2026-09-08, 65 load_klines
+            # calls across 8 restarts — ~8 per restart, exactly the 8 disabled symbols.
+            # They receive WS candles like any other symbol, so there is nothing to fetch.
+            try:
+                await asyncio.to_thread(feed.append_kline, symbol, timeframe, kline)
+            except Exception as _cache_exc:
+                logger.debug(f"[{symbol}] WS kline cache append failed: {_cache_exc}")
             return
 
         incoming_open_ms = int(kline[0])

@@ -100,6 +100,16 @@ class TestTheLoopBehaviour:
     def test_a_failure_does_not_kill_the_loop(self):
         assert 'except Exception' in BODY
 
+    def test_the_prefetch_is_observable_at_the_configured_log_level(self):
+        """The root logger runs at INFO. A debug line would make the whole mitigation
+        invisible in production — which is how the silent-rejection and balance=0.00 bugs
+        survived as long as they did."""
+        assert 'logger.info(f"Balance pre-fetched mid-candle' in BODY
+
+    def test_a_missed_prefetch_is_surfaced(self):
+        """That candle loses the mitigation and its close-time read hits the network."""
+        assert 'logger.warning(' in BODY
+
 
 class TestWiring:
     def test_it_does_not_run_on_the_virtual_only_instance(self):

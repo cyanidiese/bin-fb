@@ -2015,10 +2015,17 @@ async def run() -> None:
                 bal = await order_executor.fetch_account_balance()
                 if bal > 0:
                     _balance_cache_inner[0] = (bal, time.monotonic())
-                    logger.debug(f"Balance pre-fetched mid-candle: {bal:.2f} USDT")
+                    # INFO, not debug: the root logger runs at INFO, and a mitigation you
+                    # cannot see working is one you cannot confirm. Once per candle, so
+                    # 96 lines/day against the thousands the discard path already writes.
+                    logger.info(f"Balance pre-fetched mid-candle: {bal:.2f} USDT")
                 else:
-                    # Banned or failed. The boundary read will fetch, as it used to.
-                    logger.debug("Mid-candle balance pre-fetch returned 0 — leaving cache")
+                    # Banned or failed. The boundary read will fetch, as it used to — so
+                    # this candle loses the mitigation and is worth seeing.
+                    logger.warning(
+                        "Mid-candle balance pre-fetch returned 0 — candle-close read will "
+                        "go to the network"
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

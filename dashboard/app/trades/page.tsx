@@ -129,7 +129,11 @@ function buildPresetRows(data: TradesData): PresetRow[] {
     const realCount    = real.length
     const virtualCount = virt.length
     const totalTrades  = realCount + virtualCount
-    const winPct       = totalTrades > 0 ? ((wins + partials + trails) / totalTrades) * 100 : null
+    // Denominator is strategy exits only. Using totalTrades divided by every close,
+    // bookkeeping included, so a preset with 40 reshuffles and 10 real exits read ~4x
+    // worse than it performed — and unevenly, since reshuffle counts vary wildly by rank.
+    const decided      = wins + partials + trails + losses
+    const winPct       = decided > 0 ? ((wins + partials + trails) / decided) * 100 : null
 
     const sumPct = (orders: { entry_price: number; quantity: number; leverage: number; pnl_usdt: number }[]) =>
       orders.reduce((s, o) => {

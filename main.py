@@ -587,9 +587,19 @@ async def run() -> None:
     bh_path = _PROJECT_ROOT / 'data' / f'balance_history_{current_mode}.json'
     dl_path = _PROJECT_ROOT / 'data' / f'decision_log_{current_mode}.json'
 
+    # Mutable container for the balance TTL cache (mutable so the nested coroutine below
+    # can update it). Declared before the startup read so that read can prime it.
+    _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
+
     startup_balance = await order_executor.fetch_account_balance()
     if startup_balance > 0:
         risk_manager.seed_real_balance(startup_balance)
+        # Prime the placement-path cache too. It used to start at 0.0 and only fill on a
+        # successful fetch, so after a restart one failed read left balance=0.00 and every
+        # symbol hit skip_balance ('balance=0.00 < margin=1.00') while the bot already knew
+        # the real figure. Observed 2026-09-08: seeded 3072.38 at 13:10, then two REZUSDT
+        # orders blocked at 13:15 and 13:30 for insufficient balance.
+        _balance_cache_inner[0] = (startup_balance, time.monotonic())
     bh_record(bh_path, balance=risk_manager.get_balance(), trigger='startup')
     virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
 
@@ -672,8 +682,6 @@ async def run() -> None:
 
     # ── Callbacks ──────────────────────────────────────────────────────── #
 
-    # Mutable container for balance TTL cache (allows mutation inside nested coroutine)
-    _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
     # One candle batch = all 15 symbols processing the same close. Measured over 66
     # batches on 2026-09-06: median 6.96s, p90 25.3s, max 27.8s. The old 5s TTL expired
     # mid-batch in 55% of them, so the same unchanged balance was re-fetched several
@@ -733,7 +741,12 @@ async def run() -> None:
         if bal > 0:
             _balance_cache_inner[0] = (bal, now)
             return bal
-        return cached_val
+        # Fetch failed. Prefer the TTL cache, then RiskManager's balance — its
+        # last-known-good, updated on every successful read and every trade close.
+        # Returning 0.0 here reads as "no funds" and blocks every order via skip_balance.
+        if cached_val > 0:
+            return cached_val
+        return risk_manager.get_balance()
 
     def _after_or_computed(closed: dict, wallet_after: float) -> tuple[float, bool]:
         """(balance_after, was_computed) for a close notification.

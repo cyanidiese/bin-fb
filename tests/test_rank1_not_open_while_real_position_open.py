@@ -83,11 +83,34 @@ class TestBehaviour:
         await _candle(sim, real_slot_busy=True)
         assert 'BTCUSDT' not in sim._rank_open[1], 'stand-in ran alongside a real trade'
 
-    async def test_the_other_ranks_are_unaffected(self, tmp_path):
-        """Only rank 1 stands in for the real slot; ranks 2+ must keep running."""
+    async def test_no_rank_opens_while_the_slot_is_busy(self, tmp_path):
+        """A symbol in a real trade holds no virtual position at ANY rank. Ranks 2+ used
+        to keep opening alongside it, so one symbol showed a real position and dozens of
+        virtual ones at once."""
         sim = make_simulator(tmp_path, rank_max=4)
         await _candle(sim, real_slot_busy=True)
-        assert 'BTCUSDT' in sim._rank_open[2]
+        for r in range(1, 5):
+            assert 'BTCUSDT' not in sim._rank_open[r], f'rank {r} opened beside a real order'
+
+    async def test_every_open_rank_is_released_when_the_slot_becomes_busy(self, tmp_path):
+        """Positions already running must be evicted, not just blocked from opening."""
+        sim = make_simulator(tmp_path, rank_max=4)
+        await _candle(sim, real_slot_busy=False)
+        assert any('BTCUSDT' in sim._rank_open[r] for r in range(1, 5)), \
+            'nothing opened; the eviction assertion below would be vacuous'
+        await _candle(sim, real_slot_busy=True)
+        for r in range(1, 5):
+            assert 'BTCUSDT' not in sim._rank_open[r], f'rank {r} survived beside a real order'
+
+    async def test_other_symbols_are_untouched(self, tmp_path):
+        """The rule is per symbol -- a real order on one must not clear another's pools."""
+        sim = make_simulator(tmp_path, rank_max=4)
+        sim._min_notionals['ETHUSDT'] = 5.0
+        await _candle(sim, symbol='ETHUSDT', real_slot_busy=False)
+        assert any('ETHUSDT' in sim._rank_open[r] for r in range(1, 5))
+        await _candle(sim, symbol='BTCUSDT', real_slot_busy=True)
+        assert any('ETHUSDT' in sim._rank_open[r] for r in range(1, 5)), \
+            "another symbol's virtual positions were cleared"
 
     async def test_a_disabled_symbol_still_leaves_rank_1_empty(self, tmp_path):
         """virtual_only symbols put index 0 at rank 2; rank 1 must stay unused."""

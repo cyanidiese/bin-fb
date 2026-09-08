@@ -213,6 +213,20 @@ class VirtualOrderSimulator:
         lev = self._get_leverage(symbol)
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
 
+        # A symbol in a real trade holds no virtual positions at all. Ranks 2+ used to
+        # keep opening alongside the real order, so one symbol could show a real position
+        # and dozens of virtual ones on the same candle. Any already-open position is
+        # released here, and no rank opens while the real slot stays busy.
+        #
+        # Trade-off, recorded deliberately: while a symbol is in a real trade its preset
+        # comparison collects nothing, so an actively-trading symbol accumulates virtual
+        # history more slowly than an idle one.
+        if real_slot_busy:
+            for _r in range(1, self._rank_max + 1):
+                if symbol in self._rank_open[_r]:
+                    await self._evict(symbol, _r, current_price, 'real_order_took_over')
+            return
+
         for rank in range(1, self._rank_max + 1):
             if rank == 1:
                 # The real-order slot. Only ever holds a virtual position when the slot
@@ -220,17 +234,11 @@ class VirtualOrderSimulator:
                 # vanishing. A disabled symbol already places index 0 at rank 2, so rank 1
                 # stays empty there and nothing is double-counted.
                 #
-                # `real_slot_busy` covers an open position, not just an order placed on
-                # this candle. It used to be candle-scoped, so from the next candle
-                # onwards the stand-in opened alongside a live real trade: SOLUSDT held a
-                # real l2_trend_buy at 102.97 and a rank-1 virtual l2_trend_buy at 103.63
-                # at the same time. That is two correlated samples of one move, on a
-                # trade we could never have taken -- one position per symbol is the rule.
+                # A busy real slot is handled above for every rank, so by here the slot
+                # is free. SOLUSDT once held a real l2_trend_buy at 102.97 and a rank-1
+                # virtual l2_trend_buy at 103.63 at the same time -- two correlated
+                # samples of one move, on a trade that could never have been taken.
                 if virtual_only:
-                    continue
-                if real_slot_busy:
-                    if symbol in self._rank_open[1]:
-                        await self._evict(symbol, 1, current_price, 'real_order_took_over')
                     continue
                 # the preset that would have traded: the manual lock, else the best
                 _r1_name = locked_preset or (

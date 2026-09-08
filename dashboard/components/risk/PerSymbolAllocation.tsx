@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { reweightAfterDrag } from './reweight'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { RiskConfig, RiskState } from '@/lib/risk-types'
@@ -186,9 +187,10 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
     const newIdx = displayOrder.indexOf(over.id as string)
     if (oldIdx === -1 || newIdx === -1) return
     const newOrder = arrayMove(displayOrder, oldIdx, newIdx)
-    const n = newOrder.length
-    const newWeights: Record<string, number> = {}
-    newOrder.forEach((sym, i) => { newWeights[sym] = n - i })
+    // Was `newWeights[sym] = n - i` for every row, which rewrote the whole table by
+    // position: the bottom row got weight 1, so one drag activated every zero-weight
+    // symbol for real orders. Drag can now deactivate but never activate.
+    const newWeights = reweightAfterDrag(newOrder, config.symbol_weights, active.id as string)
     setDragOrder(newOrder)
     patchConfig({ symbol_weights: newWeights })
   }

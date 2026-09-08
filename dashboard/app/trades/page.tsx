@@ -81,6 +81,8 @@ const BOOKKEEPING_LABELS: Record<string, string> = {
   real_order_took_over:'replaced by a real order',
   rank_disabled:       'rank pool disabled',
   insufficient_presets:'too few presets to fill the rank',
+  manual_close:        'closed by hand from this page',
+  market_close:        'closed at market on shutdown',
 }
 
 function bookkeepingTooltip(row: PresetRow): string | undefined {
@@ -93,6 +95,53 @@ function bookkeepingTooltip(row: PresetRow): string | undefined {
     'which is why they appear in the trade count but in no outcome column:',
     ...lines,
   ].join('\n')
+}
+
+/** Everything known about an open position, for the NOW badge's tooltip. */
+function openPositionTooltip(o: {
+  symbol?: string; preset_name?: string; side?: string; entry_price?: number
+  tp?: number | null; sl?: number | null; quantity?: number; leverage?: number | null
+  scenario?: string | null; open_time?: string | null; rank?: number
+  current_price?: number | null; unrealized_pnl_usdt?: number | null
+  unrealized_pct?: number | null
+}, snapshotAt?: string | null): string {
+  const rows: string[] = []
+  const add = (k: string, v: unknown) => {
+    if (v !== null && v !== undefined && v !== '') rows.push(`${k.padEnd(11)}${v}`)
+  }
+  add('Symbol', o.symbol)
+  add('Type', o.rank != null ? `virtual, rank ${o.rank}` : 'real')
+  add('Preset', o.preset_name)
+  add('Side', o.side)
+  add('Entry', o.entry_price)
+  add('Now', o.current_price)
+  add('Take profit', o.tp)
+  add('Stop loss', o.sl)
+  add('Quantity', o.quantity)
+  add('Leverage', o.leverage != null ? `${o.leverage}x` : null)
+  add('Scenario', o.scenario)
+  if (o.open_time) {
+    const mins = Math.round((Date.now() - new Date(o.open_time).getTime()) / 60000)
+    const h = Math.floor(mins / 60)
+    add('Open for', h > 0 ? `${h}h ${mins % 60}m` : `${mins}m`)
+    add('Opened', new Date(o.open_time).toLocaleString())
+  }
+  if (o.unrealized_pnl_usdt != null) {
+    const sign = o.unrealized_pnl_usdt >= 0 ? '+' : ''
+    const pct = o.unrealized_pct != null ? ` (${sign}${o.unrealized_pct.toFixed(2)}% on margin)` : ''
+    rows.push('')
+    rows.push(`${(o.unrealized_pnl_usdt >= 0 ? 'WINNING' : 'LOSING').padEnd(11)}`
+              + `${sign}${o.unrealized_pnl_usdt.toFixed(2)} USDT${pct}`)
+  } else {
+    rows.push('')
+    rows.push('Result so far: no current price yet')
+  }
+  if (snapshotAt) {
+    // Written once per candle, so say when — a stale figure that looks live would be
+    // worse than one that admits its age, especially next to a close button.
+    rows.push(`as of ${new Date(snapshotAt).toLocaleTimeString()}`)
+  }
+  return rows.join('\n')
 }
 
 function buildPresetRows(data: TradesData): PresetRow[] {
@@ -228,6 +277,10 @@ export default function TradesPage() {
   const [sortDir, setSortDir]                 = useState<'asc' | 'desc'>('desc')
   const [lockedPreset, setLockedPreset]       = useState<string | null>(null)
   const [lockBusy, setLockBusy]               = useState(false)
+  // Manual close: one pending row at a time, so a single click cannot arm two closes.
+  const [pendingClose, setPendingClose] = useState<string | null>(null)
+  const [closeBusy, setCloseBusy]       = useState(false)
+  const [closeError, setCloseError]     = useState<string | null>(null)
 
   // Which instance's data this page shows. Pure view state — it never changes what the
   // bot trades. 'primary' keeps today's behaviour.
@@ -307,14 +360,10 @@ export default function TradesPage() {
     instanceLabel: instance === 'primary' ? `primary (${botMode})` : `shadow (${dataMode})`,
   }
 
-  useEffect(() => {
-    if (!symbol) return
-    setData(null)
-    setError(null)
-    setSelectedPreset(null)
-    setSortKey('rank')
-    setSortDir('asc')
-    fetch(`/api/trades?symbol=${symbol}&mode=${dataMode}`)
+  /** Re-read the trades payload without touching the user's selection or sort order.
+   *  Used after a manual close, where resetting the view would be an unwanted surprise. */
+  function loadTrades(sym: string, mode: string) {
+    return fetch(`/api/trades?symbol=${sym}&mode=${mode}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d: TradesData) => {
         setData(d)
@@ -322,6 +371,16 @@ export default function TradesPage() {
         setDisabledSymbols(d.disabled_symbols ?? {})
       })
       .catch(e => setError(String(e)))
+  }
+
+  useEffect(() => {
+    if (!symbol) return
+    setData(null)
+    setError(null)
+    setSelectedPreset(null)
+    setSortKey('rank')
+    setSortDir('asc')
+    void loadTrades(symbol, dataMode)
   }, [symbol, dataMode])
 
   useEffect(() => {
@@ -504,6 +563,39 @@ export default function TradesPage() {
     }
   }
 
+  /**
+   * Close one open position. `rank` is undefined for a real one.
+   *
+   * Only the running instance can close its own positions — the bot command file is
+   * shared and only the primary polls it. The API enforces that too; the button is
+   * disabled here so the refusal is visible before clicking rather than after.
+   */
+  async function handleClose(symbolToClose: string, kind: 'real' | 'virtual', rank?: number) {
+    if (closeBusy) return
+    setCloseBusy(true)
+    setCloseError(null)
+    try {
+      const res = await fetch('/api/orders/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: symbolToClose, kind, rank, mode: dataMode }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || !body.ok) {
+        setCloseError(body.error ?? `Close failed (${res.status})`)
+      } else {
+        setPendingClose(null)
+      }
+    } catch (err) {
+      setCloseError(String(err))
+    } finally {
+      setCloseBusy(false)
+      // Re-read either way: on a timeout the position may well have closed, and on
+      // success the snapshot is the authority on what is still open.
+      if (symbol) void loadTrades(symbol, dataMode)
+    }
+  }
+
   async function handleLockToggle(presetName: string, e: React.MouseEvent) {
     e.stopPropagation()
     if (lockBusy) return
@@ -579,6 +671,10 @@ export default function TradesPage() {
     o => !selectedPreset || o.preset_name === selectedPreset
   )
   const totalOpen = openRealPositions.length + openVirtualPositions.length
+  // Only the running instance polls bot_command.json, so only its own positions can be
+  // closed from here. Disabling the button makes that visible before the click.
+  // botMode is existing state, already tracking which mode the bot runs.
+  const closableHere = (data.bot_mode ?? botMode) === dataMode
 
   const tradingOrdersLabel = selectedPreset
     ? `Trading Orders — ${selectedPreset} (${tradingOrders.length}${totalOpen > 0 ? ` · ${totalOpen} live` : ''})`
@@ -893,6 +989,16 @@ export default function TradesPage() {
         storageKey="trades-real-orders"
         defaultOpen={fdata.real_orders.length > 0}
       >
+        {totalOpen > 0 && (
+          <p className="text-[11px] text-gray-500 mb-2">
+            Hover <span className="text-gray-400 font-semibold">NOW</span> for the full order
+            and the result so far. The red ✕ closes that position immediately at market —
+            a real close moves real money and cannot be undone.
+          </p>
+        )}
+        {closeError && (
+          <p className="text-[11px] text-red-400 mb-2 font-mono">{closeError}</p>
+        )}
         {totalOpen === 0 && tradingOrders.length === 0 ? (
           <p className="text-gray-500 text-sm py-4">
             {selectedPreset ? `No orders for preset "${selectedPreset}".` : 'No orders recorded yet.'}
@@ -924,7 +1030,51 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-xs">
                       <span className="inline-flex items-center gap-1">
                         <span className="text-green-400">Real</span>
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-emerald-800/60 text-emerald-300 font-semibold tracking-wide">LIVE</span>
+                        {/* NOW, not LIVE: it means "open right now", which is unrelated to live vs test
+                            mode. The tooltip carries the whole order plus the result so far. */}
+                        <span
+                          className="text-[9px] px-1 py-0.5 rounded bg-emerald-800/60 text-emerald-300 font-semibold tracking-wide cursor-help"
+                          title={openPositionTooltip(order, data.open_updated_at)}
+                        >
+                          NOW
+                        </span>
+                        {closableHere ? (
+                          pendingClose === `real:${order.symbol}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-mono">
+                              <span className="text-gray-400">Close?</span>
+                              <button
+                                onClick={() => handleClose(order.symbol, 'real')}
+                                disabled={closeBusy}
+                                className="text-red-400 hover:text-red-300 font-semibold disabled:opacity-50"
+                              >
+                                {closeBusy ? '...' : 'Yes'}
+                              </button>
+                              <span className="text-gray-700">|</span>
+                              <button
+                                onClick={() => { setPendingClose(null); setCloseError(null) }}
+                                className="text-gray-500 hover:text-gray-300"
+                              >
+                                No
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { setPendingClose(`real:${order.symbol}`); setCloseError(null) }}
+                              title="Close this position now at market"
+                              className="text-red-500/70 hover:text-red-400 text-[11px] leading-none px-0.5"
+                            >
+                              &#10005;
+                            </button>
+                          )
+                        ) : (
+                          <span
+                            className="text-gray-700 text-[11px] leading-none px-0.5 cursor-not-allowed"
+                            title={`The bot runs '${data.bot_mode ?? botMode}'. Only the running instance can `
+           + `close its own positions.`}
+                          >
+                            &#10005;
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>
@@ -948,7 +1098,50 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-xs">
                       <span className="inline-flex items-center gap-1">
                         <span className="text-gray-400">Rank #{order.rank}</span>
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-sky-800/60 text-sky-300 font-semibold tracking-wide">LIVE</span>
+                        {/* NOW, not LIVE: it means "open right now", which is unrelated to live vs test
+                            mode. The tooltip carries the whole order plus the result so far. */}
+                        <span
+                          className="text-[9px] px-1 py-0.5 rounded bg-sky-800/60 text-sky-300 font-semibold tracking-wide cursor-help"
+                          title={openPositionTooltip(order, data.open_updated_at)}
+                        >
+                          NOW
+                        </span>
+                        {closableHere ? (
+                          pendingClose === `virt:${order.symbol}:${order.rank}` ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-mono">
+                              <span className="text-gray-400">Close?</span>
+                              <button
+                                onClick={() => handleClose(order.symbol, 'virtual', order.rank)}
+                                disabled={closeBusy}
+                                className="text-red-400 hover:text-red-300 font-semibold disabled:opacity-50"
+                              >
+                                {closeBusy ? '...' : 'Yes'}
+                              </button>
+                              <span className="text-gray-700">|</span>
+                              <button
+                                onClick={() => { setPendingClose(null); setCloseError(null) }}
+                                className="text-gray-500 hover:text-gray-300"
+                              >
+                                No
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { setPendingClose(`virt:${order.symbol}:${order.rank}`); setCloseError(null) }}
+                              title="Close this position now at market"
+                              className="text-red-500/70 hover:text-red-400 text-[11px] leading-none px-0.5"
+                            >
+                              &#10005;
+                            </button>
+                          )
+                        ) : (
+                          <span
+                            className="text-gray-700 text-[11px] leading-none px-0.5 cursor-not-allowed"
+                            title={`The bot runs '${botMode}'. Only the running instance can close its own positions.`}
+                          >
+                            &#10005;
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className={`py-1.5 pr-3 ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</td>

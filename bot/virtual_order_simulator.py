@@ -734,6 +734,27 @@ class VirtualOrderSimulator:
     # Shutdown — close all open positions at market                       #
     # ------------------------------------------------------------------ #
 
+    async def close_open_manually(self, symbol: str, rank: int, price: float) -> dict | None:
+        """Close one open rank position on request, recording it as `manual_close`.
+
+        Wraps _evict so the private method stays private and the caller gets a clear
+        answer: None when there is nothing open at that rank for that symbol, so a second
+        press is reported as a no-op rather than looking like a success.
+        """
+        if rank not in self._rank_open or symbol not in self._rank_open[rank]:
+            return None
+        record = dict(self._rank_open[rank][symbol])
+        await self._evict(symbol, rank, price, 'manual_close')
+        return {
+            'symbol': symbol,
+            'rank': rank,
+            'preset_name': record.get('preset_name'),
+            'side': record.get('side'),
+            'entry_price': record.get('entry'),
+            'close_price': price,
+            'result': 'manual_close',
+        }
+
     async def close_all_open(self, symbols: list[str], feed: 'DataFeed') -> None:
         price_cache: dict[str, float] = {}
         for symbol in symbols:

@@ -1,0 +1,92 @@
+{
+  "balance_tiers": [
+    {
+      "min_balance_usdt": 0,
+      "max_deploy_pct": 90,
+      "max_leverage_ceiling": 15
+    },
+    {
+      "min_balance_usdt": 1000,
+      "max_deploy_pct": 80,
+      "max_leverage_ceiling": 15
+    },
+    {
+      "min_balance_usdt": 5000,
+      "max_deploy_pct": 70,
+      "max_leverage_ceiling": 20
+    }
+  ],
+  "base_leverage": 4,
+  "max_leverage": 15,
+  "min_profit_factor": 1.15,
+  "drawdown_warning_pct": 10,
+  "drawdown_hard_stop_pct": 20,
+  "backtest_initial_balance_usdt": 1000,
+  "backtest_klines": 1000,
+  "bgf_top_n": 0,
+  "symbol_weights": {
+    "TIAUSDT": 12,
+    "1000PEPEUSDT": 10,
+    "THETAUSDT": 0,
+    "SOLUSDT": 20,
+    "INJUSDT": 10,
+    "DOGEUSDT": 3,
+    "MEMEUSDT": 8,
+    "JUPUSDT": 0,
+    "1000SHIBUSDT": 0,
+    "WLDUSDT": 0,
+    "APTUSDT": 0,
+    "REZUSDT": 0,
+    "ETHFIUSDT": 0,
+    "AVAXUSDT": 0
+  },
+  "max_leverage_level": 5,
+  "use_allocation_weighting": true,
+  "min_balance_pct": 15,
+  "telegram_notify_interval_s": 120,
+  "scenario": "tats",
+  "weight_rebalancer": {
+    "enabled": false,
+    "rebalance_candles": 96,
+    "backtest_window_candles": 96,
+    "real_pnl_alpha": 0.5,
+    "blend_rate": 0.15,
+    "weight_floor_ratio": 0.3
+  },
+  "min_trades_for_ranking": 8,
+  "min_trades_for_ranking_per_symbol": {},
+  "max_loss_usdt": 25,
+  "max_loss_usdt_per_symbol": {},
+  "max_loss_tp_ratio": 0,
+  "locked_presets": {},
+  "preset_hysteresis_pct": 10,
+  "preset_cooldown_trades": 5,
+  "max_trade_pct": 30,
+  "telegram": {
+    "token": "8679317265:AAEZL2fgWmbyjWe07ZgOWjckW_X3a0tTkAA",
+    "chat_id": "420138767"
+  },
+  "symbol_leverage": {},
+  "global_min_sl_pct": 0.5,
+  "virtual_only_floor": -5,
+  "per_symbol_settings": {
+    "1000SHIBUSDT": {
+      "min_sl_pct": 0.8
+    },
+    "THETAUSDT": {
+      "min_sl_pct": 1.5
+    }
+  },
+  "backtest_seed_leverage_factor": 5,
+  "backtest_entry_slippage_pct": 0.05,
+  "preset_blocklist": [
+    "r6_arm15_rr4",
+    "correction_w20_trail15_30",
+    "r5_arm15_cooldown",
+    "db_clone_cooldown",
+    "pre_confirm_prox15_trail15",
+    "pre_confirm_trail15",
+    "trail_15_from_15_d1",
+    "sl_adjust_rr_tp95"
+  ]
+}

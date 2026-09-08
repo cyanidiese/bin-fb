@@ -35,6 +35,22 @@ Loads up to 1000 recent klines on startup, stores locally, and merges new candle
 - Nothing currently reads an index above 6 (analyser uses `[4]`; data_feed uses `[0]` and `[6]`)
 - Gracefully handles network errors and cache corruption
 
+### Manual Order Close from the Trades Page
+The open-position rows carry a `NOW` badge with a full hover tooltip, and a red ✕ that market-closes that position — real or virtual — after inline confirmation.
+
+**Files**: `dashboard/app/trades/page.tsx`, `dashboard/app/api/orders/close/route.ts`, `bot/mode_manager.py`, `bot/order_executor.py`, `bot/virtual_order_simulator.py`, `main.py`
+**Spec**: `docs/specs/2026-09-08-manual-order-close.md`
+**Key details**:
+- **`NOW`, not `LIVE`** — the badge means "open right now", which is unrelated to live vs test mode. The old wording collided with the mode name
+- **Tooltip** on the badge: symbol, real/virtual+rank, preset, side, entry, current price, TP, SL, quantity, leverage, scenario, how long it has been open, and **the unrealised result so far** (USDT and % on margin). It ends with `as of HH:MM:SS` — the snapshot is written once per candle, and a stale figure next to a close button must admit its age
+- **The unrealised figure is computed by the bot** (`_unrealized()` in `main.py`) and written into `open_positions_{mode}.json`, not derived in the dashboard — one source of truth for a number a human acts on. `None` rather than `0` when no price is known, so "unknown" never renders as break-even
+- **Close path**: dashboard → `POST /api/orders/close` → `data/bot_command.json` (`type: close_order`) → `ModeManager.poll_loop` (2s) → `on_close_order` → `order_executor.close_order(sym, reason='manual_close')` or `virtual_order_simulator.close_open_manually(sym, rank, price)`
+- **Only the running instance can close its own positions.** The command file is shared and only the primary polls it, so a request for the other instance is refused by the API (409) and the ✕ is greyed out with the reason in its tooltip. The mirror holds no real money
+- **Recorded as `result='manual_close'`**, distinct from a strategy exit, and **excluded from `preset_efficiency`** alongside `promoted_to_real` and `max_age`
+- **Logged three ways**: `bot.log` at INFO, the order record, and the system log via `notifier.notify` — `warning` level for a real close (real money moved by hand), `info` for a virtual one
+- **Confirmation**: inline `Close? Yes | No`, matching the Backtest presets table, with one line of small text above the table saying a real close cannot be undone. One row can be armed at a time
+- A second press is a no-op: `close_order` returns `None` when nothing is open, `close_open_manually` checks the rank first. A timeout returns `pending: true` — never reported as success, since the close may have happened
+
 ### API Ban Handling — probe only near the end of the stated ban
 Bans are **per-CloudFront-edge, not per-account**, so a probe proves only that the edge it happened to reach is clear. Probing early therefore re-opened the gate, the next request routed to a banned edge, and each such request added ~120s to that edge's ban.
 

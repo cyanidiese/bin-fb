@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Callable, Awaitable, Optional
 
 if TYPE_CHECKING:
     from bot.notifier import Notifier
@@ -150,6 +150,7 @@ class ModeManager:
         self,
         on_switch_mode: Callable[[str], Awaitable[None]],
         on_stop_bot: Callable[[], Awaitable[None]],
+        on_close_order: Optional[Callable[[dict], Awaitable[dict]]] = None,
     ) -> None:
         """2-second poll loop. Runs as a background asyncio task."""
         while True:
@@ -168,6 +169,20 @@ class ModeManager:
                     elif cmd_type == "stop_bot":
                         await on_stop_bot()
                         self._write_result(cmd_id, ok=True)
+                    elif cmd_type == "close_order":
+                        # Manual close from the Trades page. The handler returns a dict
+                        # describing what it did; 'ok': False with a reason when there
+                        # was nothing open, so a second press reads as a no-op rather
+                        # than a silent success.
+                        if on_close_order is None:
+                            self._write_result(
+                                cmd_id, ok=False,
+                                error="This instance cannot close orders")
+                        else:
+                            outcome = await on_close_order(cmd.get("payload", {}) or {})
+                            self._write_result(
+                                cmd_id, ok=bool(outcome.get("ok")),
+                                error=outcome.get("error"))
                     elif cmd_type == "test_telegram":
                         if self._notifier is not None:
                             ok, error = self._notifier.send_test()

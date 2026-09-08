@@ -42,16 +42,13 @@ The Librarian agent (`/librarian`) is responsible for writing and updating `FEAT
 
 ## Proactive improvement mandate
 
-When the user says **"act like the wise owner"** (or any equivalent phrasing asking for proactive improvement), treat it as a standing mandate to:
+When asked to "act like the wise owner" (or any equivalent), pull the latest data, identify the single highest-leverage improvement backed by actual numbers, propose it, and implement only after explicit approval.
 
-1. Pull the latest logs, backtest results, and trade data from the server.
-2. Identify the single highest-leverage improvement — the one that most directly reduces losses or increases USDT profit, backed by actual numbers.
-3. Propose it concisely with the data that justifies it.
-4. Implement only after explicit approval; never make speculative changes.
+Default priority: fix a loss-producing bug → tighten a filter with data → adjust a risk param with data → add a signal filter → add a new feature.
 
-Default priority order: fix a loss-producing bug → tighten a filter backed by data → adjust a risk param backed by data → add a new signal filter → add a new feature.
+**Never block real orders without data.** Always show win rate, trade count, and USDT impact before applying any block.
 
-**Never block real orders without data.** If blocking a preset or signal type, always show the win rate, trade count, and USDT impact before applying.
+Use the **`/bfb-analyze`** skill for the full step-by-step procedure.
 
 ---
 
@@ -81,7 +78,7 @@ The spec must cover: what it does, why it's needed, the chosen approach and why,
 
 ## Code review
 
-When reading my code, assess and report on:
+When reading code, assess and report on:
 
 1. Bugs and logic errors
 2. Silent failure points (uncaught exceptions, missing API error handling)
@@ -93,6 +90,7 @@ When reading my code, assess and report on:
 8. Code clarity — naming, structure, separation of concerns
 
 Present findings as: **critical** / **important** / **minor** — in that priority order.
+Use the **`/code-review`** skill for structured review execution.
 
 ---
 
@@ -109,71 +107,23 @@ Present findings as: **critical** / **important** / **minor** — in that priori
 
 ---
 
-## Improvements to implement (with my approval)
-
-### Structure
-- Clean project layout: `bot/`, `config/`, `strategy/`, `utils/`, `logs/`, `tests/`
-- Separate concerns: data feed, strategy, order manager, risk manager, logger
-- Config validation on startup — fail fast with a clear error if anything is missing or invalid
-
-### Reliability
-- Robust exception handling throughout, especially around API calls
-- WebSocket auto-reconnect with exponential backoff
-- Order state reconciliation on startup (re-sync with exchange)
-- Graceful shutdown — close positions or cancel orders based on config flag
-
-### Logging
-- Structured logging with levels: DEBUG / INFO / WARNING / ERROR
-- Separate log files: `logs/bot.log` (general) and `logs/trades.log` (order events only)
-- Log rotation so files don't grow unbounded
-- Every order event logged with: timestamp, symbol, side, quantity, price, order ID, reason
-
-### Risk management
-- Max position size per trade (as % of account or fixed USDT)
-- Max open positions at once
-- Daily loss limit — pause bot if breached
-- Leverage validation on startup — warn if set above a safe threshold
-- Emergency stop: a `STOP` file check in the main loop — if the file exists, halt gracefully
-
----
-
-## Visualization
-
-Build a lightweight real-time dashboard. Prefer terminal-based (rich / textual / curses) to avoid heavy GUI dependencies. If a web dashboard is more appropriate, suggest it and explain why.
-
-Dashboard must show:
-- Account: balance, available margin, unrealized PnL
-- Current position: symbol, side, size, entry price, current price, PnL %, liquidation price
-- Recent signals: last N signals with indicator values that triggered them
-- Recent orders: last N orders with status, fill price, timestamp
-- Strategy state: current indicator values, trend/bias, next expected action
-- Bot status: uptime, last heartbeat, mode (testnet/live), errors in last hour
-
-Update interval: configurable, default every 5 seconds.
-All monetary values formatted to 2 decimal places. All percentages to 2 decimal places with sign (e.g. +1.23% / -0.45%).
-
----
-
 ## Deployment
 
-When the code is stable on testnet, help me deploy it properly.
+Deploy on a Linux VPS (Ubuntu) via Docker. Use the **`/bfb-deploy`** skill for the exact deploy procedure (graceful stop, Docker rebuild, feature branch handling).
 
-Prepare for deployment on a Linux VPS (Ubuntu):
-- `requirements.txt` with pinned versions
-- `README.md` with setup instructions from scratch
-- `systemd` service file so the bot runs as a background service and restarts on crash
-- Environment variable setup guide for the VPS
-- How to view logs remotely
-- How to use the emergency stop file from SSH
-- Basic security checklist: firewall, SSH keys, no root API keys, IP whitelist on Binance if possible
+Key invariants:
+- Python source is baked into the Docker image — `git pull` alone does NOT update the running bot, always rebuild with `--build`
+- `risk_config.json` is gitignored — update via SSH, never committed
+- Always stop the bot gracefully (SIGTERM → wait → stop container) before deploying
+- Never deploy without explicit user confirmation
 
-Before recommending live mode, give me a **go-live checklist** covering:
-- [ ] Testnet ran stably for at least N days (suggest N)
+Before recommending live mode, complete this go-live checklist:
+- [ ] Testnet ran stably for at least 30 days
 - [ ] All critical log events reviewed
 - [ ] Risk parameters reviewed and confirmed
 - [ ] Live API keys created with futures-only, no-withdrawal permissions
 - [ ] Position size set conservatively for first live run
-- [ ] Monitoring/alerting in place (suggest minimal viable option)
+- [ ] Monitoring/alerting in place
 - [ ] Rollback plan documented
 
 ---

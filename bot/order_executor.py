@@ -689,15 +689,20 @@ class OrderExecutor:
             logger.info(f"Restored {restored} position(s) — resuming monitoring without forced close")
         return restored
 
-    async def close_order(self, symbol: str) -> dict | None:
-        """Close a single open order at market. Returns result dict or None if not open."""
+    async def close_order(self, symbol: str, reason: str = 'market_close') -> dict | None:
+        """Close a single open order at market. Returns result dict or None if not open.
+
+        `reason` becomes the recorded result. A manual close from the dashboard passes
+        'manual_close' so it is distinguishable from a strategy exit and can be excluded
+        from preset scoring — the same treatment promoted_to_real and max_age get.
+        """
         order = self._open_orders.get(symbol)
         if order is None:
             return None
         try:
             close_price = await self._market_close(symbol, order)
             pnl = self._calc_pnl(order, close_price)
-            self._record_real_order_close(symbol, order, close_price, 'market_close', pnl)
+            self._record_real_order_close(symbol, order, close_price, reason, pnl)
             self._notifier.notify_trade_close(
                 symbol=symbol,
                 side=order.side,
@@ -717,8 +722,12 @@ class OrderExecutor:
                 "close_price": close_price,
                 "pnl_usdt": pnl,
                 "leverage": order.leverage,
+                "preset_name": order.preset_name,
+                "result": reason,
             }
-            logger.info(f"Closed {symbol}: entry={order.entry_price} close={close_price} pnl={pnl:.2f}")
+            logger.info(
+                f"Closed {symbol} ({reason}): entry={order.entry_price} "
+                f"close={close_price} pnl={pnl:.2f}")
             return result
         except Exception as exc:
             logger.error(f"Failed to close {symbol}: {exc}")

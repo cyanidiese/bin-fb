@@ -135,6 +135,7 @@ export async function GET(req: NextRequest) {
   const openPositions = readJson(openPositionsPath, { real: [], virtual: [] }) as {
     real?: unknown[]
     virtual?: unknown[]
+    updated_at?: string
   }
   const openReal    = (openPositions.real    ?? []).filter((o: unknown) => (o as { symbol: string }).symbol === symbol)
   const openVirtual = (openPositions.virtual ?? []).filter((o: unknown) => (o as { symbol: string }).symbol === symbol)
@@ -150,6 +151,11 @@ export async function GET(req: NextRequest) {
     preset_ranks: presetRanks,
     disabled_ranks: disabledRanks,
     disabled_symbols: disabledSymbols,
+    // The mode the BOT is running, as opposed to `mode` which is the one being viewed.
+    // The Trades page compares them: only the running instance polls bot_command.json,
+    // so only its own positions can be closed from the UI.
+    bot_mode: currentMode(),
+    open_updated_at: openPositions.updated_at ?? null,
     open_real: openReal,
     open_virtual: openVirtual,
   })

@@ -640,10 +640,36 @@ async def run() -> None:
     except Exception as _e:
         logger.warning(f"Constraint detection failed (non-critical): {_e}")
 
+    def _live_price(sym: str) -> float:
+        """Latest price the analyzer has for `sym`, or 0.0 when unknown."""
+        try:
+            az = analyzers.get(sym)
+            return float(az.get_current_price()) if az is not None else 0.0
+        except Exception:
+            return 0.0
+
+    def _unrealized(side: str, entry: float, qty: float, lev: float, price: float) -> dict:
+        """Result so far on an open position, for the dashboard tooltip.
+
+        Computed here rather than in the dashboard so there is one source of truth for a
+        number a human may act on — the close button sits next to it.
+        """
+        if price <= 0 or entry <= 0 or qty <= 0:
+            return {'current_price': None, 'unrealized_pnl_usdt': None, 'unrealized_pct': None}
+        sign = 1.0 if side == 'BUY' else -1.0
+        pnl = (price - entry) * qty * sign
+        margin = entry * qty / lev if lev else 0.0
+        return {
+            'current_price': price,
+            'unrealized_pnl_usdt': pnl,
+            'unrealized_pct': (pnl / margin * 100.0) if margin > 0 else None,
+        }
+
     def _write_open_positions() -> None:
         """Snapshot current open orders (real + virtual) to disk for the dashboard."""
         real_open = []
         for sym, oo in order_executor.get_open_orders().items():
+            _px = _live_price(sym)
             real_open.append({
                 'symbol': sym,
                 'preset_name': oo.preset_name,
@@ -656,8 +682,17 @@ async def run() -> None:
                 'scenario': oo.scenario,
                 'open_time': oo.open_time,
                 'status': 'open',
+                **_unrealized(oo.side, oo.entry_price, oo.quantity, oo.leverage, _px),
             })
-        virtual_open = virtual_order_simulator.get_open_positions()
+        virtual_open = []
+        for vp in virtual_order_simulator.get_open_positions():
+            _px = _live_price(vp.get('symbol', ''))
+            virtual_open.append({
+                **vp,
+                **_unrealized(vp.get('side', 'BUY'), float(vp.get('entry_price') or 0),
+                              float(vp.get('quantity') or 0), float(vp.get('leverage') or 1),
+                              _px),
+            })
         payload = {
             'updated_at': datetime.now(timezone.utc).isoformat(),
             'real': real_open,
@@ -1882,10 +1917,11 @@ async def run() -> None:
             if vc.get('rank') == 1:
                 continue
             # Bookkeeping exits, not strategy outcomes: 'promoted_to_real' frees a
-            # preset so the real-order slot can use it, and 'max_age' closes a position
-            # that would otherwise hold its slot forever. Neither says anything about
-            # whether the preset works, so neither belongs in the ranking.
-            if vc.get('result') in ('promoted_to_real', 'max_age'):
+            # preset so the real-order slot can use it, 'max_age' closes a position that
+            # would otherwise hold its slot forever, and 'manual_close' is a human
+            # pressing the button on this page. None says anything about whether the
+            # preset works, so none belongs in the ranking.
+            if vc.get('result') in ('promoted_to_real', 'max_age', 'manual_close'):
                 continue
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
@@ -1951,6 +1987,76 @@ async def run() -> None:
         virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
         notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
 
+    async def on_close_order(payload: dict) -> dict:
+        """Close one open position on request from the dashboard.
+
+        payload: {symbol, kind: 'real'|'virtual', rank?, mode?}
+
+        Returns {'ok': bool, 'error': str|None}. A missing position is ok=False with a
+        readable reason rather than an exception, so pressing the button twice reads as a
+        no-op instead of a failure.
+        """
+        sym = str(payload.get('symbol') or '').upper()
+        kind = str(payload.get('kind') or '').lower()
+        want_mode = payload.get('mode')
+
+        if not sym:
+            return {'ok': False, 'error': 'No symbol given'}
+        # The command file is shared and only this instance polls it, so a request aimed
+        # at the other instance must never be applied to our own position of that name.
+        if want_mode and want_mode != mode_manager.current_mode:
+            return {'ok': False, 'error': (
+                f"This bot runs '{mode_manager.current_mode}'; the request was for "
+                f"'{want_mode}'. Only the running instance can close its positions.")}
+
+        if kind == 'real':
+            res = await order_executor.close_order(sym, reason='manual_close')
+            if res is None:
+                return {'ok': False, 'error': f'{sym} has no open real position'}
+            logger.info(
+                f"[{sym}] MANUAL CLOSE (real) from dashboard: "
+                f"{res.get('preset_name')} pnl={res.get('pnl_usdt', 0):.2f}")
+            # notify() writes the system log and sends Telegram. 'warning' level on
+            # purpose: real money was moved by hand, so it should stand out in the log
+            # next to automated closes. close_order() has already sent the usual
+            # trade-close message with the numbers.
+            notifier.notify(
+                'warning', f"Manual close — {sym}",
+                (f"Closed by hand from the Trades page.\n"
+                 f"Type:   real\n"
+                 f"Side:   {res.get('side')}\n"
+                 f"Preset: {res.get('preset_name')}\n"
+                 f"PnL:    {res.get('pnl_usdt', 0):.2f} USDT"),
+                'dashboard')
+            _write_open_positions()
+            return {'ok': True, 'error': None}
+
+        if kind == 'virtual':
+            try:
+                rank = int(payload.get('rank'))
+            except (TypeError, ValueError):
+                return {'ok': False, 'error': 'A virtual close needs a rank'}
+            px = _live_price(sym)
+            if px <= 0:
+                return {'ok': False, 'error': f'No current price for {sym} yet'}
+            res = await virtual_order_simulator.close_open_manually(sym, rank, px)
+            if res is None:
+                return {'ok': False, 'error': f'{sym} has nothing open at rank {rank}'}
+            logger.info(
+                f"[{sym}] MANUAL CLOSE (virtual rank {rank}) from dashboard: "
+                f"{res.get('preset_name')}")
+            notifier.notify(
+                'info', f"Manual close — {sym} (virtual)",
+                (f"Closed by hand from the Trades page.\n"
+                 f"Type:   virtual, rank {rank}\n"
+                 f"Preset: {res.get('preset_name')}\n"
+                 f"Price:  {px}"),
+                'dashboard')
+            _write_open_positions()
+            return {'ok': True, 'error': None}
+
+        return {'ok': False, 'error': f"Unknown kind '{kind}' — expected real or virtual"}
+
     async def on_stop_bot() -> None:
         current_symbols = symbol_registry.get_symbols()
         _restart_path = _PROJECT_ROOT / 'data' / f'restart_positions_{mode_manager.current_mode}.json'
@@ -1990,7 +2096,8 @@ async def run() -> None:
     _poll_task = None
     if not _virtual_only:
         _poll_task = asyncio.create_task(
-            mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot)
+            mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot,
+                                   on_close_order=on_close_order)
         )
     _hb_task = asyncio.create_task(
         _heartbeat_loop(mode_manager, started_at, symbol_registry)

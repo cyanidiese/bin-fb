@@ -306,6 +306,11 @@ export interface OpenRealPosition {
   scenario: string | null;
   open_time: string | null;
   status: 'open';
+  /** Written by the bot with the snapshot, once per candle. Null until a price is
+   *  known. Computed bot-side so the figure a human acts on has one source of truth. */
+  current_price?: number | null;
+  unrealized_pnl_usdt?: number | null;
+  unrealized_pct?: number | null;
 }
 
 export interface OpenVirtualPosition {
@@ -325,6 +330,11 @@ export interface OpenVirtualPosition {
   open_time: string;
   rank_balance_at_open: number | null;
   status: 'open';
+  /** Written by the bot with the snapshot, once per candle. Null until a price is
+   *  known. Computed bot-side so the figure a human acts on has one source of truth. */
+  current_price?: number | null;
+  unrealized_pnl_usdt?: number | null;
+  unrealized_pct?: number | null;
 }
 
 export interface TradesData {
@@ -338,6 +348,10 @@ export interface TradesData {
   preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
   disabled_ranks: number[];                    // ranks disabled for this symbol
   disabled_symbols: Record<string, DisabledSymbolEntry>;  // globally disabled symbols
+  /** The mode the bot is actually running, vs `mode` which is the one being viewed. */
+  bot_mode?: string | null;
+  /** When the bot last wrote the open-position snapshot. */
+  open_updated_at?: string | null;
   open_real: OpenRealPosition[];
   open_virtual: OpenVirtualPosition[];
 }

@@ -20,13 +20,13 @@
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 13.12
+      "performance_score": 34.66
     },
     "THETAUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 13.217
+      "performance_score": 10.721
     },
     "REZUSDT": {
       "allocation_usdt": 48.57,
@@ -38,31 +38,31 @@
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 12.06
+      "performance_score": 25.915
     },
     "1000PEPEUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 5,
       "leverage_level": 0,
-      "performance_score": 3.071
+      "performance_score": 7.314
     },
     "WLDUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 5.961
+      "performance_score": 5.586
     },
     "MEMEUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 11.611
+      "performance_score": 15.583
     },
     "AVAXUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 2,
       "leverage_level": 0,
-      "performance_score": 1.571
+      "performance_score": 2.257
     },
     "ETHFIUSDT": {
       "allocation_usdt": 48.57,
@@ -74,13 +74,13 @@
       "allocation_usdt": 48.57,
       "leverage": 9,
       "leverage_level": 0,
-      "performance_score": 30.808
+      "performance_score": 31.897
     },
     "EIGENUSDT": {
       "allocation_usdt": 48.57,
       "leverage": 4,
       "leverage_level": 0,
-      "performance_score": 24.627
+      "performance_score": 7.768
     },
     "1000SHIBUSDT": {
       "allocation_usdt": 48.57,
@@ -92,13 +92,13 @@
       "allocation_usdt": 48.57,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 10.43
+      "performance_score": 14.292
     },
     "JUPUSDT": {
       "allocation_usdt": 0,
       "leverage": 3,
       "leverage_level": 0,
-      "performance_score": 9.88
+      "performance_score": 6.307
     },
     "APTUSDT": {
       "allocation_usdt": 48.57,

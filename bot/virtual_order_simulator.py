@@ -92,6 +92,9 @@ class VirtualOrderSimulator:
 
         # rank -> symbol -> open order record
         self._rank_open: dict[int, dict[str, dict]] = {}
+        # symbol -> preset of the currently-open REAL position. Read by _try_open so the
+        # "no real and virtual for the same symbol+preset" rule holds for every caller.
+        self._real_preset: dict[str, str] = {}
         # rank -> symbol -> FakeOrder
         self._rank_fake: dict[int, dict[str, FakeOrder]] = {}
         # rank -> current balance
@@ -190,6 +193,7 @@ class VirtualOrderSimulator:
         locked_preset: Optional[str] = None,
         virtual_only: bool = False,
         real_slot_busy: bool = False,
+        real_preset: Optional[str] = None,
     ) -> None:
         # When a preset is manually locked for real orders, exclude it from the
         # virtual pool and shift the rank index so the formerly-best preset fills
@@ -213,19 +217,19 @@ class VirtualOrderSimulator:
         lev = self._get_leverage(symbol)
         min_notional = self._min_notionals.get(symbol, _DEFAULT_MIN_NOTIONAL)
 
-        # A symbol in a real trade holds no virtual positions at all. Ranks 2+ used to
-        # keep opening alongside the real order, so one symbol could show a real position
-        # and dozens of virtual ones on the same candle. Any already-open position is
-        # released here, and no rank opens while the real slot stays busy.
-        #
-        # Trade-off, recorded deliberately: while a symbol is in a real trade its preset
-        # comparison collects nothing, so an actively-trading symbol accumulates virtual
-        # history more slowly than an idle one.
-        if real_slot_busy:
+        # A preset never holds a real and a virtual position on the same symbol at once.
+        # Scoped to the preset, not the symbol: other presets keep collecting, which is
+        # the whole point of the rank pools. `real_preset` is the preset of the open real
+        # position, so this also catches the case where the rankings shift and that preset
+        # reappears at some other rank while its real trade is still running.
+        if real_preset:
+            self._real_preset[symbol] = real_preset
             for _r in range(1, self._rank_max + 1):
-                if symbol in self._rank_open[_r]:
+                _held = self._rank_open[_r].get(symbol)
+                if _held and _held['preset_name'] == real_preset:
                     await self._evict(symbol, _r, current_price, 'real_order_took_over')
-            return
+        else:
+            self._real_preset.pop(symbol, None)
 
         for rank in range(1, self._rank_max + 1):
             if rank == 1:
@@ -234,11 +238,15 @@ class VirtualOrderSimulator:
                 # vanishing. A disabled symbol already places index 0 at rank 2, so rank 1
                 # stays empty there and nothing is double-counted.
                 #
-                # A busy real slot is handled above for every rank, so by here the slot
-                # is free. SOLUSDT once held a real l2_trend_buy at 102.97 and a rank-1
-                # virtual l2_trend_buy at 103.63 at the same time -- two correlated
-                # samples of one move, on a trade that could never have been taken.
+                # SOLUSDT once held a real l2_trend_buy at 102.97 and a rank-1 virtual
+                # l2_trend_buy at 103.63 at the same time -- two correlated samples of one
+                # move, on a trade that could never have been taken. `real_slot_busy`
+                # covers an open position, not just an order placed on this candle.
                 if virtual_only:
+                    continue
+                if real_slot_busy:
+                    if symbol in self._rank_open[1]:
+                        await self._evict(symbol, 1, current_price, 'real_order_took_over')
                     continue
                 # the preset that would have traded: the manual lock, else the best
                 _r1_name = locked_preset or (
@@ -395,6 +403,15 @@ class VirtualOrderSimulator:
             logger.debug(
                 f"[{symbol}] Rank-{rank} not opened: {preset_name} already open "
                 f"at rank {_held}"
+            )
+            return
+        # And never alongside a REAL position on the same preset. Observed on the server:
+        # SOLUSDT held a real l2_trend_buy at 102.97 and a virtual l2_trend_buy at 103.63
+        # at once -- two correlated samples of one move, on a trade that could never have
+        # been taken. Scoped to the preset, so other presets keep collecting.
+        if self._real_preset.get(symbol) == preset_name:
+            logger.debug(
+                f"[{symbol}] Rank-{rank} not opened: {preset_name} has an open real order"
             )
             return
         # Load config before any filter — global_min_sl_pct and per-trade caps must be

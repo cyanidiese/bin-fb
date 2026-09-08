@@ -1734,6 +1734,11 @@ async def run() -> None:
             _placed_this_candle.get(symbol) == candle_ts
             or order_executor.get_state(symbol) != OrderState.IDLE
         )
+        # The preset holding the open real position, so the simulator can keep that one
+        # preset out of the virtual pools while its real trade runs. Scoped to the preset,
+        # not the symbol: every other preset keeps collecting comparison data.
+        _open_real = order_executor.get_open_orders().get(symbol)
+        _real_preset = _open_real.preset_name if _open_real else None
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
             analyzer=analyzer,
@@ -1741,6 +1746,7 @@ async def run() -> None:
             base_settings=settings,
             locked_preset=_locked_preset,
             real_slot_busy=_real_slot_busy,
+            real_preset=_real_preset,
         )
 
         # save_risk_config() every candle. A virtual-only instance must never retune

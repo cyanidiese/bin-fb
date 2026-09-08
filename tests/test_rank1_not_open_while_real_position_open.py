@@ -83,24 +83,36 @@ class TestBehaviour:
         await _candle(sim, real_slot_busy=True)
         assert 'BTCUSDT' not in sim._rank_open[1], 'stand-in ran alongside a real trade'
 
-    async def test_no_rank_opens_while_the_slot_is_busy(self, tmp_path):
-        """A symbol in a real trade holds no virtual position at ANY rank. Ranks 2+ used
-        to keep opening alongside it, so one symbol showed a real position and dozens of
-        virtual ones at once."""
+    async def test_the_real_orders_preset_is_not_opened_at_any_rank(self, tmp_path):
+        """The rule is symbol+preset. preset_b sits at rank 2 in this harness."""
         sim = make_simulator(tmp_path, rank_max=4)
-        await _candle(sim, real_slot_busy=True)
-        for r in range(1, 5):
-            assert 'BTCUSDT' not in sim._rank_open[r], f'rank {r} opened beside a real order'
+        await _candle(sim, real_slot_busy=True, real_preset='preset_b')
+        held = {r: sim._rank_open[r].get('BTCUSDT', {}).get('preset_name')
+                for r in range(1, 5)}
+        assert 'preset_b' not in held.values(), \
+            f'preset_b opened beside its own real order: {held}'
 
-    async def test_every_open_rank_is_released_when_the_slot_becomes_busy(self, tmp_path):
-        """Positions already running must be evicted, not just blocked from opening."""
+    async def test_other_presets_keep_collecting(self, tmp_path):
+        """Scoped to the preset, not the symbol -- otherwise an actively-trading symbol
+        stops producing any comparison data at all."""
+        sim = make_simulator(tmp_path, rank_max=4)
+        await _candle(sim, real_slot_busy=True, real_preset='preset_b')
+        held = {sim._rank_open[r].get('BTCUSDT', {}).get('preset_name')
+                for r in range(1, 5)}
+        assert 'preset_c' in held, f'other presets were blocked too: {held}'
+
+    async def test_an_open_position_on_that_preset_is_released(self, tmp_path):
+        """Blocking new opens is not enough -- one already running must be evicted."""
         sim = make_simulator(tmp_path, rank_max=4)
         await _candle(sim, real_slot_busy=False)
-        assert any('BTCUSDT' in sim._rank_open[r] for r in range(1, 5)), \
-            'nothing opened; the eviction assertion below would be vacuous'
-        await _candle(sim, real_slot_busy=True)
-        for r in range(1, 5):
-            assert 'BTCUSDT' not in sim._rank_open[r], f'rank {r} survived beside a real order'
+        opened = {r: sim._rank_open[r].get('BTCUSDT', {}).get('preset_name')
+                  for r in range(1, 5)}
+        assert 'preset_b' in opened.values(), \
+            f'preset_b never opened; the eviction assertion would be vacuous: {opened}'
+        await _candle(sim, real_slot_busy=True, real_preset='preset_b')
+        held = {sim._rank_open[r].get('BTCUSDT', {}).get('preset_name')
+                for r in range(1, 5)}
+        assert 'preset_b' not in held, 'preset_b survived beside its own real order'
 
     async def test_other_symbols_are_untouched(self, tmp_path):
         """The rule is per symbol -- a real order on one must not clear another's pools."""
@@ -108,7 +120,7 @@ class TestBehaviour:
         sim._min_notionals['ETHUSDT'] = 5.0
         await _candle(sim, symbol='ETHUSDT', real_slot_busy=False)
         assert any('ETHUSDT' in sim._rank_open[r] for r in range(1, 5))
-        await _candle(sim, symbol='BTCUSDT', real_slot_busy=True)
+        await _candle(sim, symbol='BTCUSDT', real_slot_busy=True, real_preset='preset_b')
         assert any('ETHUSDT' in sim._rank_open[r] for r in range(1, 5)), \
             "another symbol's virtual positions were cleared"
 

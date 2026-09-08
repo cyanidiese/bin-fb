@@ -1,5 +1,41 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
+## Session 68 (2026-09-08) — mirror instance, ban root cause, and silent failures made visible
+
+**→ Full change-by-change record for sessions 67 and 68, with the bugs each change caused
+and how they were fixed: [`docs/2026-09-08-sessions-67-68-changelog.md`](docs/2026-09-08-sessions-67-68-changelog.md)**
+
+Read that file before touching bans, klines, the balance cache, the decision log, or the
+virtual/real position rules — it records what was measured, what was deliberately NOT
+changed, and which of my own fixes needed fixing.
+
+**Headlines:**
+
+- **Bans are not ours.** The `-1003` addresses (`15.158.242.x`) are CloudFront edge
+  addresses shared with other tenants, not our egress (`185.237.14.105`). Binance's own
+  `X-MBX-USED-WEIGHT-1M` header showed our usage as ~0 against a 2,400/min ceiling.
+  13 of 15 bans on 2026-09-08 were the **balance** call, all within one second of a candle
+  boundary. Zero were klines. Fixed by reading the wallet mid-candle instead.
+- **Bans cost zero orders** — `skip_balance` appears 0 times in the decision log, because
+  the balance getter falls back to the last known figure. Do not spend more time on bans.
+- **The real constraint was `symbol_weights=0`**: 4,510 blocked signals against 79 orders
+  placed. Weights were raised on 7 symbols on 2026-09-08 and produced real orders on
+  SOLUSDT, AVAXUSDT and REZUSDT within hours.
+- **Two bugs had been silently eating real orders**, both found only after instrumenting
+  the 17 silent rejection paths in `_try_place_order`:
+  - a failed balance read reported `0.00`, so every symbol hit `skip_balance` after any
+    restart — on an account holding 3,072 USDT (`406853e`)
+  - `ETHFIUSDT` and `TIAUSDT` never trade because their **locked presets generate no
+    signal**; the order path re-runs the engine under the locked preset's own settings and
+    used to return silently (`11e9255`)
+- **Realised P&L turned positive in August**: June −685.35, July −242.19, August +132.36,
+  September +10.96. Last 30 days: 96 orders, 43.8% WR, +78.28.
+
+**Still open:** four symbols hold 62.5% of allocated capital with no real trading history;
+two of the seven locked presets produce no signal. See the changelog's closing section.
+
+---
+
 ## Session 67 (2026-09-07) — SL-width analysis over 163k orders (logged, not applied)
 
 **Decision: log, do not implement.** The largest measured lever we have found, but the

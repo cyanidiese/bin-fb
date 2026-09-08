@@ -2,6 +2,10 @@
 
 Comprehensive reference of all implemented features. Each section lists what the feature does, which files implement it, and key config/behaviour details.
 
+> **Change history:** for what changed on 2026-09-07/08 and why — including the bugs each
+> change caused and how they were fixed — see
+> [`docs/2026-09-08-sessions-67-68-changelog.md`](docs/2026-09-08-sessions-67-68-changelog.md).
+
 ---
 
 ## Data Feed & Kline Management

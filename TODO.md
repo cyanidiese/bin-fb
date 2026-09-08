@@ -6,6 +6,8 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ## Session 68 (2026-09-08) — deployable budget ignores open positions (LOGGED, NOT APPLIED)
 
+*Full session 67–68 change record: [`docs/2026-09-08-sessions-67-68-changelog.md`](docs/2026-09-08-sessions-67-68-changelog.md)*
+
 - [ ] **`get_deployable_budget()` does not subtract capital already deployed, and there is
       no global exposure cap.**
 

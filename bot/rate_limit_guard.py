@@ -55,6 +55,33 @@ _MAX_BLOCK_S = 3600.0
 _PROBE_FIRST_S = 60.0
 _PROBE_MAX_S = 600.0
 
+# ...but do not start probing until most of the stated ban has actually elapsed.
+#
+# Measured 2026-09-08. Bans are per-CloudFront-edge, not per-account: three edges
+# rejected us that day, each with its OWN expiry (.97 said 17:44:57 while .71 said
+# 17:34:57). A probe therefore proves only that the edge IT reached is clear — the next
+# request routes elsewhere and gets rejected, adding ~120s to that edge's ban. The guard
+# then re-arms, longer, and the cycle repeats every candle:
+#
+#     16:07:30  ARMED 3600s (until 17:44:57)
+#     16:13:14  probe with 54 min left -> SUCCEEDED -> block cleared
+#     16:15:02  REJECTED               -> expiry pushed to 17:48:58
+#     16:22:30  ARMED again ...
+#
+# Cost of that loop, measured over five episodes in one day: +336 minutes of ban time,
+# from 39 probes. The 15:37 episode alone went from "ends 15:46:54" to "ends 17:48:58".
+#
+# Probing early was worth it only if bans blocked trading. They do not: three real orders
+# were placed INSIDE stated ban windows (TIAUSDT 09-07 16:15, AVAXUSDT 09-08 13:45,
+# EIGENUSDT 09-08 15:45) and the log contains no order-placement failure at all — every
+# -1003 is a balance read, which falls back to the cached balance. So waiting costs
+# nothing measurable, while probing costs hours of extended bans.
+#
+# 0.9 keeps the early-recovery capability that motivated probing (Binance did lift one ban
+# 41 min early on 2026-09-06) while removing the flap: on an hour-long ban the first probe
+# comes at ~54 min instead of ~6 min.
+_PROBE_AFTER_FRAC = 0.9
+
 # A probe that works proves one request got through. It does not prove the ban has
 # lifted for a burst of fifteen. Measured on the server 2026-09-07: after a probe
 # succeeded and the block cleared, three kline fetches failed within 130ms and pushed
@@ -206,6 +233,7 @@ class RateLimitGuard:
         self._blocked_until: dict[str, float] = {}   # key -> monotonic deadline
         self._announced: dict[str, float] = {}       # key -> deadline already logged
         self._next_probe: dict[str, float] = {}      # key -> monotonic time of next probe
+        self._probe_not_before: dict[str, float] = {}  # key -> no probing before this
         self._probe_delay: dict[str, float] = {}     # key -> current backoff
         self._banned_until_wall: dict[str, float] = {}  # key -> epoch seconds, for messages
         self._notify = None                          # set via set_notifier()
@@ -278,6 +306,9 @@ class RateLimitGuard:
         # for a different endpoint while the longer one still stands.
         if deadline > self._blocked_until.get(key, 0.0):
             self._blocked_until[key] = deadline
+            # Recomputed from the NEW remaining every time the deadline moves out, so an
+            # extended ban also pushes the probe window back rather than probing into it.
+            self._probe_not_before[key] = now + remaining * _PROBE_AFTER_FRAC
             if expiry_ms is not None:
                 self._banned_until_wall[key] = expiry_ms / 1000.0
             if self._announced.get(key) != deadline:
@@ -347,6 +378,13 @@ class RateLimitGuard:
             # inside the lock, so of fifteen threads arriving together exactly one is
             # let through — previously two could both read the old deadline and both
             # go to the network.
+            # Most of the stated ban must have elapsed first. Without this the probe
+            # fires minutes into an hour-long ban, "succeeds" against a clean edge, and
+            # the traffic that follows walks into a banned one and extends it.
+            not_before = self._probe_not_before.get(key)
+            if not_before is not None and now < not_before and settle is None:
+                return remaining
+
             next_probe = self._next_probe.get(key)
             if next_probe is not None and now >= next_probe:
                 settling = settle is not None
@@ -412,6 +450,7 @@ class RateLimitGuard:
         self._blocked_until.pop(key, None)
         self._announced.pop(key, None)
         self._next_probe.pop(key, None)
+        self._probe_not_before.pop(key, None)
         self._probe_delay.pop(key, None)
         self._probe_inflight.pop(key, None)
         self._settle_until.pop(key, None)

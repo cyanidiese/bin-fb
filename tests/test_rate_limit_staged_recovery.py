@@ -48,7 +48,16 @@ def _probe(g, key=KEY):
 
 
 def _offer_probe(g, key=KEY):
+    """Make a probe available now.
+
+    Two gates have to be satisfied since 2026-09-08: the backoff timer, and
+    _probe_not_before — probing no longer starts until most of the stated ban has
+    elapsed. These tests are about what happens *once* a probe is offered, so they
+    fast-forward both rather than re-testing the gate. The gate itself is covered in
+    tests/test_probe_waits_out_the_ban.py.
+    """
     g._next_probe[key] = time.monotonic() - 1
+    g._probe_not_before[key] = time.monotonic() - 1
 
 
 # --------------------------------------------------------------------------- #

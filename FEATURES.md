@@ -35,6 +35,20 @@ Loads up to 1000 recent klines on startup, stores locally, and merges new candle
 - Nothing currently reads an index above 6 (analyser uses `[4]`; data_feed uses `[0]` and `[6]`)
 - Gracefully handles network errors and cache corruption
 
+### API Ban Handling — probe only near the end of the stated ban
+Bans are **per-CloudFront-edge, not per-account**, so a probe proves only that the edge it happened to reach is clear. Probing early therefore re-opened the gate, the next request routed to a banned edge, and each such request added ~120s to that edge's ban.
+
+**Files**: `bot/rate_limit_guard.py` (`_PROBE_AFTER_FRAC`, `_probe_not_before`, `blocked_for`, `_arm`)
+**Key details**:
+- Evidence (2026-09-08): three edges rejected us, each with **its own expiry** — `.97` said 17:44:57 while `.71` said 17:34:57 at the same moment. Counts: `.97` ×12, `.71` ×8, `.103` ×3
+- The loop it produced: `16:07:30` ARMED until 17:44:57 → `16:13:14` probe with **54 min left** succeeded → block cleared → `16:15:02` rejected, expiry pushed to 17:48:58 → re-armed → repeat every candle
+- **Measured cost: +336 minutes of ban time in one day** across 5 episodes, from 39 probes. The 15:37 episode went from "ends 15:46:54" to "ends 17:48:58" (+122 min)
+- `_PROBE_AFTER_FRAC = 0.9` — no probe until 90% of the stated ban has elapsed. On an hour-long ban the first probe comes at ~54 min instead of ~6 min. Keeps the early-recovery capability that motivated probing (Binance lifted one ban 41 min early on 2026-09-06) without the flap
+- `_probe_not_before` is **recomputed every time the deadline moves out**, so an extended ban pushes the probe window back instead of being probed into
+- The "never shorten an existing block" rule already handled the differing per-edge expiries — the longer one wins
+- **Why waiting is free**: bans do not block trading. Three real orders were placed *inside* stated ban windows (TIAUSDT 09-07 16:15, AVAXUSDT 09-08 13:45, EIGENUSDT 09-08 15:45) and the logs contain **no order-placement failure at all** — every `-1003` is a balance read, which falls back to the cached balance
+- The 8s settle window stays for the kline-burst case, but is no longer the primary defence: the probe/traffic divergence is structural (different edges), so no settle length could fix it. A rejection once arrived **93s** after a clean settle
+
 ### Mid-Candle Balance Pre-Fetch
 The wallet read happens 7.5 minutes into each candle instead of at the candle close, so the close-time read is served from cache and never touches the network at the exchange's most congested instant.
 

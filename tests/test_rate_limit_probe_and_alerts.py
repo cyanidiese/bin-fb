@@ -31,6 +31,18 @@ def clock(monkeypatch):
     return state
 
 
+def _to_probe_window(clock, ban_secs: float) -> None:
+    """Advance to where a probe becomes permissible.
+
+    Since 2026-09-08 probing does not begin until _PROBE_AFTER_FRAC of the stated ban has
+    elapsed: a probe fired minutes into an hour-long ban proves only that the CloudFront
+    edge it reached is clear, and the traffic that follows walks into a banned edge and
+    extends it (+336 min measured in one day). These tests are about what happens once a
+    probe IS offered; the gate itself is covered in tests/test_probe_waits_out_the_ban.py.
+    """
+    clock['t'] += ban_secs * rlg._PROBE_AFTER_FRAC + rlg._PROBE_FIRST_S + 1
+
+
 # ── half-open probing ────────────────────────────────────────────────────────
 
 def test_blocks_immediately_after_a_ban(g, clock):
@@ -40,7 +52,7 @@ def test_blocks_immediately_after_a_ban(g, clock):
 
 def test_lets_one_probe_through_after_the_probe_interval(g, clock):
     g.note_exception('testnet', _ban(3000))
-    clock['t'] += rlg._PROBE_FIRST_S + 1
+    _to_probe_window(clock, 3000)
     assert g.blocked_for('testnet') == 0.0, 'no probe was allowed'
     # and the very next caller is blocked again — one probe, not an open floodgate
     assert g.blocked_for('testnet') > 0
@@ -53,7 +65,7 @@ def _recover(g, clock, key='testnet'):
     blocked_for() lifts the block once that window passes with no further rejection.
     Settling is time-based, so nothing else has to call for it to finish.
     """
-    clock['t'] += rlg._PROBE_FIRST_S + 1
+    _to_probe_window(clock, 3000)
     assert g.blocked_for(key) == 0.0, 'no probe slot offered'
     g.note_success(key)
     clock['t'] += rlg._SETTLE_S + 1
@@ -69,7 +81,7 @@ def test_successful_probes_clear_the_block_early(g, clock):
 def test_a_single_successful_probe_is_not_enough(g, clock):
     """The stampede guard: one success must not re-open the endpoint for 15 symbols."""
     g.note_exception('testnet', _ban(3000))
-    clock['t'] += rlg._PROBE_FIRST_S + 1
+    _to_probe_window(clock, 3000)
     assert g.blocked_for('testnet') == 0.0
     g.note_success('testnet')
     assert g.is_blocked('testnet') is True

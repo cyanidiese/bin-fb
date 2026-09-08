@@ -106,6 +106,8 @@ def test_ban_ended_body_has_no_markup():
         # A success starts a settling window rather than clearing outright, so drive
         # settling to completion to reach the ban-ended announcement.
         g._next_probe['testnet'] = time.monotonic() - 1
+        # Probing waits for most of the stated ban to elapse; skip straight to it.
+        g._probe_not_before['testnet'] = time.monotonic() - 1
         assert g.blocked_for('testnet') == 0.0
         g.note_success('testnet')
         g._settle_until['testnet'] = time.monotonic() - 0.01

@@ -1709,14 +1709,23 @@ async def run() -> None:
                 # Prevents w=1 symbols from accidentally consuming the whole account.
                 #
                 # Two weight sources exist and they disagree. Candidacy is decided by
-                # risk_config.symbol_weights; the registry keeps its own, unrelated set.
+                # risk_config.symbol_weights; the registry keeps its own, unrelated set,
+                # and the registry is what sizes this branch.
                 #
-                # The FRACTION must come from risk_config, because the registry's is 0 for
-                # symbols that are fully funded there. Measured 2026-09-09: REZUSDT held
-                # risk_config weight 13 — the second largest allocation — against registry
-                # weight 0, so _sym_frac was 0, sym_cap was 0.00, and every single-candidate
-                # candle was refused with 'balance=0.00 < margin=1.00'. 42 real orders lost.
-                # ETHFIUSDT (risk_config 9, registry 0) was primed to do the same.
+                # That breaks when the registry has NO weight for a symbol risk_config
+                # funds. Measured 2026-09-09: REZUSDT held risk_config weight 13 — the
+                # second largest allocation — against registry weight 0, so _sym_frac was
+                # 0, sym_cap was 0.00, and every single-candidate candle was refused with
+                # 'balance=0.00 < margin=1.00' (42 log events over 6 candles, ~2 lost
+                # signal episodes). ETHFIUSDT (risk_config 9, registry 0) was primed to do
+                # the same — together 41% of allocated weight.
+                #
+                # A registry weight of 0 on a funded symbol is missing data, not an
+                # instruction to size it at zero, so risk_config supplies the share in
+                # THAT case only. Doing it unconditionally (the first attempt at this fix)
+                # silently resized the four symbols that already worked, cutting TIAUSDT
+                # 421 -> 156 — a 63% cut to the most productive symbol under the current
+                # locked presets (+92.09 over 9 real orders, 56% win). Narrow on purpose.
                 #
                 # The DECISION to take this path deliberately still reads the registry.
                 # Switching it to risk_config would put every weight above tats_min_weight
@@ -1730,9 +1739,13 @@ async def run() -> None:
                         s for s in symbol_registry.get_symbols()
                         if not symbol_registry.is_disabled(s) and not symbol_registry.is_symbol_paused(s)
                     ]
-                    _sym_w = float(_cfg_ws.get(sym, 0.0))
-                    _total_w = sum(float(_cfg_ws.get(s, 0.0)) for s in _active_ws)
-                    _sym_frac = (_sym_w / _total_w) if _total_w > 0 else 1.0
+                    _reg_total = sum(symbol_registry.get_weight(s) for s in _active_ws)
+                    _sym_frac = ((symbol_registry.get_weight(sym) / _reg_total)
+                                 if _reg_total > 0 else 1.0)
+                    if _sym_frac <= 0.0:
+                        _total_w = sum(float(_cfg_ws.get(s, 0.0)) for s in _active_ws)
+                        _sym_frac = ((float(_cfg_ws.get(sym, 0.0)) / _total_w)
+                                     if _total_w > 0 else 0.0)
                     sym_cap = deployable * _sym_frac
                     virtual_order_simulator.set_candle_alloc_context(False, {sym: _sym_frac})
                     await _try_place_order(sym, best, sym_s, sym_cap, candle_ts, trade_cap=sym_cap)

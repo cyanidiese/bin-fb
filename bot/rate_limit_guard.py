@@ -311,8 +311,24 @@ class RateLimitGuard:
             self._probe_not_before[key] = now + remaining * _PROBE_AFTER_FRAC
             if expiry_ms is not None:
                 self._banned_until_wall[key] = expiry_ms / 1000.0
-            if self._announced.get(key) != deadline:
-                self._announced[key] = deadline
+            # State must persist whether or not we announce — an early version had this
+            # inside the branch below, so a deduped re-arm silently stopped writing.
+            self._persist()
+            # Dedup on the WALL-CLOCK expiry Binance stated, not on `deadline`.
+            # `deadline` is `now + remaining`, and `remaining` is clamped to
+            # _MAX_BLOCK_S, so rediscovering the SAME ban an hour later yields a
+            # different deadline and re-announced a ban that had never ended.
+            # Measured 2026-09-09: Binance reported the identical expiry
+            # (banned until 1788986816410 = 20:46:56) at both 17:22:30 and 19:07:30,
+            # and the second one sent a fresh "API ban started" Telegram alert. The
+            # `not was_blocked` gate below could not catch it, because it is computed
+            # from the clamped _blocked_until, which had already lapsed by then.
+            # Falls back to `deadline` when the message carried no parseable expiry —
+            # those are short assumed blocks where re-announcing costs nothing.
+            _announce_key = (self._banned_until_wall.get(key)
+                             if expiry_ms is not None else deadline)
+            if self._announced.get(key) != _announce_key:
+                self._announced[key] = _announce_key
                 until = self._banned_until_wall.get(key)
                 until_txt = _fmt_wall(until) if until else 'unknown (assumed 60s)'
                 logger.warning(
@@ -320,7 +336,6 @@ class RateLimitGuard:
                     f"{remaining:.0f}s (until {until_txt}). Calling while banned extends "
                     f"the ban, so we wait."
                 )
-                self._persist()
                 if not was_blocked:
                     # Plain text only: Notifier.notify() html-escapes the body (so an
                     # API error containing '<' cannot break the message), which would

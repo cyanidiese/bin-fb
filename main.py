@@ -767,6 +767,7 @@ async def run() -> None:
     _kline_refresh_counters: dict[str, int] = {}
     _placed_this_candle: dict[str, int] = {}  # symbol → candle_open_ts of last placed order
     _substituted_preset: dict[str, str] = {}  # symbol → substituted preset, per candle
+    _symbols_synced_at: list[int] = [0]      # candle_ts of the last roster reconciliation
     _discard_logged: dict[str, int] = {}     # symbol → candle_ts of last discard log
     _norec_logged: dict[str, int] = {}       # symbol → candle_ts of last no_recommendation event
     _pending_signals: dict[str, dict] = {}   # symbol → signal details of last placed order
@@ -1465,7 +1466,73 @@ async def run() -> None:
 
         # Sync registry from disk so dashboard changes (disable, weight edits)
         # take effect within one candle without a bot restart.
-        symbol_registry.reload_from_disk()
+        _roster_added, _roster_removed = symbol_registry.reload_from_disk()
+
+        # Roster changes: subscribe additions, unsubscribe removals, no restart needed.
+        #
+        # on_candle_close fires once per SYMBOL, so this is guarded to once per candle —
+        # without that, the kline bootstrap below would re-fetch for every symbol in the
+        # roster on every candle (22 API calls a candle at the current count).
+        #
+        # Written as a reconciliation of desired-vs-present rather than acting on the
+        # (added, removed) delta, so it is idempotent and self-healing: a symbol held
+        # back because it still had an open position is dropped on a later candle once
+        # it is flat, even though the delta reported it removed only once.
+        _this_candle = int(kline[0]) if kline else 0
+        if _symbols_synced_at[0] != _this_candle:
+            _symbols_synced_at[0] = _this_candle
+            _desired = symbol_registry.get_symbols()
+            _to_add = [s for s in _desired
+                       if s not in sym_settings or s not in analyzers]
+            _to_drop = [s for s in list(sym_settings) if s not in set(_desired)]
+            _roster_changed = False
+
+            for _sym in _to_add:
+                try:
+                    _s = load_settings(_sym)
+                    _s.trading_mode = current_mode
+                    # Bootstrap is a REST call and is behind the rate-limit guard, so it
+                    # returns nothing during a ban. Adding the symbol anyway would leave
+                    # an empty analyzer and no retry, because the next pass would see it
+                    # as already present — so skip and pick it up on a later candle.
+                    _kl = await asyncio.to_thread(
+                        feed.load_klines, _sym, timeframe, 1500)
+                    if not _kl:
+                        logger.warning(
+                            f"[{_sym}] added to the registry but no klines available "
+                            f"yet (rate-limit ban or bad symbol) — retrying next candle")
+                        continue
+                    _az = Analyzer(_s.swing_neighbours, RecommendationEngine(_s))
+                    _az.build_from_klines(_kl)
+                except Exception as _add_exc:
+                    logger.warning(
+                        f"[{_sym}] could not be bootstrapped ({_add_exc}) — "
+                        f"retrying next candle")
+                    continue
+                sym_settings[_sym] = _s
+                analyzers[_sym] = _az
+                _roster_changed = True
+                logger.info(
+                    f"[{_sym}] subscribed without a restart — "
+                    f"{len(_kl)} klines bootstrapped")
+
+            _open_real = {} if _virtual_only else order_executor.get_open_orders()
+            for _sym in _to_drop:
+                if _sym in _open_real:
+                    # Never stop watching a symbol we hold. The exchange stop-loss would
+                    # survive, but with no candles arriving the bot would never record
+                    # the close. _subscribed_symbols() keeps it on the socket too.
+                    logger.warning(
+                        f"[{_sym}] removed from the registry but still holds an open "
+                        f"real position — staying subscribed until it is flat")
+                    continue
+                sym_settings.pop(_sym, None)
+                analyzers.pop(_sym, None)
+                _roster_changed = True
+                logger.info(f"[{_sym}] unsubscribed without a restart")
+
+            if _roster_changed:
+                feed.request_reconnect()
 
         # Hot-reload config and switch scenario if changed
         risk_cfg = load_risk_config()
@@ -2192,9 +2259,27 @@ async def run() -> None:
     if not _virtual_only:
         _balance_task = asyncio.create_task(_balance_prefetch_loop())
 
+    def _subscribed_symbols() -> list[str]:
+        """The registry roster, plus any symbol still holding an open real position.
+
+        Removing a symbol from the registry must not orphan a live position. The
+        exchange stop-loss would survive, but the websocket would stop delivering
+        candles for it, so the bot would never see the fill close. Such a symbol stays
+        on the socket until it is flat; the roster reconciliation in on_candle_close
+        keeps its analyzer alive for exactly as long, and drops it once closed.
+        """
+        syms = symbol_registry.get_symbols()
+        if _virtual_only:
+            return syms
+        try:
+            held = [s for s in order_executor.get_open_orders() if s not in syms]
+        except Exception:
+            return syms
+        return syms + held
+
     _watchdog_task = asyncio.create_task(
         feed.start_watchdog(
-            get_symbols=symbol_registry.get_symbols,
+            get_symbols=_subscribed_symbols,
             timeframe=timeframe,
             on_candle_close=on_candle_close,
             on_price_update=on_price_update,
@@ -2215,7 +2300,7 @@ async def run() -> None:
 
     try:
         await feed.stream_combined(
-            get_symbols=symbol_registry.get_symbols,
+            get_symbols=_subscribed_symbols,
             timeframe=timeframe,
             on_candle_close=on_candle_close,
             on_price_update=on_price_update,

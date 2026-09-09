@@ -173,7 +173,7 @@ class SymbolRegistry:
     def all_disabled(self) -> bool:
         return len(self._symbols) > 0 and all(self.is_disabled(s) for s in self._symbols)
 
-    def reload_from_disk(self) -> None:
+    def reload_from_disk(self) -> tuple[list[str], list[str]]:
         """Re-read mutable external state from the registry file.
 
         Called at the start of each candle so dashboard changes (disable, weight
@@ -181,20 +181,46 @@ class SymbolRegistry:
         The in-memory state the bot has written since startup is always reflected
         in the file already (every mutating method calls _persist()), so a full
         reload is safe and idempotent under normal operation.
+
+        Returns (added, removed) symbols so the caller can build per-symbol state for
+        new ones and tear down old ones. This used to reload everything EXCEPT
+        `_symbols`, which meant the roster was frozen at startup: on 2026-09-09 six
+        symbols were added for virtual-only observation, the registry held 22, and the
+        running bot stayed subscribed to 16 and processed nothing for the new six.
         """
         if not self._path.exists():
-            return
+            return [], []
         try:
             data = json.loads(self._path.read_text())
         except Exception as exc:
             logger.warning(f"SymbolRegistry.reload_from_disk: cannot read file ({exc}) — keeping current state")
-            return
+            return [], []
         with self._lock:
             self._disabled = data.get('disabled', {})
             self._weights = data.get('weights', self._weights)
             self._paused = data.get('paused', {})
             self._disabled_ranks = data.get('disabled_ranks', self._disabled_ranks)
             self._leverage_overrides = {k: int(v) for k, v in data.get('leverage_overrides', {}).items()}
+
+            # The roster. A missing key or an empty list is treated as "no information"
+            # rather than "unsubscribe everything" — a truncated write must not be able
+            # to take every symbol offline at once.
+            incoming = data.get('symbols')
+            if not isinstance(incoming, list) or not incoming:
+                return [], []
+            fresh = [str(s).upper() for s in incoming if str(s).strip()]
+            if not fresh:
+                return [], []
+            current = set(self._symbols)
+            added = [s for s in fresh if s not in current]
+            removed = [s for s in self._symbols if s not in set(fresh)]
+            if added or removed:
+                self._symbols = fresh
+                logger.info(
+                    f"SymbolRegistry: roster changed — "
+                    f"added {added or 'none'}, removed {removed or 'none'}"
+                )
+            return added, removed
 
     # ── internal ────────────────────────────────────────────────────────
 

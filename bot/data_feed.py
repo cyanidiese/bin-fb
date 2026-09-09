@@ -111,6 +111,16 @@ class DataFeed:
         self._last_candle_ts: dict[str, float] = {}   # symbol → monotonic time of last candle close
         self._reconnect_requested: bool = False
 
+    def request_reconnect(self) -> None:
+        """Ask the combined stream to drop and rebuild its subscription.
+
+        `stream_combined` calls get_symbols() at the top of its retry loop, so a
+        reconnect is the whole mechanism for subscribing a newly added symbol and
+        unsubscribing a removed one — no restart needed. Takes effect on the next
+        message from the socket, since that is where the flag is checked.
+        """
+        self._reconnect_requested = True
+
     def reinit(self, mode: str, api_key: str, api_secret: str) -> None:
         """Re-initialise client and endpoints for a new mode without creating a new DataFeed."""
         self._is_testnet = (mode == 'test')

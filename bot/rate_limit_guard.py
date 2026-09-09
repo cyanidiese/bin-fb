@@ -40,8 +40,18 @@ _BANNED_UNTIL_RE = re.compile(r'banned until (\d{10,16})')
 # error will re-arm the guard anyway.
 _DEFAULT_BLOCK_S = 60.0
 
-# Never trust an absurd expiry from a malformed message.
-_MAX_BLOCK_S = 3600.0
+# Never trust an absurd expiry from a malformed message. This is a sanity ceiling, NOT a
+# policy on how long to wait — it must sit above any ban Binance legitimately issues.
+#
+# It was 3600.0, which also clamped real multi-hour bans, and that caused the flap
+# measured 2026-09-09: a ban until 20:46:56 armed at 17:22:30 suppressed for only an hour,
+# the probe gate reopened at ~18:16, and the mid-candle balance prefetch walked back into
+# the live ban at 19:07:30. Of the 15 arming events that day, 7 were rediscoveries caused
+# by nothing but this clamp — each one a call into an active ban, which is what extends it.
+#
+# 6h is ~1.8x the longest ban observed (204 min) while still turning a corrupt
+# "banned for a year" into something survivable.
+_MAX_BLOCK_S = 6 * 3600.0
 
 # Binance's stated expiry is an upper bound, not a promise. Measured 2026-09-06: it
 # reported a ban until 18:48:59, but futures_account already succeeded again at 18:07 —
@@ -573,6 +583,13 @@ class RateLimitGuard:
                 # rather than the original window, which is slightly stricter — the
                 # original duration is not recoverable from the persisted expiry.
                 self._probe_not_before[key] = now_m + remaining * _PROBE_AFTER_FRAC
+                # And the alert dedup. Without it a restart during a ban wiped the memory
+                # of having announced, so the next rediscovery sent a fresh "API ban
+                # started" for a ban that had never ended — which is what a deploy during
+                # a ban causes. unresolved_ban_endpoints() already reports an unclosed ban
+                # at startup, so the re-arm alert would only be a duplicate. Keyed on the
+                # stated expiry, matching _arm().
+                self._announced[key] = float(expiry)
                 restored.append((key, remaining))
         for key, remaining in restored:
             logger.warning(

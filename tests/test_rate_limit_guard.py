@@ -11,6 +11,7 @@ import pytest
 
 from bot.rate_limit_guard import (
     RateLimitGuard, RateLimited, looks_like_rate_limit, parse_ban_expiry_ms,
+    _MAX_BLOCK_S,
 )
 
 REAL = ("APIError(code=-1003): Way too many requests; IP(15.158.242.76) banned until "
@@ -84,9 +85,16 @@ def test_message_without_expiry_uses_a_bounded_default(g):
 
 
 def test_absurd_expiry_is_capped(g):
-    """A malformed message must not silence an endpoint for days."""
+    """A malformed message must not silence an endpoint for days.
+
+    Asserted against the constant rather than a literal: _MAX_BLOCK_S is a sanity
+    ceiling, not a policy on how long to wait, and it was raised from 1h to 6h on
+    2026-09-09 because it was also clamping the multi-hour bans Binance really issues.
+    The second assertion is what actually pins this test's intent.
+    """
     g.note_exception('testnet', Exception(f'-1003 banned until {int((time.time()+10**7)*1000)}'))
-    assert g.blocked_for('testnet') <= 3600
+    assert g.blocked_for('testnet') <= _MAX_BLOCK_S + 1
+    assert _MAX_BLOCK_S < 86400, 'the cap has drifted into "days" — the thing it forbids'
 
 
 def test_a_nearer_expiry_never_shortens_an_active_block(g):

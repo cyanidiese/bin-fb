@@ -1707,14 +1707,31 @@ async def run() -> None:
                 # tats_min_weight: low-weight symbols in single-signal mode get a
                 # weight-proportional cap instead of the full deployable budget.
                 # Prevents w=1 symbols from accidentally consuming the whole account.
+                #
+                # Two weight sources exist and they disagree. Candidacy is decided by
+                # risk_config.symbol_weights; the registry keeps its own, unrelated set.
+                #
+                # The FRACTION must come from risk_config, because the registry's is 0 for
+                # symbols that are fully funded there. Measured 2026-09-09: REZUSDT held
+                # risk_config weight 13 — the second largest allocation — against registry
+                # weight 0, so _sym_frac was 0, sym_cap was 0.00, and every single-candidate
+                # candle was refused with 'balance=0.00 < margin=1.00'. 42 real orders lost.
+                # ETHFIUSDT (risk_config 9, registry 0) was primed to do the same.
+                #
+                # The DECISION to take this path deliberately still reads the registry.
+                # Switching it to risk_config would put every weight above tats_min_weight
+                # and hand each sole candidate the entire deployable budget — measured, a
+                # jump from ~421 to ~2107 margin, roughly 5x the observed position size.
+                # That is a risk change, not a bug fix, so it is left alone; see TODO.md.
                 _tats_min_w = float(risk_cfg.get('tats_min_weight', 0.0))
-                _sym_w = symbol_registry.get_weight(sym)
-                if _tats_min_w > 0 and _sym_w < _tats_min_w:
+                _cfg_ws = risk_cfg.get('symbol_weights', {}) or {}
+                if _tats_min_w > 0 and symbol_registry.get_weight(sym) < _tats_min_w:
                     _active_ws = [
                         s for s in symbol_registry.get_symbols()
                         if not symbol_registry.is_disabled(s) and not symbol_registry.is_symbol_paused(s)
                     ]
-                    _total_w = sum(symbol_registry.get_weight(s) for s in _active_ws)
+                    _sym_w = float(_cfg_ws.get(sym, 0.0))
+                    _total_w = sum(float(_cfg_ws.get(s, 0.0)) for s in _active_ws)
                     _sym_frac = (_sym_w / _total_w) if _total_w > 0 else 1.0
                     sym_cap = deployable * _sym_frac
                     virtual_order_simulator.set_candle_alloc_context(False, {sym: _sym_frac})

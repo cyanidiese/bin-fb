@@ -4,6 +4,37 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 69 (2026-09-09) — tats_min_weight semantics (LOGGED, NOT APPLIED)
+
+- [ ] **`tats_min_weight` is compared against the registry's weights, where every value
+      is 0 or 1 — so the threshold of 3 is true for every symbol and the fraction path
+      catches all of them, including the largest allocation.**
+
+      Fixed today: the *fraction* now comes from `risk_config.symbol_weights`, so a funded
+      symbol can no longer be sized to zero (REZUSDT lost 42 real orders that way).
+
+      **Not** changed: the decision to take the fraction path still reads the registry.
+      Switching it to `risk_config` would put every weight above 3, and each sole
+      candidate would receive the entire deployable budget:
+
+      | | current | if the threshold read risk_config |
+      |---|---|---|
+      | cap for a sole candidate | ~156–546 (weight-proportional) | **2,107** |
+      | vs observed real margins | 340–400 | ~5x larger |
+      | share of a 3,099 balance at 5x lev | ~25–88% notional | **340% notional** |
+
+      That is TATS's documented "single eligible signal → full deployable budget"
+      behaviour, so it is arguably correct by design — but it is a risk decision, not a
+      bug fix, and it should be made deliberately with a chosen `max_trade_pct` rather
+      than as a side effect.
+
+      Also note the fix changes sizing to be weight-proportional where it was previously a
+      flat 1/5 for everyone. **TIAUSDT's cap drops 421 -> 156** because its risk_config
+      weight is 4 of 54 — it earns +10.23/trade on real money, so consider raising its
+      weight if that reduction is not wanted.
+
+---
+
 ## Session 68 (2026-09-08) — deployable budget ignores open positions (LOGGED, NOT APPLIED)
 
 *Full session 67–68 change record: [`docs/2026-09-08-sessions-67-68-changelog.md`](docs/2026-09-08-sessions-67-68-changelog.md)*

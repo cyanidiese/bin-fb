@@ -379,8 +379,11 @@ Only the running instance can close its own positions.
 
 ## What the two days actually established about income
 
-- **Bans cost zero orders.** `skip_balance` appears 0 times across the whole decision log,
-  because the balance getter falls back to the last known figure. Our measured API usage is
+- **Bans cost zero orders.** No `skip_balance` event traces to a ban: the balance getter
+  falls back to the TTL cache and then to RiskManager's last-known-good figure
+  (`main.py:786-794`), so a failed read never reaches sizing as 0.
+  *Superseded 2026-09-09:* `skip_balance` is no longer absent — 42 events appeared, but
+  none of them are balance failures. They are allocation zeros; see session 69 below. Our measured API usage is
   ~0 weight/minute against a 2,400 ceiling — read from Binance's own
   `X-MBX-USED-WEIGHT-1M` header, which incremented only for the probe requests.
 - **`symbol_weights=0` blocked 4,510 signals** against 79 orders placed — 57× more. That,
@@ -394,3 +397,56 @@ Only the running instance can close its own positions.
 - **Open question:** four symbols hold 62.5% of allocated capital with no real trading
   history, because they had weight 0 until 2026-09-08. Two locked presets
   (ETHFIUSDT, TIAUSDT) generate no signal at all — see #21.
+
+
+---
+
+## Session 69 (2026-09-09) — the allocation zero, and what it was not
+
+29. **`balance=0.00 < margin=1.00` was never a balance problem.** 42 `skip_balance` events
+    on REZUSDT across 6 candles. `_try_place_order`'s fourth parameter is *named* `balance`,
+    but every TATS call site passes an allocation (`sym_cap`, `deployable`, `remaining`) —
+    only the BGF path at `main.py:1696` passes a real wallet figure. So the `0.00` meant
+    "this symbol was allocated nothing", and `margin=1.00` (min_notional 5 / leverage 5)
+    was healthy throughout. The misleading label cost two wrong diagnoses in one session.
+    Parameter rename queued as a separate commit.
+
+30. **Root cause: two weight sources disagree.** `risk_config.symbol_weights` decides
+    candidacy; `symbol_registry.weights` sizes the sole-candidate branch. REZUSDT held
+    risk_config 13 against registry 0, ETHFIUSDT 9 against 0 — together **22 of 54
+    configured weight, 41% of allocated capital**, sized to zero whenever sole candidate.
+    Fixed in `35b4fc8` by falling back to risk_config *only* when the registry has no
+    weight. Verified live: REZUSDT 0 → 507.31, ETHFIUSDT 0 → 351.21, and the four working
+    symbols unchanged at 421.45.
+
+31. **`aa5f9e7` was too broad and is superseded by `35b4fc8`.** It applied the risk_config
+    fraction unconditionally, which would have cut TIAUSDT 421 → 156 (63%) — the most
+    productive symbol under the current locked presets. Its commit message also overstated
+    the loss as "42 real orders"; the honest figure is ~2 signal episodes.
+
+32. **AVAXUSDT: not a bypass, just a stale weight.** Seven real orders, 0 winners, −53.49
+    over 27.2h (−47.11/day). Diagnosed initially as three bypassed guards — wrong.
+    `main.py:1667-1668` drops zero-score candidates before the sole-candidate branch, so
+    weight 0 is a hard gate. Those orders predate the weight change. Confirmed fixed by
+    the user's own weight-0 setting: 7 consecutive candles discarded from 15:00.
+    The same reasoning clears BTCUSDT — weight 0 makes it genuinely virtual-only.
+
+33. **Locked presets are working; the lifetime loss is pre-lock churn.** Lifetime is
+    −751.71 over 391 orders, but restricted to orders placed *since* each symbol's lock
+    took hold: **21 orders, +118.19**, and every locked symbol is positive except AVAXUSDT.
+    Excluding it: **14 orders, +171.68**. EIGENUSDT's −289.61 lifetime is almost entirely
+    `lh_sell_trail15` (−326.75 over 16, 12% win), a preset it can no longer select.
+    *Do not judge a symbol on pre-lock history.*
+
+34. **H17-19 blackout validated, not extended.** H17 0% win over 11 orders, H18 0% over 10,
+    H19 10% over 10 — keep it. The wider hourly pattern is a trap: lifetime H22 is −189.41,
+    but the currently-locked symbol+preset pairs return **+106.57 at 75% win** there. The
+    lifetime hourly signal reflects which presets traded when, not the hours. 38 locked-pair
+    orders across 18 hours is not enough to act on.
+
+35. **Idle capital is a signal-frequency problem, not a sizing one.** Balance 3,098.93 with
+    **91.6% idle** — but 32% is structural (15% reserve + the tier's undeployed 20%), and
+    only one position was open. Six funded symbols at ~350 margin each would use ~2,100 of
+    the 2,107 deployable budget. INJUSDT (weight 14, the best symbol at +275.89 over 56
+    orders) produced **zero decisions in 48h** — klines verified fresh at 5,000 candles, so
+    it is simply not signalling.

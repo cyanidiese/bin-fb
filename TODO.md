@@ -4,6 +4,28 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 69b (2026-09-09) — shipped and queued
+
+- [x] **Zero-sizing fallback narrowed** (`35b4fc8`). risk_config supplies the sole-candidate
+      fraction only when the registry has none. REZUSDT 0 → 507.31, ETHFIUSDT 0 → 351.21;
+      SOLUSDT/TIAUSDT/EIGENUSDT/INJUSDT unchanged at 421.45. Supersedes `aa5f9e7`, which
+      would have cut TIAUSDT 63%.
+- [ ] **Rename `_try_place_order(balance=...)` to reflect that it is an allocation.**
+      Only `main.py:1696` passes a wallet figure; every TATS path passes a cap. The name
+      caused two misdiagnoses on 2026-09-09. Mechanical local rename, ~30 lines; keep
+      `dl_record(balance=...)` so the stored schema is unchanged.
+- [ ] **INJUSDT produces no decisions.** Weight 14 (26% of the book) and the best symbol
+      on record (+275.89 / 56 orders), but zero decision-log rows in 48h. Klines verified
+      fresh (5,000 candles, current). No base signal is reaching the candidate stage —
+      confirm whether `oscillating_zone` plus `per_symbol_settings.max_sl_pct=10` is the
+      constraint before touching anything.
+- [ ] **Allocation model rewrite (user's rules 1+2).** Renormalise pure config weights
+      across the candle's candidates; sole candidate takes the remainder. MUST subtract
+      open-position margin from the budget first — without it, replaying last week peaks at
+      129-179% of the wallet and 5-12 orders would be rejected outright by Binance.
+      Measured on 21 post-lock orders: the rule is a ~20x leverage dial on whatever edge
+      exists, so the edge needs establishing on more than 21 trades first. Spec not written.
+
 ## Session 69 (2026-09-09) — tats_min_weight semantics (LOGGED, NOT APPLIED)
 
 - [ ] **`tats_min_weight` is compared against the registry's weights, where every value

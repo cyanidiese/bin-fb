@@ -39,7 +39,7 @@ from config.risk_config import (
     load_risk_config, save_risk_config, get_min_trades_for_ranking,
     locked_presets_for,
 )
-from bot.balance_history import record as bh_record
+from bot.balance_history import last_known as bh_last_known, record as bh_record
 from bot.decision_log import record as dl_record
 from bot.lot_constraint_detector import adjust_constrained_symbols
 from bot.weight_rebalancer import WeightRebalancer
@@ -592,6 +592,24 @@ async def run() -> None:
     _balance_cache_inner: list[tuple[float, float]] = [(0.0, 0.0)]
 
     startup_balance = await order_executor.fetch_account_balance()
+    # A restart inside a rate-limit ban gets 0.0 here — the guard refuses the call rather
+    # than extending the ban, which is correct. But the seed below is gated on a positive
+    # figure, so a 0 left RiskManager on its 1000.00 config default against a real
+    # 3098.93 (observed 2026-09-09 17:35): deployable 680 instead of 2107, so every real
+    # order sized at a third of intent until the ban expired 190 minutes later.
+    # balance_history is the only last-known-good that exists before a successful call.
+    if startup_balance <= 0:
+        startup_balance = bh_last_known(bh_path)
+        if startup_balance > 0:
+            logger.warning(
+                f"Balance unavailable at startup — seeded {startup_balance:.2f} USDT from "
+                f"balance history instead of the config default"
+            )
+        else:
+            logger.error(
+                "Balance unavailable at startup and no usable history — sizing off the "
+                "config default until the first successful read"
+            )
     if startup_balance > 0:
         risk_manager.seed_real_balance(startup_balance)
         # Prime the placement-path cache too. It used to start at 0.0 and only fill on a
@@ -600,7 +618,8 @@ async def run() -> None:
         # the real figure. Observed 2026-09-08: seeded 3072.38 at 13:10, then two REZUSDT
         # orders blocked at 13:15 and 13:30 for insufficient balance.
         _balance_cache_inner[0] = (startup_balance, time.monotonic())
-    bh_record(bh_path, balance=risk_manager.get_balance(), trigger='startup')
+    bh_record(bh_path, balance=risk_manager.get_balance(),
+              trigger='startup' if startup_balance > 0 else 'startup_unconfirmed')
     virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
 
     # Kline bootstrap + initial export

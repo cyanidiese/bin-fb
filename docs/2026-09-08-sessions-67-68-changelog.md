@@ -450,3 +450,44 @@ Only the running instance can close its own positions.
     the 2,107 deployable budget. INJUSDT (weight 14, the best symbol at +275.89 over 56
     orders) produced **zero decisions in 48h** — klines verified fresh at 5,000 candles, so
     it is simply not signalling.
+
+36. **A restart inside a ban sized every order at a third of intent.** Found by deploying
+    into an active ban at 17:35. `b33234d` correctly refused the balance call rather than
+    extending the ban, so `fetch_account_balance()` returned 0.0 — but the startup seed is
+    gated on a positive figure, so RiskManager kept its 1000.00 config default against a
+    real 3098.93: deployable 680 instead of 2107, registry cap 136 instead of 421, REZUSDT
+    cap 163.70 instead of 507.31. Conservative, so no over-leverage risk, and
+    `_peak_balance` stayed `None` so no phantom drawdown could fire the hard stop.
+
+    Two unconditional lines then spread the wrong figure: `bh_record` wrote 1000.0 into
+    `balance_history` — the very file a fallback wants to read back — and
+    `sync_real_balance_on_start` pushed it into all 87 virtual rank balances. Ranks 88-99,
+    which that call does not touch, still held 4978.83; that is how it was spotted.
+    Percentage returns are scale-invariant, so preset selection was not distorted.
+
+    Fixed in `ff1d377`: the seed falls back to `balance_history`, and entries written when
+    the balance could **not** be confirmed are tagged `startup_unconfirmed` and skipped by
+    the fallback, so one restart's wrong answer cannot seed the next. The two rows already
+    on disk predated the tag and read as plain `startup`, so they were removed by hand
+    (backup at `balance_history_test.json.bak-before-1000-repair`).
+
+    Verified on the next restart, still inside the ban:
+
+        17:54:34  Skipping balance fetch: 'testnet' rate-limit banned for another 3600s
+        17:54:34  Balance unavailable at startup — seeded 3098.93 USDT from balance history
+        17:54:34  RiskManager: real balance seeded — balance=peak=3098.93 USDT
+
+    `balance_history_live.json` was left alone: all 39 of its rows are 1000.0 because the
+    mirror is keyless and virtual-only, so 1000.0 is its correct balance.
+
+37. **Deployed `ff1d377` + `35b4fc8`.** Server on `ff1d377`, three containers up, zero
+    errors since startup, dashboard 200, 32 mirror `_live.json` files intact. REZUSDT and
+    ETHFIUSDT can now size a sole-candidate real order (507.31 / 351.21); SOLUSDT,
+    TIAUSDT, EIGENUSDT and INJUSDT unchanged at 421.45.
+
+    Two process notes worth keeping: a deploy should check `rate_limit_state.json` first,
+    because landing inside a ban skips the startup reconciliation and the balance read; and
+    waiting for shutdown by grepping the log for `Bot stopped.` is wrong — that string is
+    already there from the previous shutdown, so it matches instantly. Watch the container
+    exit code instead (`bot` exited 0; `bot_mirror` was SIGKILLed at 137, which cost
+    nothing this time — `closed_early` count stayed 0).

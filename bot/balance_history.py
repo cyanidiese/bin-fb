@@ -38,6 +38,17 @@ def record(
     _append(path, entry)
 
 
+#: Triggers whose `balance` is an actual wallet reading. Default-deny: everything else is
+#: ignored by last_known(), so a trigger added later must be reviewed before it is trusted.
+#:
+#: NOT included, deliberately:
+#:   order_open  writes `_try_place_order`'s 4th parameter, which under TATS is the
+#:               symbol's ALLOCATION (sym_cap / deployable) — not the wallet.
+#:   startup     derivative by construction: it records whatever RiskManager already
+#:               held, so it copies a bad seed straight back into the file.
+_WALLET_TRIGGERS = frozenset({'order_close', 'balance_refresh'})
+
+
 def last_known(path: Path) -> float:
     """The newest balance on disk that reflects a real exchange figure, else 0.0.
 
@@ -47,9 +58,18 @@ def last_known(path: Path) -> float:
     ban, the seed was skipped, and RiskManager sized real orders off its 1000.00 config
     default against a real 3098.93 — a third of intent, for the 190 minutes left).
 
-    'startup_unconfirmed' entries are skipped: those are the ones written when the
-    balance could NOT be confirmed, so trusting them would let a wrong figure written by
-    one restart seed the next one, making it self-sustaining.
+    Only _WALLET_TRIGGERS are trusted. Measured 2026-09-09 21:20, when this took the
+    newest positive entry regardless of trigger and picked an allocation:
+
+        20:37:40  order_close   3105.80961077     <- the real balance
+        20:45:00  order_open    2111.9505353236   <- an allocation
+        21:18:32  startup       2111.9505353236   <- seeded from the allocation
+        21:20:30  startup       2111.9505353236   <- and copied itself forward
+
+    RiskManager came up on 2111.95 against a real 3105.81 — deployable ~1436 instead of
+    ~2112, so every position was sized down by a third. The `startup` rows are why the
+    filter cannot just prefer a plausible-looking newest value: they are a bad seed
+    writing itself back, which makes the error self-sustaining.
 
     Never raises — a missing or corrupt file returns 0.0 and the caller keeps its default.
     """
@@ -62,7 +82,7 @@ def last_known(path: Path) -> float:
     for entry in reversed(rows):
         if not isinstance(entry, dict):
             continue
-        if entry.get('trigger') == 'startup_unconfirmed':
+        if entry.get('trigger') not in _WALLET_TRIGGERS:
             continue
         try:
             bal = float(entry.get('balance') or 0.0)

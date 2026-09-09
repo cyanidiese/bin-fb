@@ -77,9 +77,24 @@ class TestLastKnownReadsTheHistory:
         record(p, balance=1000.0, trigger='startup_unconfirmed')
         assert last_known(p) == 3098.93
 
-    def test_a_confirmed_startup_entry_is_trusted(self, tmp_path):
+    def test_a_startup_entry_is_NOT_trusted(self, tmp_path):
+        """Reversed later the same day, and the reversal is the point.
+
+        This originally asserted that a plain `startup` row IS trusted. It is not: a
+        startup row records whatever RiskManager already held, so it is derivative by
+        construction and copies a bad seed straight back into the file. Measured
+        2026-09-09 21:20 — an allocation of 2111.95 was seeded, then written back as two
+        `startup` rows, which would have made the wrong figure self-sustaining across
+        every later restart. Only order_close / balance_refresh come from a wallet read.
+        See test_last_known_balance_is_a_wallet_figure.py.
+        """
         p = tmp_path / 'bh.json'
         record(p, balance=3098.93, trigger='startup')
+        assert last_known(p) == 0.0, 'a derivative startup row must not seed the balance'
+
+    def test_a_wallet_reading_is_trusted(self, tmp_path):
+        p = tmp_path / 'bh.json'
+        record(p, balance=3098.93, trigger='order_close')
         assert last_known(p) == 3098.93
 
     def test_it_scans_back_past_several_bad_entries(self, tmp_path):

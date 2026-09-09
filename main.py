@@ -1738,8 +1738,17 @@ async def run() -> None:
             raw_score = virtual_tracker.get_efficiency_score(sym)
             # In BGF, apply symbol_weights as a multiplier so the rebalancer
             # can dampen allocation for symbols that are losing in practice.
+            #
+            # Defaults to 0.0, not 1.0: a symbol in symbol_registry.json but ABSENT from
+            # symbol_weights has been given no allocation by anyone, and must not trade
+            # real money on that basis. This mattered little while adding a symbol needed
+            # a restart someone would notice; with the roster hot-reloaded, an SSH edit to
+            # symbol_registry.json alone would otherwise start real orders on the next
+            # candle. Measured 2026-09-09: all 22 live symbols had explicit entries, so
+            # this default was unreachable — it is a guard, not a behaviour change.
+            # Virtual simulation is unaffected and still runs for every subscribed symbol.
             if not scenario.uses_weight_allocation:
-                sym_weight = risk_cfg.get("symbol_weights", {}).get(sym, 1.0)
+                sym_weight = risk_cfg.get("symbol_weights", {}).get(sym, 0.0)
                 raw_score = raw_score * max(0.0, sym_weight)
             candidates.append((sym, best_sym, sym_settings.get(sym, settings), raw_score))
 
@@ -1760,7 +1769,7 @@ async def run() -> None:
                 if _discard_logged.get(_sym) == candle_ts:
                     continue
                 _discard_logged[_sym] = candle_ts
-                _w = risk_cfg.get("symbol_weights", {}).get(_sym, 1.0)
+                _w = risk_cfg.get("symbol_weights", {}).get(_sym, 0.0)
                 _why = (f"symbol_weights={_w} zeroes the score" if _w == 0
                         else f"efficiency score {_score:.2f} <= 0")
                 logger.info(f"[{_sym}] Signal discarded — {_why}")

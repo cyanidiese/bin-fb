@@ -134,9 +134,19 @@ rows carry **no `symbol` key** — the symbol is only in the filename. Filtering
       **zero** observations, so there is no evidence either way. The session-67 note called
       this change "likely wrong" on numbers that do not hold up. Not a lever.
 
-- [x] **EIGENUSDT `max_sl_pct: 10` override REMOVED (2026-09-09, hot-reload).** Its locked
-      preset `r5_sl_filter` natively caps SL at **1.5**; the override raised it to 10 and
-      every band it opened is negative:
+- [x] **REVERTED same day — EIGENUSDT `max_sl_pct: 10` is BACK.** I removed it on virtual
+      evidence, then replayed the real orders and it was wrong. `r5_sl_filter` has 8 real
+      orders totalling **+129.02**; the one above 1.5% (SL 2.203%, opened 2026-08-05 13:45)
+      returned **+48.93** — the largest of the eight and **38% of the preset's entire real
+      profit**. The remaining seven still make +11.44/trade, but the change deletes the best
+      trade. Real orders beat a virtual sample however large: virtual said the >=1.5% band
+      loses -3.48/trade over 5 orders, real says its one observation was the top winner.
+
+      **Lesson: replay the historical REAL orders through a proposed gate before applying
+      it.** The check is cheap and it caught this in minutes. No harm occurred — EIGENUSDT
+      produced no signal in the ~25 minutes the override was absent.
+
+      The virtual band data that misled me, kept for reference:
 
       | band | n | avg/trade |
       |---|---|---|

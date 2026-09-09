@@ -96,7 +96,87 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 69c (2026-09-09) — the session-67 SL numbers are WRONG; corrected here
+
+**Do not trust the per-symbol table in the session-67 entry below.** Re-measured today
+from the actual files (100,616 closed orders with an SL, 391 of them real) and the TIAUSDT
+figures invert:
+
+| | session-67 entry says | measured 2026-09-09 |
+|---|---|---|
+| TIAUSDT best band | 3-4%, **+13.20**/trade, n=717 | 3-4% is **-9.53**/trade, n=200 |
+| TIAUSDT net below 4% | **+3,198** | **-12,556** |
+| TIAUSDT net at/above 4% | **-13,076** | **-3,060** |
+
+Both signs are opposite. I could not reproduce the session-67 dataset — it read a prebuilt
+`/tmp/sl_rows.json` that no longer exists, and its totals (163,581) do not match what the
+rank files now hold (the files trim). Treat the old table as unreproducible.
+
+**Method note, because I got this wrong twice today:** `virtual_orders_rank{N}_{SYMBOL}_test.json`
+rows carry **no `symbol` key** — the symbol is only in the filename. Filtering rows on
+`o.get('symbol')` silently returns zero and looks like "no data".
+
+**TIAUSDT, all presets, 8,613 orders:**
+
+| band | n | win% | avg/trade |
+|---|---|---|---|
+| 0-1% | 5,859 | 36.1% | -1.78 |
+| 1-2% | 1,634 | 34.7% | -0.88 |
+| 2-3% | 556 | 49.3% | **+2.23** |
+| 3-4% | 200 | 36.5% | -9.53 |
+| 4-5% | 213 | 29.1% | -15.22 |
+| 5-7% | 130 | 41.5% | **+15.47** |
+| 7-8% | 9 | 66.7% | +13.09 |
+| 8-10% | **0** | — | **no data** |
+| 10%+ | 12 | 0.0% | -162.20 |
+
+- [ ] **TIAUSDT `max_sl_pct` 8 -> 10: leave it alone.** The band it opened (8-10%) has
+      **zero** observations, so there is no evidence either way. The session-67 note called
+      this change "likely wrong" on numbers that do not hold up. Not a lever.
+
+- [x] **EIGENUSDT `max_sl_pct: 10` override REMOVED (2026-09-09, hot-reload).** Its locked
+      preset `r5_sl_filter` natively caps SL at **1.5**; the override raised it to 10 and
+      every band it opened is negative:
+
+      | band | n | avg/trade |
+      |---|---|---|
+      | under 1.5% (native range) | 7,474 | -0.84 |
+      | 1.5-2% | 609 | -1.88 |
+      | 2-3% | 474 | -12.45 |
+      | 3-4% | 317 | -3.14 |
+      | 4-5% | 131 | -8.30 |
+      | 5-7% | 81 | -6.66 |
+      | 7-8% | 11 | -21.03 |
+      | 8-10% | 23 | -44.13 |
+      | 10%+ | 4 | -179.14 |
+
+      Split at the native cap across all EIGENUSDT presets: **-0.84/trade below vs
+      -7.05/trade above** (7,474 vs 1,650 orders). On the locked preset alone:
+      **+4.15/trade below 1.5% (n=105)** vs -3.48 above (n=5).
+
+      **Known weakness:** only 5 `r5_sl_filter` orders were ever admitted by the override,
+      so the directly relevant sample is tiny; the 1,650-order evidence describes other
+      presets on the same symbol. Low-risk either way — it gates 4.5% of that preset's
+      signals and those five netted -17. `max_profit_pct: 8` / `levels: [3]` kept.
+
+- [x] **`locked_presets.live` populated with the same 7 locks (2026-09-09, hot-reload)** so
+      `bot_mirror` rehearses the strategy the primary actually runs. It had 0 while test had
+      7 — the shadow was selecting presets freely. See the bfb-config skill for the full
+      shared-vs-mode-scoped table.
+
+- [ ] **Still open: is there a per-symbol SL floor worth setting?** Today's data says the
+      useful move is *filtering* on SL width, not *widening* to it — a trade whose structure
+      gave a 0.2% stop, floored to 0.7%, is a different trade with the same target and worse
+      R:R. `global_min_sl_pct` is 0.7 and fires on REZUSDT (0.220% -> 0.700%) and EIGENUSDT
+      (0.073% -> 0.700%); 12 distinct symbol-candles in 7 days. Quantify what floored trades
+      actually returned before changing it.
+
+---
+
 ## Session 67 (2026-09-07) — SL-width analysis over 163k orders (LOGGED, NOT APPLIED)
+
+> **SUPERSEDED — the per-symbol figures here did not reproduce on 2026-09-09.
+> See session 69c above before acting on anything below.**
 
 - [ ] **Per-symbol stop-loss bands — the largest measured lever, deliberately not applied.**
 

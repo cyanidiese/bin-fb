@@ -119,7 +119,13 @@ Bot processes multiple symbols concurrently via asyncio. Symbol list stored in `
 **Files**: `bot/symbol_registry.py`, `main.py` (on_candle_close per symbol)
 **Key details**:
 - Registry persists to `symbol_registry.json` (seed from `SYMBOLS` env var on first startup)
-- **Adding a symbol needs a restart to take effect.** The registry is re-read every candle (`reload_from_disk`) and the WS resubscribes on reconnect, but `analyzers`/`sym_settings` are built once at startup (`main.py:315`) and `on_candle_close` returns early for a symbol missing from them. Nothing subscribes to the registry's add/remove events. Verified 2026-09-08 with BTCUSDT: it sat in the registry collecting nothing until the bot restarted, then appeared as `Combined stream connected (16 symbols)`
+- **Adding or removing a symbol takes effect within one candle — no restart** (session 69, `368bc47`). `reload_from_disk()` re-reads the roster and returns `(added, removed)`; `on_candle_close` reconciles desired-vs-present once per candle, builds `sym_settings`/`analyzers` for additions, drops removals, and calls `DataFeed.request_reconnect()` so the combined stream resubscribes (`stream_combined` already re-evaluates `get_symbols()` on every reconnect).
+  - Written as a *reconciliation*, not a one-shot delta, so it is idempotent and self-healing.
+  - Guarded once per candle: `on_candle_close` fires per SYMBOL, so without `_symbols_synced_at` the kline bootstrap would re-fetch for the whole roster every candle.
+  - **A symbol holding an open real position is never dropped.** `_subscribed_symbols()` unions the roster with anything in `order_executor.get_open_orders()`, and the reconciliation keeps its analyzer alive for exactly as long. Unsubscribing it would leave the exchange stop-loss live while the bot stopped receiving candles, so the close would never be recorded.
+  - **A symbol whose kline bootstrap returns nothing is not added.** Bootstrap is a REST call behind the rate-limit guard; adding it anyway would leave an empty analyzer that the next pass sees as present, making it permanently inert. Skipped and retried.
+  - Verified 2026-09-10: six symbols added for virtual-only observation went from `Combined stream connected (16 symbols)` to `(22 symbols)`, bootstrapping from cached klines while a ban was active (`load_klines` falls back to cache on a failed fetch).
+  - *Previous behaviour, for context:* before this, `analyzers`/`sym_settings` were built once at startup and `reload_from_disk` never re-read `_symbols`, so an added symbol sat collecting nothing until a restart.
 - Per-symbol status tracking: backtest state, active/disabled
 - Subscriber callback system for registry changes
 - Per-rank symbol disable: can disable rank 2–6 positions per symbol without affecting rank 1 (real orders)
@@ -492,14 +498,83 @@ Tests: `tests/test_preset_substitution.py`.
   gives a true fire rate.
 
 ### Weight=0 Symbol Trading Gate
-Symbols with allocation weight set to 0 are excluded from both real order placement and virtual order simulation. Enforced at two points: candidate filtering before real orders, and guard before virtual simulator processing.
+Weight 0 blocks **real orders only**. Virtual simulation keeps running, which is the point:
+a weight-0 symbol accumulates preset statistics on live charts without risking money.
 
 **Files**: `main.py`, `symbol_registry.py`
 **Key details**:
-- Real order loop: `if symbol_registry.get_weight(sym) == 0.0: continue` (line ~676)
-- Virtual simulator call: `if symbol_registry.get_weight(symbol) > 0.0:` guard before `on_candle_close()`
-- Zero-cap symbols also blocked from BestGetsFirst loop: `if sym_cap <= 0: continue`
-- Prevents accidental trading of disabled symbols when weight is set to 0 without calling `disable()`
+- The gate is the zero-score drop: `raw_score = efficiency * max(0.0, symbol_weight)`, then
+  `candidates = [c for c in candidates if c[3] > 0.0]` (`main.py`, TATS branch). A weight-0
+  symbol never reaches `_try_place_order`, and the discard is logged as `skip_zero_score`
+  with reason `symbol_weights=0 zeroes the score`.
+- The drop happens **before** the sole-candidate branch, so a weight-0 symbol can never take
+  the full-deployable-budget path.
+- **An unconfigured symbol defaults to weight 0.0, not 1.0** (session 69, `04715f1`). A symbol
+  in `symbol_registry.json` but absent from `risk_config.symbol_weights` used to arrive as a
+  full real-order candidate; with the roster now hot-reloaded, an SSH edit to the registry
+  alone would have started real orders on the next candle. Both read sites changed together
+  (score multiplier and discard-reason logger).
+- Zero-cap symbols are also skipped in the allocation loops: `if sym_cap <= 0: continue`
+
+**Corrected 2026-09-10** — this section previously claimed weight 0 excluded a symbol from
+virtual simulation too, via a `if symbol_registry.get_weight(symbol) > 0.0:` guard before
+`on_candle_close()`. **That guard does not exist.** Both `virtual_order_simulator.on_candle_close`
+call sites are unguarded by weight, and the one surviving weight check applies only when the
+scenario is *not* TATS — and TATS is the active scenario. Measured: WLDUSDT (weight 0,
+disabled) held 79 open virtual positions, and all eight disabled symbols had recent virtual
+orders. Two of six newly added weight-0 symbols began producing virtual orders within hours.
+
+### Unused allocation is re-offered, not reserved (session 69)
+On a multi-candidate candle, a symbol that wins its slice of the deployable budget and is
+then refused by a later gate no longer holds that slice hostage.
+
+**Files**: `main.py` (TATS n>1 branch and the BGF branch)
+**Key details**:
+- Each candidate's cap is renormalised against the score still *ahead* of it and the budget
+  still *unspent* (`_remaining_score`, `remaining`), instead of a static fraction of
+  `total_score` computed before anyone was refused.
+- Measured 2026-09-09 19:45 (deployable 2107.27, score = efficiency x weight):
+  INJUSDT 428.24 x 14 = 5995 (92.4%, cap ~1947) was refused for `sl_dist=16.37% > max=10%`,
+  and the two symbols that did trade were sized at **96 and 51 instead of 400**.
+- Across the decision log, **8 of 9** multi-candidate candles that produced a placement wasted
+  budget this way, mean **56%**, worst 96%. Not random: the top-scoring symbol is often the
+  widest-stop symbol, so it wins the allocation and then fails the SL gate (`skip_max_sl_pct`
+  on TIAUSDT 3 candles, INJUSDT 2).
+- Bounded by construction — `max_trade_pct` (30% of deployable) and `max_order_notional_usdt`
+  (2000, i.e. 400 margin at 5x) still apply downstream. Replayed against the decision log:
+  only 3 of 11 placed multi-candidate orders change, no candle overspends, no cap exceeds 400.
+
+### Balance seeding when a ban blocks the startup read (session 69)
+A restart inside a rate-limit ban no longer sizes orders off the config default.
+
+**Files**: `bot/balance_history.py` (`last_known`, `_WALLET_TRIGGERS`), `main.py` (startup seed)
+**Key details**:
+- `fetch_account_balance()` is guarded, so during a ban it returns 0.0 and the startup seed —
+  gated on a positive figure — used to be skipped entirely, leaving RiskManager on its 1000.00
+  config default against a real 3098.93. Deployable 680 instead of 2107: every order at a
+  third of intent until the ban expired.
+- The seed now falls back to `last_known(balance_history)`.
+- **Only `order_close` and `balance_refresh` are trusted** (`_WALLET_TRIGGERS`, default-deny).
+  `order_open` records `_try_place_order`'s 4th parameter, which under TATS is the symbol's
+  *allocation*, not the wallet; `startup` records whatever RiskManager already held, so it
+  copies a bad seed straight back into the file. Measured 2026-09-09 21:20: an allocation of
+  2111.95 was seeded and then written back as two `startup` rows, which would have made the
+  wrong figure self-sustaining across every later restart.
+- An unconfirmed startup is tagged `startup_unconfirmed` so it can never seed a later one.
+
+### Ban suppression covers the whole stated window (session 69)
+**Files**: `bot/rate_limit_guard.py` (`_MAX_BLOCK_S`, `_arm`, `load_state`)
+**Key details**:
+- `_MAX_BLOCK_S` is a sanity ceiling against a malformed expiry, **not** a wait policy. At
+  3600s it also clamped the multi-hour bans Binance really issues, so the guard went quiet for
+  an hour against a 3h24m ban, its probe gate reopened, and the mid-candle balance prefetch
+  walked back in. Of 15 arming events on 2026-09-09, **7 were rediscoveries caused by nothing
+  but this clamp**. Raised to 6h (~1.8x the longest ban observed, 204 min).
+- Measured effect over matched 11.9h windows: banned time **66% -> 37%**, and only one of the
+  four post-fix discoveries was a rediscovery — the *intended* probe at 90% through the ban.
+- One ban now produces one alert: the announce dedup keys on the wall-clock expiry Binance
+  stated, not on `now + remaining` (which moves every time the clamp re-arms). `load_state`
+  seeds `_announced` too, so a restart during a ban cannot re-announce it.
 
 ### Virtual Order Simulation (Rank-Based Pools)
 Tracks one virtual position per rank per symbol, with a balance pool per rank shared across all symbols. `rank_max` is passed at runtime as `len(all_presets)` — currently 86 pools per symbol, not 6.

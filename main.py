@@ -1856,15 +1856,39 @@ async def run() -> None:
                 }
                 virtual_order_simulator.set_candle_alloc_context(False, bgf_fractions)
                 deployed = 0.0
-                for sym, best, sym_s, score in candidates:
+                # Renormalise as the loop advances. Sizing each candidate from the
+                # STATIC total let a candidate that was later refused hold its slice
+                # hostage. Measured 2026-09-09 19:45 (deployable 2107.27, score =
+                # efficiency x weight):
+                #
+                #   INJUSDT    428.24 x 14 = 5995  92.4%  cap ~1947  REFUSED, sl 16.37%>10%
+                #   SOLUSDT     40.32 x  8 =  322   5.0%  cap  ~105  placed at 96
+                #   ETHFIUSDT   19.07 x  9 =  172   2.7%  cap   ~56  placed at 51
+                #
+                # 1947 USDT reserved and never used, and the two symbols that DID trade
+                # took 8% of the budget between them. Across the decision log, 8 of 9
+                # multi-candidate candles that produced a placement wasted budget this
+                # way, mean 56%. It is not random: the top-scoring symbol is often the
+                # one with the widest stop, so it wins the allocation and then fails the
+                # SL gate (skip_max_sl_pct did this on TIAUSDT 3x, INJUSDT 2x).
+                #
+                # `remaining` already tracked the unspent budget — only the fraction was
+                # stale. max_trade_pct and max_order_notional_usdt (2000 = 400 margin at
+                # 5x) still bound every order downstream, so this cannot produce a
+                # position larger than the bot already places daily.
+                _remaining_score = total_score
+                for _i, (sym, best, sym_s, score) in enumerate(candidates):
                     remaining = max(0.0, deployable - deployed)
                     if remaining <= 0:
                         break
+                    _s = max(0.0, score)
+                    _left = len(candidates) - _i
                     sym_cap = (
-                        deployable * max(0.0, score) / total_score
-                        if total_score > 0
-                        else deployable / n
+                        remaining * _s / _remaining_score
+                        if _remaining_score > 0
+                        else (remaining / _left if _left > 0 else 0.0)
                     )
+                    _remaining_score = max(0.0, _remaining_score - _s)
                     if sym_cap <= 0:
                         continue
                     used = await _try_place_order(sym, best, sym_s, remaining, candle_ts,
@@ -1883,14 +1907,21 @@ async def run() -> None:
             } if candidates else {}
             virtual_order_simulator.set_candle_alloc_context(False, bgf_fractions)
             deployed = 0.0
-            for sym, best, sym_s, score in candidates:
+            # Same renormalisation as the TATS branch above, and for the same reason —
+            # a refused candidate must not hold its slice hostage. BGF is not the active
+            # scenario, so this is fixed alongside rather than left as a latent bug.
+            _remaining_score = total_score
+            for _i, (sym, best, sym_s, score) in enumerate(candidates):
                 remaining = max(0.0, deployable - deployed)
                 if remaining <= 0:
                     break
-                if total_score > 0:
-                    sym_cap = deployable * max(0.0, score) / total_score
+                _s = max(0.0, score)
+                _left = len(candidates) - _i
+                if _remaining_score > 0:
+                    sym_cap = remaining * _s / _remaining_score
                 else:
-                    sym_cap = deployable / len(candidates) if candidates else 0.0
+                    sym_cap = remaining / _left if _left > 0 else 0.0
+                _remaining_score = max(0.0, _remaining_score - _s)
                 if sym_cap <= 0:
                     continue
                 used = await _try_place_order(sym, best, sym_s, remaining, candle_ts, trade_cap=sym_cap)

@@ -4,6 +4,59 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 69d (2026-09-10) — the SL floor is NOT the problem (TESTED, NO CHANGE)
+
+- [x] **Hypothesis refuted: `global_min_sl_pct = 0.7` is helping, not hurting.** I suspected
+      the floor was destroying R:R — widening a 0.017% natural stop to 0.700% is a 41x change
+      with the same target — and specifically that it explained ETHFIUSDT's losses. Measured
+      over 101,806 closed orders (402 real):
+
+      | population | n | win% | avg USDT/trade |
+      |---|---|---|---|
+      | stop **widened** to the floor | 17,205 | 41.3% | **-0.129** |
+      | stop naturally above the floor | 40,984 | 37.2% | **-0.944** |
+      | real orders, widened | 34 | 29.4% | **+0.98** |
+      | real orders, natural | 231 | 36.4% | **-1.86** |
+
+      Widened stops do **better**. For ETHFIUSDT specifically the floored population is its
+      best (**+1.799** vs -0.575), so the floor is not what costs it money. No change made.
+
+- [ ] **Do NOT read the per-symbol split as a case for per-symbol floors.** REZUSDT (+0.500
+      above vs -0.162 at floor) and INJUSDT (+1.289 vs -2.430) look like they would prefer
+      natural stops, but "above floor" orders were **never floored** — they are a different
+      signal population, not the same signals unfloored. This is the identical selection bias
+      that blocked the session-67 conclusion, and it has now cost two investigations. Any
+      future SL-floor work needs a comparison of the *same* signals with and without the
+      floor, which the recorded data cannot provide.
+
+- [x] **Deployed `0c26f5c`** — unused allocation is re-offered instead of reserved. See
+      FEATURES.md. Measured 56% mean budget waste on 8 of 9 multi-candidate candles.
+
+- [ ] **ETHFIUSDT: hold until 8 real trades.** -27.81 over 5, 1 winner. The threshold table
+      needs >=8 trades for a win-rate weight cut and it has 5. `skip_loss_streak_cooldown` has
+      already fired 70 times on it, so the existing brake is engaged — no manual action needed.
+      User instruction 2026-09-10: do not touch ETHFIUSDT.
+
+- [ ] **Deliberately NOT raising `max_order_notional_usdt` (2000 = 400 margin at 5x).** It is
+      the binding constraint on order size (deployable is ~2138), so raising it is the obvious
+      income move — and it is a pure leverage dial. Replay evidence from session 69: a 1.7pp
+      shift in underlying edge became a 41pp shift in outcome. The post-lock edge rests on 14
+      orders. Needs a far longer record before touching.
+
+- [ ] **Remaining ban lever: balance TTL 900s -> 3600s, prefetch hourly** (96 -> 24 REST
+      calls/day). Now safe to apply — the whitelist observation is finished. Near-zero income
+      value (bans have never blocked an order and a stale balance barely moves sizing while
+      orders cap at 400), so this is hygiene. The real fix is an `ACCOUNT_UPDATE` user-data
+      stream: zero steady-state REST calls, which is literally what Binance's -1003 message
+      recommends. No listenKey handling exists in the codebase yet.
+
+- [ ] **Note: `weight_rebalancer.py` is actively changing weights.** INJUSDT 14 -> 13 and
+      REZUSDT 13 -> 14 between 2026-09-09 21:20 and 2026-09-10 10:49, not by hand. It moved
+      weight toward REZUSDT (+16.54 over 3 orders) and away from idle INJUSDT, so it is
+      agreeing with the data — but any weight analysis must account for it moving underneath.
+
+---
+
 ## Session 69b (2026-09-09) — shipped and queued
 
 - [x] **Zero-sizing fallback narrowed** (`35b4fc8`). risk_config supplies the sole-candidate

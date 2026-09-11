@@ -4,6 +4,67 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 70 (2026-09-11) — SL clamp APPLIED, REZUSDT lock REVERTED
+
+- [x] **REZUSDT lock reverted to `sl_adjust_rr_tp95`** (hot-reload). It had been changed via
+      the dashboard between 09-10 04:00 and 15:00 to `pre_confirm_prox15_trail15`:
+
+      | REZUSDT preset | n | win% | avg/trade | max SL | risk at 5x |
+      |---|---|---|---|---|---|
+      | `sl_adjust_rr_tp95` | 7 | 57% | **+10.00** | 2.56% | 12.8% |
+      | `pre_confirm_prox15_trail15` | 3 | 33% | **-44.79** | 5.88% | **29.4%** |
+
+      A -55/trade swing on the highest-weighted symbol. The -119.71 was a clean stop-out at
+      5.88% on 2000 notional = **-29.93% of margin**. The new preset risked 2.3x more per
+      trade; its worst trade was 8x worse (-29.93% vs -3.69%). `locked_presets.live` set to
+      match so the mirror rehearses the same thing.
+
+- [x] **`sl_clamp_enabled: true` + `max_sl_pct: 4.4` on all six funded symbols** (hot-reload)
+      = cap risk at **22% of margin** per trade at 5x. Simulated over 31 days / 99 funded
+      orders, replaying each trade's candle path to model stop-outs:
+
+      | N (% margin) | % price | net | delta | winners lost | losses made worse |
+      |---|---|---|---|---|---|
+      | 14% | 2.8% | +15.14 | +42.89 | **2** | 0 |
+      | 16% | 3.2% | +62.92 | +90.67 | **1** | 0 |
+      | 20% | 4.0% | +66.11 | +93.86 | 0 | **1** |
+      | **22%** | **4.4%** | **+49.73** | **+77.48** | **0** | **0** |
+      | 24% | 4.8% | +20.75 | +48.50 | 0 | 0 |
+      | 30% | 6.0% | -39.72 | -11.98 | 0 | 1 |
+
+      Baseline -27.75 -> +49.73. Chose 22% because it is the only value in the improving
+      range with **zero harm of either kind** — it purely truncates losses. It touched
+      exactly 4 orders, all losses: EIGENUSDT +8.54 and +24.27, TIAUSDT +12.96, REZUSDT
+      +31.71.
+
+      **Why this analysis is trustworthy where the earlier SL ones were not:** clamping keeps
+      the trade population identical (same signals, entries, targets), so there is no
+      selection bias. The three previous attempts (session-67 bands, the max_sl_pct note, the
+      floor test) all compared *different* populations, which is why they were noise.
+
+      **The safe floor is ~20-22%.** Below it you start converting winners — at 14% two
+      TIAUSDT trades flip from +55.69 and +24.52 to -37.74 and -37.47.
+
+      Clamp was chosen over reject because it is far less sensitive to the exact threshold:
+      clamp reads -19 / +32 / +66 / +50 / +11 across 3.0-5.0% of price, reject reads
+      -88 / -35 / +72 / +61 / -7.
+
+- [ ] **WATCH: the clamp ADMITS signals that were previously rejected, and those have never
+      traded — no data exists on them.** With clamp on, `max_sl_pct` stops rejecting and
+      starts clamping, so signals above the OLD threshold now trade with a 4.4% stop.
+      Measured in the decision log, 18 distinct signals over 6 days would have been admitted:
+      TIAUSDT 14 (8.24-11.72% natural SL) and INJUSDT 4 (16.37-17.08%). Many are consecutive
+      candles of one setup, so realistically ~4-6 extra orders in 6 days.
+
+      The concern is structural, not statistical: clamping a 17% structural stop to 4.4%
+      produces a stop with no relationship to the structure that generated the signal — it is
+      a noise-distance stop against a distant target. **Review after ~20 orders.** If the
+      newly-admitted population loses, the answer is a per-symbol split (clamp on for the
+      symbols with no current cap; reject retained for TIAUSDT/INJUSDT), which the existing
+      `sl_clamp_enabled_per_symbol` key supports.
+
+---
+
 ## Session 69d (2026-09-10) — the SL floor is NOT the problem (TESTED, NO CHANGE)
 
 - [x] **Hypothesis refuted: `global_min_sl_pct = 0.7` is helping, not hurting.** I suspected

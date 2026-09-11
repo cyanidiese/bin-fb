@@ -50,10 +50,21 @@ Legend: [ ] pending  [~] in progress  [x] done
       stream: zero steady-state REST calls, which is literally what Binance's -1003 message
       recommends. No listenKey handling exists in the codebase yet.
 
-- [ ] **Note: `weight_rebalancer.py` is actively changing weights.** INJUSDT 14 -> 13 and
-      REZUSDT 13 -> 14 between 2026-09-09 21:20 and 2026-09-10 10:49, not by hand. It moved
-      weight toward REZUSDT (+16.54 over 3 orders) and away from idle INJUSDT, so it is
-      agreeing with the data — but any weight analysis must account for it moving underneath.
+- [x] **CORRECTED 2026-09-11: the weight rebalancer is DISABLED and has never run.**
+      `risk_config.weight_rebalancer.enabled = false`, and the log contains zero rebalancer
+      lines. I had recorded that it was "actively changing weights ... not by hand" — wrong.
+      **Every weight change has been manual (the owner's).** Confirmed by the owner for
+      ETHFIUSDT 9 -> 3 and SOLUSDT 8 -> 3, and the same applies to INJUSDT 14 -> 13 -> 9,
+      REZUSDT 13 -> 14 and EIGENUSDT 6 -> 8.
+
+      Two consequences. Weight analysis is **stable** between the owner's own edits —
+      nothing moves underneath it, so the caveat I added was unnecessary. And nothing
+      automated will cut a losing symbol's weight: every such decision needs a human, so
+      the threshold table is a prompt for a person, not a description of what the bot does.
+
+      Method note: check `weight_rebalancer.enabled` before attributing any weight change to
+      it. An observed change plus a component that *could* have made it is not evidence that
+      it did.
 
 ---
 

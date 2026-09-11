@@ -585,6 +585,10 @@ async def run() -> None:
         backups=int(risk_cfg.get('analysis_log_backups', 5)),
     )
     bh_path = _PROJECT_ROOT / 'data' / f'balance_history_{current_mode}.json'
+    # Where reconcile() records calculated-vs-exchange gaps. Unattributed wallet
+    # movement (futures funding is the prime suspect) shows up here as drift with
+    # zero trades, which is the only way to measure it.
+    risk_manager.set_drift_log(_PROJECT_ROOT / 'data' / f'balance_drift_{current_mode}.json')
     dl_path = _PROJECT_ROOT / 'data' / f'decision_log_{current_mode}.json'
 
     # Mutable container for the balance TTL cache (mutable so the nested coroutine below
@@ -814,24 +818,31 @@ async def run() -> None:
             return cached_val
         return risk_manager.get_balance()
 
-    def _after_or_computed(closed: dict, wallet_after: float) -> tuple[float, bool]:
-        """(balance_after, was_computed) for a close notification.
+    def _before_after(closed: dict, wallet_after: float) -> tuple[float, float, bool]:
+        """(before, after, was_computed) for a close notification.
 
-        A successful wallet read is always preferred. When it fails — an API ban makes
-        fetch_account_balance() return 0.0 — the message used to print "n/a" for the
-        figure the reader most wants. The bot already knows the pre-trade wallet and the
-        net PnL, so it can compute the settled figure itself; the caller flags it so the
-        notifier labels it rather than passing it off as exchange-confirmed.
+        `after` prefers a confirmed exchange read. Otherwise it is the RUNNING balance,
+        which apply_realised() has already advanced by this trade's PnL — so `before` is
+        that minus the PnL.
 
-        Returns (0.0, False) when neither is available, which still renders as "n/a".
+        This replaced a fallback that read closed['wallet_at_open'], captured when the
+        order OPENED. Measured 2026-09-11: a TIAUSDT position held 28 hours reported
+        Before 3145.03 / After 3059.28 (3145.03 - 85.76) against an actual wallet of
+        2917.76 — overstated by 141.52, because the wallet read failed under a rate-limit
+        ban and the 28-hour-old snapshot was used instead.
+
+        Returns (0.0, 0.0, False) when nothing is known, which still renders as "n/a".
         """
-        if wallet_after > 0:
-            return wallet_after, False
-        before = float(closed.get('wallet_at_open') or 0.0)
-        pnl = closed.get('pnl_usdt')
-        if before > 0 and pnl is not None:
-            return before + float(pnl), True
-        return 0.0, False
+        try:
+            pnl = float(closed.get('pnl_usdt') or 0.0)
+        except (TypeError, ValueError):
+            pnl = 0.0
+        if wallet_after and wallet_after > 0:
+            return wallet_after - pnl, wallet_after, False
+        running = risk_manager.get_balance()
+        if running > 0:
+            return running - pnl, running, True
+        return 0.0, 0.0, False
 
     async def _read_wallet_now() -> float:
         """Uncached wallet read for figures we report to the user. 0.0 = unavailable.
@@ -1956,6 +1967,18 @@ async def run() -> None:
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
+            # Advance the running balance FIRST: _before_after() reads it back and
+            # derives `before` by subtracting this trade's PnL.
+            risk_manager.apply_realised(c.get('pnl_usdt'))
+            # A genuine uncached read is the moment to true up and record the drift.
+            if wallet_after and wallet_after > 0:
+                _drift = risk_manager.reconcile(wallet_after)
+                if _drift is not None and abs(_drift) >= 1.0:
+                    logger.warning(
+                        f"Balance drift {_drift:+.2f} USDT on reconcile "
+                        f"(calculated vs exchange) after {c['symbol']} close"
+                    )
+            _bb, _ba, _est = _before_after(c, wallet_after)
             notifier.notify_trade_close(
                 symbol=c['symbol'],
                 side=c.get('side', ''),
@@ -1963,10 +1986,10 @@ async def run() -> None:
                 entry_price=c.get('fill_entry_price') or c.get('entry_price', 0.0),
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
-                balance_before=c.get('wallet_at_open', 0.0),
-                balance_after=_after_or_computed(c, wallet_after)[0],
+                balance_before=_bb,
+                balance_after=_ba,
                 fee_usdt=c.get('fee_usdt', 0.0),
-                balance_estimated=_after_or_computed(c, wallet_after)[1],
+                balance_estimated=_est,
             )
 
         _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
@@ -2050,6 +2073,18 @@ async def run() -> None:
                 symbol=c['symbol'], leverage=c.get('leverage', 1),
                 pnl_usdt=c.get('pnl_usdt'),
             )
+            # Advance the running balance FIRST: _before_after() reads it back and
+            # derives `before` by subtracting this trade's PnL.
+            risk_manager.apply_realised(c.get('pnl_usdt'))
+            # A genuine uncached read is the moment to true up and record the drift.
+            if wallet_after and wallet_after > 0:
+                _drift = risk_manager.reconcile(wallet_after)
+                if _drift is not None and abs(_drift) >= 1.0:
+                    logger.warning(
+                        f"Balance drift {_drift:+.2f} USDT on reconcile "
+                        f"(calculated vs exchange) after {c['symbol']} close"
+                    )
+            _bb, _ba, _est = _before_after(c, wallet_after)
             notifier.notify_trade_close(
                 symbol=c['symbol'],
                 side=c.get('side', ''),
@@ -2057,10 +2092,10 @@ async def run() -> None:
                 entry_price=c.get('fill_entry_price') or c.get('entry_price', 0.0),
                 close_price=c.get('close_price', 0.0),
                 preset_name=c.get('preset_name', ''),
-                balance_before=c.get('wallet_at_open', 0.0),
-                balance_after=_after_or_computed(c, wallet_after)[0],
+                balance_before=_bb,
+                balance_after=_ba,
                 fee_usdt=c.get('fee_usdt', 0.0),
-                balance_estimated=_after_or_computed(c, wallet_after)[1],
+                balance_estimated=_est,
             )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)

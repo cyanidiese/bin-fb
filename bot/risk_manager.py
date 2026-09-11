@@ -73,6 +73,11 @@ class RiskManager:
         # seed_real_balance(). This prevents config/virtual-balance values from
         # creating a phantom drawdown that immediately fires the hard stop.
         self._peak_balance: float | None = None
+        # Running-balance bookkeeping. Between exchange reads, apply_realised()
+        # is the only thing that moves the balance; reconcile() snaps it back to
+        # a confirmed reading and records how far it had drifted.
+        self._trades_since_reconcile: int = 0
+        self._drift_log_path: Path | None = None
         self._hard_stop_active: bool = False
         self._warning_active: bool = False
         self._last_drawdown_pct: float = 0.0
@@ -108,6 +113,92 @@ class RiskManager:
             self._peak_balance = balance
             self._write_snapshot()
         logger.info(f"RiskManager: real balance seeded — balance=peak={balance:.2f} USDT")
+
+    def set_drift_log(self, path) -> None:
+        """Where reconcile() appends its records. Optional; without it nothing is written."""
+        self._drift_log_path = Path(path)
+
+    def apply_realised(self, pnl) -> None:
+        """Advance the running balance by a closed trade's realised PnL.
+
+        Between exchange reads this is the only thing that moves the balance. Before it
+        existed, update_balance() was reached from exactly one place — the per-candle
+        _get_fresh_balance() — so during a rate-limit ban the balance froze while trades
+        settled, and a close notification derived its figures from `wallet_at_open`.
+        Measured 2026-09-11: a TIAUSDT position held 28 hours reported Before 3145.03 /
+        After 3059.28 against an actual wallet of 2917.76, overstating by 141.52.
+
+        Deliberately does NOT touch the peak. The peak is the drawdown reference and must
+        only ever come from a confirmed exchange reading — otherwise one calculation error
+        would corrupt the baseline permanently.
+
+        Never raises: this runs on the close path.
+        """
+        try:
+            delta = float(pnl)
+        except (TypeError, ValueError):
+            return
+        if delta == 0.0:
+            return
+        with self._lock:
+            self._balance = max(0.0, self._balance + delta)
+            self._trades_since_reconcile += 1
+            self._write_snapshot()
+
+    def reconcile(self, actual) -> float | None:
+        """Snap to a confirmed exchange balance, returning the drift (actual - calculated).
+
+        Returns None when `actual` is not a usable reading — a rate-limit-banned
+        fetch_account_balance() returns 0.0, and that must never be taken as the balance.
+
+        The drift is the point, not a side effect: roughly -65 in September and -200 in
+        August of wallet movement could not be attributed to any recorded order. The
+        likeliest cause is futures funding, charged every 8h and never recorded as a
+        trade. Recording drift turns that guess into a measurement.
+        """
+        try:
+            a = float(actual)
+        except (TypeError, ValueError):
+            return None
+        if a <= 0:
+            return None
+        with self._lock:
+            calculated = self._balance
+            trades = self._trades_since_reconcile
+            self._trades_since_reconcile = 0
+        drift = a - calculated
+        self._record_drift(calculated, a, drift, trades)
+        # Through update_balance so the peak and drawdown checks are not bypassed.
+        self.update_balance(a)
+        return drift
+
+    def _record_drift(self, calculated: float, actual: float,
+                      drift: float, trades: int) -> None:
+        """Append one drift record. Never raises — it runs on the candle path."""
+        if self._drift_log_path is None:
+            return
+        try:
+            rows = []
+            if self._drift_log_path.exists():
+                try:
+                    rows = json.loads(self._drift_log_path.read_text())
+                    if not isinstance(rows, list):
+                        rows = []
+                except Exception:
+                    rows = []
+            rows.append({
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'calculated': round(calculated, 8),
+                'actual': round(actual, 8),
+                'drift': round(drift, 8),
+                'trades': trades,
+            })
+            if len(rows) > 5000:
+                rows = rows[-5000:]
+            self._drift_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._drift_log_path.write_text(json.dumps(rows, indent=2))
+        except Exception as exc:
+            logger.warning(f"RiskManager: could not write drift log ({exc})")
 
     def update_balance(self, balance: float) -> None:
         """Record new balance and check drawdown thresholds."""

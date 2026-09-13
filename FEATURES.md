@@ -2074,6 +2074,57 @@ Four data-backed mechanisms to elevate trade quality by filtering low-confidence
 
 ---
 
+### Execution Slippage Modelling (Session 70)
+
+Charges measured execution slippage against **virtual** PnL so virtual and real results
+are measured on the same basis. Virtual orders open at the signalled price; real orders
+are MARKET orders and fill at whatever the book gives.
+
+**Why it exists.** Measured 2026-09-13 over 137 real fills (60 days, `fill_entry_price`
+vs `entry_price`): mean **+0.098% adverse**, median +0.018%, p90 +0.358% — and *not one
+fill was better than signalled*. The cost is one-sided, so ignoring it overstates virtual
+results systematically instead of averaging out. At 5x leverage that is ~0.49% of margin
+per trade, against a measured virtual edge of −0.052%/trade. Slippage also varies ~13x by
+symbol (REZUSDT +0.013%, TIAUSDT +0.178%), so a single global constant misprices most.
+
+**Money only, never geometry.** The charge is applied inside `_calc_pnl` alone. The
+`FakeOrder` keeps the signalled entry and its TP/SL trigger at the signalled levels,
+mirroring the real path where the reconciled fill "deliberately does NOT feed the
+FakeOrder or the SL/TP geometry" (`bot/order_executor.py:301`) and reaches PnL only via
+`_effective_entry()`. Shifting the virtual entry instead would move it relative to fixed
+TP/SL and flip which orders win — real slippage does not do that.
+
+**Estimate resolution order:** `slippage_per_symbol[SYM]` override → the symbol's own
+measured mean once it has `slippage_min_samples` fills → `slippage_default_pct`. The
+fallback matters most: the symbols being judged for real trading are exactly those with
+no real fills, so the default must never flatter them.
+
+**Files:**
+- `bot/slippage.py` — `adverse_pct()`, `record()`, `estimate()`, `effective_entry()`, `stats()`; rolling 50-sample window per symbol
+- `bot/order_executor.py` — `_slippage_path()`; records every reconciled fill (not only the >=0.05% ones, or the estimate would train on the tail alone)
+- `bot/virtual_order_simulator.py` — `_slippage_pct()` (60s cache; `check_prices` runs per tick across every rank), `_calc_pnl(record, close_price, symbol)`
+- `config/risk_config.py` — 4 defaults
+- Store: `data/slippage_{mode}.json`, mode-scoped (testnet liquidity says nothing about live)
+
+**Config (hot-reload):** `slippage_model_enabled` (true), `slippage_default_pct` (0.10),
+`slippage_min_samples` (5), `slippage_per_symbol` ({}).
+Setting `slippage_model_enabled: false` reproduces the old PnL exactly.
+
+**Known gap — exit slippage is NOT modelled.** It cannot be calibrated from current data:
+of 282 `result == 'loss'` closes, **64% closed better than the stop** (mean −0.53%)
+because the early-loss exit (`max_losing_pct` / `early_loss_sl`) also records
+`result='loss'`. Only 61 closed at the level and 40 past it. Closing this needs an
+explicit exit reason recorded on close. Virtual therefore remains slightly optimistic,
+but by a smaller and honest margin.
+
+**Caution:** every preset's `total_winning_usdt` is re-based by this change, so
+pre- and post-change virtual numbers are not directly comparable. Relative ranking within
+a symbol is preserved because the charge is uniform per symbol.
+
+Spec: `docs/specs/2026-09-13-slippage-modelling.md`
+
+---
+
 ## Bugs fixed — session 47 (2026-06-12)
 
 1. **SL floor × max_rr RR collapse** (`bot/recommendation_engine.py`)

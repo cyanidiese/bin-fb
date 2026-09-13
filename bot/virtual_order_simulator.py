@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
@@ -12,6 +13,7 @@ from bot.fake_order import FakeOrder
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config
 from bot import analysis_log
+from bot import slippage
 from config.settings import max_profit_cap_applies, clamp_sl_to_max
 
 if TYPE_CHECKING:
@@ -85,6 +87,8 @@ class VirtualOrderSimulator:
         self._rank_max = rank_max
         self._is_rank_disabled = is_rank_disabled
         self._initial_balance = initial_balance
+        # symbol -> (monotonic_ts, pct); see _slippage_pct
+        self._slippage_cache: dict[str, tuple[float, float]] = {}
         # Candle-level allocation context — set by main.py before each on_candle_close call
         self._uses_weight_alloc: bool = True
         self._bgf_fractions: dict[str, float] = {}
@@ -358,7 +362,7 @@ class VirtualOrderSimulator:
         if record is None:
             return
         close_price = (fake.close_price if fake and fake.close_price else None) or price
-        pnl = self._calc_pnl(record, close_price)
+        pnl = self._calc_pnl(record, close_price, symbol)
         self._rank_balance[rank] += pnl
         self._save_rank_balance(rank)
         record.update({
@@ -694,7 +698,7 @@ class VirtualOrderSimulator:
             self._rank_fake[rank].pop(symbol)
 
             close_price = fake.close_price or price
-            pnl = self._calc_pnl(record, close_price)
+            pnl = self._calc_pnl(record, close_price, symbol)
             self._rank_balance[rank] += pnl
             self._save_rank_balance(rank)
 
@@ -774,7 +778,7 @@ class VirtualOrderSimulator:
                 record = self._rank_open[rank].pop(symbol)
                 self._rank_fake[rank].pop(symbol, None)
                 close_price = price if price > 0 else record['entry_price']
-                pnl = self._calc_pnl(record, close_price) if price > 0 else 0.0
+                pnl = self._calc_pnl(record, close_price, symbol) if price > 0 else 0.0
                 self._rank_balance[rank] += pnl
                 record.update({
                     'status': 'closed',
@@ -794,14 +798,48 @@ class VirtualOrderSimulator:
 
     _TAKER_FEE_RATE: float = 0.0004
 
-    def _calc_pnl(self, record: dict, close_price: float) -> float:
+    #: Slippage estimates are re-read from disk at most this often. check_prices() runs
+    #: per price tick across every rank, so an uncached read would hit the filesystem
+    #: thousands of times a candle. The estimate moves on the scale of days.
+    _SLIPPAGE_TTL_S: float = 60.0
+
+    def _slippage_pct(self, symbol: str) -> float:
+        """Measured adverse fill cost for `symbol`, cached. Never raises."""
+        if not symbol:
+            return 0.0
+        now = time.monotonic()
+        cached = self._slippage_cache.get(symbol)
+        if cached is not None and now - cached[0] < self._SLIPPAGE_TTL_S:
+            return cached[1]
+        try:
+            path = self._project_root / 'data' / f'slippage_{self._mode}.json'
+            pct = slippage.estimate(path, symbol, load_risk_config())
+        except Exception:
+            pct = 0.0
+        self._slippage_cache[symbol] = (now, pct)
+        return pct
+
+    def _calc_pnl(self, record: dict, close_price: float, symbol: str = '') -> float:
+        """Realised PnL for a virtual position, charged for execution slippage.
+
+        The slippage is applied to the MONEY ONLY. The FakeOrder that decided this
+        outcome kept the signalled entry, and its TP/SL triggered at the signalled
+        levels — exactly as the real path does, where the reconciled fill
+        "deliberately does NOT feed the FakeOrder or the SL/TP geometry"
+        (bot/order_executor.py:301) and reaches PnL solely via _effective_entry().
+
+        Moving the entry instead would shift it relative to fixed TP/SL and change which
+        virtual orders win or lose. Real slippage does not do that.
+        """
         entry = record['entry_price']
         qty = record['quantity']
-        if record['side'] == 'BUY':
-            raw = (close_price - entry) * qty
+        side = record['side']
+        eff = slippage.effective_entry(entry, side, self._slippage_pct(symbol))
+        if side == 'BUY':
+            raw = (close_price - eff) * qty
         else:
-            raw = (entry - close_price) * qty
-        fees = (entry + close_price) * qty * self._TAKER_FEE_RATE
+            raw = (eff - close_price) * qty
+        fees = (eff + close_price) * qty * self._TAKER_FEE_RATE
         return raw - fees
 
     def _save_all_rank_balances(self) -> None:

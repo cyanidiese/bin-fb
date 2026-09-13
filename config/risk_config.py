@@ -66,6 +66,21 @@ DEFAULT_CONFIG: dict = {
         "weight_floor_ratio": 0.3,
     },
     "ranking_window_size": 10,
+    # Execution slippage charged against VIRTUAL PnL so it is comparable to real PnL.
+    # Virtual orders open at the signalled price; real orders are MARKET orders. Measured
+    # 2026-09-13 over 137 real fills: mean +0.098% adverse, never once favourable, and
+    # varying ~13x by symbol (REZUSDT +0.013% to TIAUSDT +0.178%). At 5x that is ~0.49%
+    # of margin per trade against a virtual edge of -0.052%/trade, so symbol-selection
+    # decisions taken off unadjusted virtual stats are unsafe.
+    # Charged to money only, never to TP/SL geometry — see
+    # docs/specs/2026-09-13-slippage-modelling.md.
+    "slippage_model_enabled": True,
+    # Used until a symbol has slippage_min_samples real fills of its own. The symbols we
+    # most want to judge are exactly those with no real fills, so it must not flatter them.
+    "slippage_default_pct": 0.10,
+    "slippage_min_samples": 5,
+    # Manual per-symbol overrides, e.g. {"TIAUSDT": 0.18}. Beats the measured mean.
+    "slippage_per_symbol": {},
     "virtual_only_floor": -5.0,
     "min_trades_for_ranking": 3,
     "min_trades_for_ranking_per_symbol": {},

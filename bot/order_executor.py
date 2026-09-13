@@ -18,6 +18,7 @@ from bot.rate_limit_guard import guard as rl_guard
 from bot.risk_manager import RiskManager
 from bot.notifier import Notifier
 from bot.fake_order import FakeOrder
+from bot import slippage
 
 if TYPE_CHECKING:
     from bot.data_feed import DataFeed
@@ -311,6 +312,14 @@ class OrderExecutor:
                         (_fill - entry) / entry * 100 if side == 'BUY'
                         else (entry - _fill) / entry * 100
                     ) if entry > 0 else 0.0
+                    # Feed the measurement to the slippage store so virtual PnL can be
+                    # charged what real execution actually costs. Recorded for every
+                    # fill, not just the loud ones: the median fill is ~0.02% and the
+                    # mean is +0.098%, so sampling only the >=0.05% ones would train the
+                    # estimate on the tail alone.
+                    _slip_path = self._slippage_path()
+                    if _slip_path is not None:
+                        slippage.record(_slip_path, symbol, entry, _fill, side)
                     if abs(_adverse_pct) >= 0.05:
                         logger.warning(
                             f"[{symbol}] Entry slippage: signalled {entry} → filled {_fill:.6f} "
@@ -1432,6 +1441,16 @@ class OrderExecutor:
     # Binance Futures taker fee rate (both sides). 0.04% = 0.0004.
     # Applied to entry notional (open) and close notional (close).
     _TAKER_FEE_RATE: float = 0.0004
+
+    def _slippage_path(self):
+        """Where measured fills are stored, or None when no project root is wired.
+
+        Mode-scoped: testnet fills say nothing about live-market liquidity, so the two
+        must never share an estimate.
+        """
+        if self._project_root is None:
+            return None
+        return self._project_root / 'data' / f'slippage_{self._mode}.json'
 
     @classmethod
     def _order_fee(cls, quantity: float, entry_price: float, close_price: float) -> float:

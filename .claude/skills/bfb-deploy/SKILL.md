@@ -159,6 +159,35 @@ ssh ... "until grep -q 'Combined stream connected' /opt/bot/logs/bot.log; do sle
 
 ---
 
+## Deploy wipes the symbol roster — restore it afterwards
+
+`symbol_registry.json` is **tracked by git**, so step 4's `git reset --hard HEAD` silently
+reverts it to the committed roster. Any symbol added or removed since that commit is lost.
+
+Measured 2026-09-13: the roster had been grown to 22 symbols; after the deploy the log said
+`Combined stream connected (15 symbols)` and the 7 newly-added symbols stopped collecting.
+
+**Before deploying:** record the live roster.
+
+```bash
+ssh ... "python3 -c \"import json;print(json.load(open('/opt/bot/symbol_registry.json'))['symbols'])\""
+```
+
+**After deploying:** compare and re-add anything missing, then confirm the stream count.
+
+```bash
+ssh ... "docker exec bot sh -c 'grep \"Combined stream connected\" /app/logs/bot.log | tail -1'"
+```
+
+The count in that line is the authoritative check — it must match the roster length. Symbols
+re-added this way are picked up by the hot-subscribe path at the next candle close, no
+second restart needed.
+
+Kline caches (`data/*_15m_*.json`) are gitignored and survive the reset, so a backfilled
+symbol keeps its history.
+
+---
+
 ## Pitfalls
 
 | Situation | Wrong | Right |

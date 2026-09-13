@@ -4,6 +4,49 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 70b (2026-09-13) — new-symbol backfill, slippage model, duplicate-skip default
+
+- [x] **ENAUSDT/LINKUSDT root cause: too little kline history, not a code bug.**
+      ENAUSDT produced 0 virtual orders *ever* while comparable symbols produced 10k+.
+      Volatility was ruled out — its candle amplitude (0.469%) matches EIGENUSDT (0.478%),
+      which has 14,757 orders. The real cause: `getSupposedNextPoints(min_pts=3)` returned
+      None at L2/L3 because the higher-level swing structure had not formed. ENAUSDT had
+      1,869 candles; established symbols have 4,000–5,000.
+
+      Proven by experiment: same symbol, same code, 1,869 candles → **0** recommendations
+      over 200 candles; 5,000 candles → **1 per candle**. The silent path is
+      `main.py:1586` (`if symbol not in sym_settings ... return`), which is why there was
+      not a single log line to go on.
+
+      Fixed by backfilling all 7 thin symbols to 5,000 candles and re-subscribing via the
+      no-restart roster path (drop at 17:45, re-add at 18:00, "5000 klines bootstrapped").
+
+- [ ] **DURABLE FIX NEEDED — the bootstrap only ever fetches 1,500 candles.**
+      `main.py` `_to_add` calls `feed.load_klines(_sym, timeframe, 1500)` while
+      `kline_cache_limit` is 5,000. Binance caps a single klines request at 1,500, and
+      `load_klines` has no backward paging — so **every newly added symbol starts ~3,100
+      candles short and needs ~36 days of live running to reach a working trend structure.**
+      Every symbol added on 2026-09-09 hit this. Needs backward paging on first bootstrap
+      (fetch until `kline_cache_limit` or the listing date). Until then, backfill the cache
+      manually whenever a symbol is added.
+
+- [ ] **Deploy pending (needs approval):** slippage model + duplicate-skip default.
+      Commits on `feature/mean-reversion-overlay`, suite 1040 → 1087.
+      Also stage `data/slippage_test.json` (seeded from 137 historical fills: TIAUSDT
+      +0.178%, INJUSDT +0.169%, ETHFIUSDT +0.136%, MEMEUSDT +0.130%, AVAXUSDT +0.118%,
+      SOLUSDT +0.047%, EIGENUSDT +0.024%, REZUSDT +0.013%) so 8 symbols use their own
+      measured mean immediately instead of the 0.10% default.
+
+- [ ] **Hour-of-day blackout: investigated and REJECTED — do not retry without new data.**
+      Re-aligning `trading_blackout_hours` looked like −321 → +324 over 30 days and
+      reproduced across 2d/7d/30d. It is overfitting. Walk-forward (pick hours on days
+      60–30, score on days 30–0) made results **worse**: −321 → −406, cutting 26 winners
+      worth +886. The threshold sweep is non-monotonic — blocking the 3 *worst* virtual
+      hours degrades real results, and gains only appear once 7+ hours are blocked, i.e.
+      broad de-risking, not a timing edge. Real-order hour PnL is noise at n≈75–150.
+
+---
+
 ## Session 70 (2026-09-11) — SL clamp APPLIED, REZUSDT lock REVERTED
 
 - [x] **REZUSDT lock reverted to `sl_adjust_rr_tp95`** (hot-reload). It had been changed via

@@ -252,7 +252,14 @@ def load_settings(symbol: str | None = None) -> Settings:
         global_pause_candles=int(os.getenv('GLOBAL_PAUSE_CANDLES', '10')),
         lower_high_sell=os.getenv('LOWER_HIGH_SELL', 'false').lower() in ('1', 'true', 'yes'),
         higher_low_buy=os.getenv('HIGHER_LOW_BUY', 'false').lower() in ('1', 'true', 'yes'),
-        duplicate_skip_candles=int(os.getenv('DUPLICATE_SKIP_CANDLES', '0')),
+        # Default 3, not 0: only 27 of 87 presets opted into this filter, and the 60 that
+        # did not were re-entering the same setup straight after a stop-out. Measured
+        # 2026-09-13 over 60 days on the funded symbols — duplicates on unfiltered presets
+        # ran 28% win / -0.258% per trade across 8,885 virtual orders against a -0.052%
+        # baseline, and 0 winners out of 9 in real money (-57.38). Presets that name their
+        # own value (1, 2, 3, 4, 10) still override this.
+        # See docs/specs/2026-09-13-duplicate-skip-default-on.md.
+        duplicate_skip_candles=int(os.getenv('DUPLICATE_SKIP_CANDLES', '3')),
         duplicate_skip_pct=float(os.getenv('DUPLICATE_SKIP_PCT', '2.0')),
         max_losing_pct=float(os.getenv('MAX_LOSING_PCT', '0.0')),
         max_losing_amount_usdt=float(os.getenv('MAX_LOSING_AMOUNT_USDT', '0.0')),

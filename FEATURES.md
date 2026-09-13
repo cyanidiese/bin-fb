@@ -1919,7 +1919,7 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 
 **Files**: `config/settings.py`, `config/presets.py`, `bot/backtester.py`, `main.py`, `bot/virtual_order_simulator.py`
 **Key config**:
-- `duplicate_skip_candles: int` (default 0 = disabled) — how many candles to check backward
+- `duplicate_skip_candles: int` (**default 3 — ON since session 70**, was 0 = disabled) — how many candles to check backward. Env override: `DUPLICATE_SKIP_CANDLES`; set to `0` for an instant revert with no code redeploy.
 - `duplicate_skip_pct: float` (default 2.0%) — allowed variation in entry/sl/tp prices
 
 **Implementation details**:
@@ -1928,6 +1928,33 @@ Prevents re-entry on similar signals shortly after stop loss. When enabled, skip
 - `bot/virtual_order_simulator.py`: tracks `_recent_sl_hit` on virtual loss close; checks in `_try_open` before entry
 - Matching logic: same side AND entry within ±pct AND sl within ±pct AND tp within ±pct AND within N candles = skip
 - **Decision visibility** (session 28): `skip_duplicate_sl` decision now logged to `bot.log` before being written to decision_log.json
+
+**Default changed to ON (session 70).** Previously only 27 of 87 presets opted in; the
+other 60 inherited the base default of 0 and were re-entering the same setup straight
+after a stop-out. Measured 2026-09-13, 6 funded symbols, 60 days — a duplicate being a
+re-entry within 3 candles of a loss close, same side, entry/SL/TP within 3%:
+
+| population | n | win rate | avg return on margin |
+|---|---:|---:|---:|
+| duplicates, presets **without** the filter | 8,885 | 28% | −0.258% |
+| all virtual orders (baseline) | 57,874 | 42% | −0.052% |
+| duplicates that leaked through **with** the filter | 423 | 48% | +0.372% |
+
+Five times worse than baseline. The third row is the control: where the filter is on, the
+re-entries falling outside its window are positive — it is catching the bad ones. In real
+money: **9 such orders in 60 days, zero winners, −57.38** (7 of the 9 EIGENUSDT), so there
+was no winning trade to lose by enabling it.
+
+Implemented as a one-line base-default change (`config/settings.py`), not 60 preset edits:
+presets are applied as overrides onto base `Settings` via `dataclasses.replace`, so the 27
+presets that name their own value (1, 2, 3, 4, 10) keep it untouched. No change to
+`main.py` or `bot/virtual_order_simulator.py` — this turns on existing, exercised code.
+
+**Expect** virtual trade counts to fall ~15% (the worst 15%), so some presets take longer
+to clear `min_trades_for_ranking`, and preset rankings shift as presets previously dragged
+down by duplicates rise. Pre- and post-change rankings are not directly comparable.
+
+Spec: `docs/specs/2026-09-13-duplicate-skip-default-on.md`
 
 ### TATS Scenario — "Took All The Shoes" (Sessions 41–42–47)
 Scenario-based capital allocation where only symbols with proven positive live performance are permitted to trade. Locked presets' efficiency scores are evaluated every candle close; symbols that fail the profitability gate are silently excluded from real order placement.

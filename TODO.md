@@ -20,6 +20,32 @@ Legend: [ ] pending  [~] in progress  [x] done
 
       Fixed by backfilling all 7 thin symbols to 5,000 candles and re-subscribing via the
       no-restart roster path (drop at 17:45, re-add at 18:00, "5000 klines bootstrapped").
+      LTCUSDT confirmed working afterwards: 139 -> 156 orders within two candles.
+
+- [ ] **ENAUSDT is STILL not collecting — backfill fixed one layer and exposed another.**
+      It now emits a recommendation every candle (was zero), but **100% of them are
+      geometrically invalid**: the stop sits on the wrong side of entry, e.g.
+      `BUY entry=0.140600 sl=0.156670`. Measured over 300 candles:
+
+      | symbol | recs | inverted SL | rr<1.5 | valid |
+      |---|---:|---:|---:|---:|
+      | ENAUSDT | 300 | **300 (100%)** | 0 | **0** |
+      | LTCUSDT | 547 | 21 (4%) | 274 | 252 |
+      | ARBUSDT | 455 | 38 (8%) | 74 | 343 |
+
+      4-8% inverted is normal; 100% is structural. ENAUSDT's trend hierarchy is malformed —
+      L1 has 7 highs/7 lows but **L2 has only 2 highs/1 low**, thinner than the L3 above it.
+      `Trend.getRecommendation` takes the stop from the smaller trend's
+      `smaller_break_of_structure` **without validating it is on the correct side of entry**,
+      so a degenerate L2 yields a permanently inverted stop.
+
+      No bad orders result — `skip_degenerate_sl` catches them — so this is a data-quality
+      issue, not a money risk. Two candidate fixes, neither applied:
+        a) have `getRecommendation` return None when the BOS-derived stop is the wrong
+           side of entry, instead of emitting a setup that is always discarded;
+        b) treat ENAUSDT as genuinely untradeable until its L2 structure fills out.
+      Decide (a) on its merits for ALL symbols — it would also remove the 4-8% of wasted
+      inverted recs on LTCUSDT/ARBUSDT.
 
 - [ ] **DURABLE FIX NEEDED — the bootstrap only ever fetches 1,500 candles.**
       `main.py` `_to_add` calls `feed.load_klines(_sym, timeframe, 1500)` while

@@ -1830,6 +1830,19 @@ Preset Efficiency counts always reflected all history regardless of the chart ra
   open right edge on the chart. Starts are clamped to the symbol's earliest data.
   Defined once in `RANGE_PRESETS` / `presetRange()` so the buttons and the logic cannot
   drift apart.
+- **The active preset stays highlighted and survives a reload (session 71).** The chosen
+  shortcut is shown pressed (blue) and stored under `trades-range-preset`. Editing either
+  picker by hand clears the highlight, because the window is no longer that preset's.
+  What is persisted is the **preset key, not the dates**: "Last 7 days" is re-derived
+  against the current clock on load, so a stored window cannot go stale. It is also
+  re-derived when the symbol changes, so it re-clamps to the new symbol's earliest data.
+  Re-derivation is keyed on a `(preset, symbol, minMs)` signature rather than running
+  every render — `presetRange()` reads the clock, and a window that shifted on every
+  render would rebuild the chart continuously.
+- **Table sorting survives a reload (session 71).** `trades-sort-key` / `trades-sort-dir`.
+  Sorting is a view preference, not a per-symbol fact, so it is deliberately **no longer
+  reset when the symbol changes** — that reset previously clobbered the restored value on
+  first load. Defaults are unchanged from the old forced values (`rank`, ascending).
 - **The chart x-axis is pinned to [from, to] (session 71).** It previously auto-fitted to
   the data, so a trade that opened before `from` stretched the axis and painted its
   rectangle across the y-axis and out of the card. Nothing outside the range is drawn.

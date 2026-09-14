@@ -10,6 +10,7 @@ import TradesChart from '@/components/TradesChart'
 import SymbolPicker from '@/components/SymbolPicker'
 import RealOrdersWidget from '@/components/RealOrdersWidget'
 import { fmtDuration, durationSeconds } from '@/lib/datetime'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
   filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
@@ -266,6 +267,13 @@ export default function TradesPage() {
   // unfiltered page on first paint).
   const [rangeFromOverride, setRangeFromOverride] = useState<string | null>(null)
   const [rangeToOverride, setRangeToOverride]     = useState<string | null>(null)
+  // Which quick preset is in force, or null once the pickers are edited by hand.
+  // Persisted rather than the raw dates: re-deriving "Last 7 days" on load keeps the
+  // window relative to now, where storing the dates would restore a stale window.
+  const [activeRangePreset, setActiveRangePreset] = useLocalStorage<string | null>('trades-range-preset', null)
+  // Signature of the (preset, symbol, bounds) the current override was derived from,
+  // so the preset is re-applied after a reload or a symbol change but not on every render.
+  const [appliedPresetSig, setAppliedPresetSig] = useState<string>('')
   // Tracks which symbol the current override belongs to, so switching symbols falls
   // back to that symbol's own default range.
   const [rangeSymbol, setRangeSymbol] = useState<string>(symbol)
@@ -275,8 +283,10 @@ export default function TradesPage() {
   const [hideHasVirtual, setHideHasVirtual]   = useState(false)  // hide presets that have any virtual orders
 
   const [selectedPreset, setSelectedPreset]   = useState<string | null>(null)
-  const [sortKey, setSortKey]                 = useState<SortKey | null>(null)
-  const [sortDir, setSortDir]                 = useState<'asc' | 'desc'>('desc')
+  // Sorting is a view preference, not a per-symbol fact, so it is persisted and is
+  // deliberately NOT reset when the symbol changes (see the load effect below).
+  const [sortKey, setSortKey]                 = useLocalStorage<SortKey | null>('trades-sort-key', 'rank')
+  const [sortDir, setSortDir]                 = useLocalStorage<'asc' | 'desc'>('trades-sort-dir', 'asc')
   const [lockedPreset, setLockedPreset]       = useState<string | null>(null)
   const [lockBusy, setLockBusy]               = useState(false)
   // Manual close: one pending row at a time, so a single click cannot arm two closes.
@@ -380,8 +390,6 @@ export default function TradesPage() {
     setData(null)
     setError(null)
     setSelectedPreset(null)
-    setSortKey('rank')
-    setSortDir('asc')
     void loadTrades(symbol, dataMode)
   }, [symbol, dataMode])
 
@@ -454,6 +462,19 @@ export default function TradesPage() {
     setRangeToOverride(null)
   }
 
+  // Re-derive the window whenever the active preset, the symbol, or the symbol's
+  // earliest data changes. Keyed on a signature so this fires on a reload (restored
+  // preset, empty signature) and on a symbol change, but not on every render — which
+  // matters because presetRange() reads the clock, and a window that shifted every
+  // render would rebuild the chart continuously.
+  const presetSig = activeRangePreset ? `${activeRangePreset}|${symbol}|${bounds.minMs ?? ''}` : ''
+  if (presetSig && presetSig !== appliedPresetSig) {
+    const r = presetRange(activeRangePreset!, bounds.minMs)
+    setAppliedPresetSig(presetSig)
+    setRangeFromOverride(r.from)
+    setRangeToOverride(r.to)
+  }
+
   const rangeFrom = rangeFromOverride ?? seeded.from
   const rangeTo   = rangeToOverride   ?? seeded.to
 
@@ -515,6 +536,24 @@ export default function TradesPage() {
     }
     return rows
   }, [allRows, hideNoOrders, hideHasVirtual, sortKey, sortDir, lockedPreset])
+
+  /** Apply a quick range. Sets the dates directly as well as the preset so that
+   *  re-picking the preset you just left works — the signature check alone would
+   *  see an unchanged signature and skip it. */
+  function applyRangePreset(key: string) {
+    const r = presetRange(key, bounds.minMs)
+    setActiveRangePreset(key)
+    setAppliedPresetSig(`${key}|${symbol}|${bounds.minMs ?? ''}`)
+    setRangeFromOverride(r.from)
+    setRangeToOverride(r.to)
+  }
+
+  function clearRangePreset() {
+    setActiveRangePreset(null)
+    setAppliedPresetSig('')
+    setRangeFromOverride(null)
+    setRangeToOverride(null)
+  }
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -795,7 +834,7 @@ export default function TradesPage() {
               type="datetime-local"
               value={rangeFrom}
               min={bounds.minMs !== null ? toDatetimeLocal(new Date(bounds.minMs)) : undefined}
-              onChange={e => setRangeFromOverride(e.target.value)}
+              onChange={e => { setRangeFromOverride(e.target.value); setActiveRangePreset(null) }}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
           </label>
@@ -804,26 +843,30 @@ export default function TradesPage() {
             <input
               type="datetime-local"
               value={rangeTo}
-              onChange={e => setRangeToOverride(e.target.value)}
+              onChange={e => { setRangeToOverride(e.target.value); setActiveRangePreset(null) }}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
           </label>
           <div className="flex flex-wrap gap-1">
-            {RANGE_PRESETS.map(p => (
-              <button
-                key={p.key}
-                onClick={() => {
-                  const r = presetRange(p.key, bounds.minMs)
-                  setRangeFromOverride(r.from)
-                  setRangeToOverride(r.to)
-                }}
-                className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
-              >
-                {p.label}
-              </button>
-            ))}
+            {RANGE_PRESETS.map(p => {
+              const active = activeRangePreset === p.key
+              return (
+                <button
+                  key={p.key}
+                  onClick={() => applyRangePreset(p.key)}
+                  aria-pressed={active}
+                  className={`px-2 py-1 text-xs rounded border transition-colors ${
+                    active
+                      ? 'border-blue-500 bg-blue-500/15 text-blue-300'
+                      : 'border-gray-700 text-gray-300 hover:text-white hover:border-gray-500'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              )
+            })}
             <button
-              onClick={() => { setRangeFromOverride(null); setRangeToOverride(null) }}
+              onClick={clearRangePreset}
               title="Back to the default range for this symbol"
               className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
             >

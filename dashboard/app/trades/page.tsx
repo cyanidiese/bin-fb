@@ -12,7 +12,7 @@ import RealOrdersWidget from '@/components/RealOrdersWidget'
 import { fmtDuration, durationSeconds } from '@/lib/datetime'
 import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
-  filterTradesData, filterKlines,
+  filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
 } from '@/lib/tradesDateRange'
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -692,6 +692,25 @@ export default function TradesPage() {
 
   const thProps = { sortKey, sortDir, onSort: handleSort }
 
+  // Running positions drawn on the chart. They are live state, so unlike the tables
+  // they are not date-filtered away — but one that opened AFTER `to` would draw off the
+  // right edge of a historical window, so those are dropped. A position that opened
+  // before `from` is kept: it is still running, and the chart fades its left edge.
+  // Plain consts, not useMemo: this runs after the `if (!data)` early return above, so a
+  // hook here would be called conditionally and break the hook order.
+  const openBeforeTo = (openTime: string | null | undefined) => {
+    if (toS === null) return true
+    if (!openTime) return true
+    const t = new Date(openTime).getTime() / 1000
+    return Number.isNaN(t) || t <= toS
+  }
+  const chartOpenReal = openRealPositions.filter(
+    o => o.symbol === symbol && openBeforeTo(o.open_time),
+  )
+  const chartOpenVirtual = openVirtualPositions.filter(
+    o => o.symbol === symbol && openBeforeTo(o.open_time),
+  )
+
   // Cast rank orders to the shape TradesChart expects for virtual orders
   const chartVirtualOrders = filteredRankOrders as unknown as VirtualOrder[]
 
@@ -789,21 +808,28 @@ export default function TradesPage() {
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
             />
           </label>
-          <button
-            onClick={() => { setRangeFromOverride(null); setRangeToOverride(null) }}
-            className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
-          >
-            Last month
-          </button>
-          <button
-            onClick={() => {
-              setRangeFromOverride(bounds.minMs !== null ? toDatetimeLocal(new Date(bounds.minMs)) : '')
-              setRangeToOverride(toDatetimeLocal(new Date()))
-            }}
-            className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
-          >
-            All history
-          </button>
+          <div className="flex flex-wrap gap-1">
+            {RANGE_PRESETS.map(p => (
+              <button
+                key={p.key}
+                onClick={() => {
+                  const r = presetRange(p.key, bounds.minMs)
+                  setRangeFromOverride(r.from)
+                  setRangeToOverride(r.to)
+                }}
+                className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
+              >
+                {p.label}
+              </button>
+            ))}
+            <button
+              onClick={() => { setRangeFromOverride(null); setRangeToOverride(null) }}
+              title="Back to the default range for this symbol"
+              className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+            >
+              Reset
+            </button>
+          </div>
           <p className="text-[11px] text-gray-600 ml-auto">
             Applies to every widget on this page. Ranks and live positions always show current state.
           </p>
@@ -989,6 +1015,10 @@ export default function TradesPage() {
             klines={fklines}
             realOrders={selectedPreset ? fdata.real_orders.filter(o => o.preset_name === selectedPreset) : fdata.real_orders}
             virtualOrders={chartVirtualOrders}
+            openReal={chartOpenReal}
+            openVirtual={chartOpenVirtual}
+            fromMs={fromS !== null ? fromS * 1000 : null}
+            toMs={toS !== null ? toS * 1000 : null}
           />
         </CollapsibleSection>
       )}

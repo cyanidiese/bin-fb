@@ -74,6 +74,51 @@ export function defaultRange(
   return { from: toDatetimeLocal(new Date(fromMs)), to: toDatetimeLocal(now) }
 }
 
+/** Quick ranges offered next to the pickers.
+ *
+ *  `days: null` means "all history" — it widens to the earliest data for the symbol.
+ *  Every preset ends at `now` rather than midnight, so a running trade is always
+ *  inside the window and keeps its open right edge on the chart. */
+export const RANGE_PRESETS: { key: string; label: string; days: number | null }[] = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '24h', label: 'Last 24h', days: 1 },
+  { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '30d', label: 'Last 30 days', days: 30 },
+  { key: 'all', label: 'All history', days: null },
+]
+
+/**
+ * From/To for a preset key. Start is clamped to the earliest data for the symbol, for
+ * the same reason defaultRange clamps: a symbol with three days of history should open
+ * on those three days, not on a mostly-empty week.
+ *
+ * `today` means since local midnight, which is what someone glancing at the page reads
+ * it as — not the last 24 hours.
+ */
+export function presetRange(
+  key: string,
+  minMs: number | null,
+  now: Date = new Date(),
+): { from: string; to: string } {
+  const preset = RANGE_PRESETS.find(p => p.key === key)
+  const to = toDatetimeLocal(now)
+
+  if (!preset || preset.days === null) {
+    return { from: minMs === null ? '' : toDatetimeLocal(new Date(minMs)), to }
+  }
+
+  let startMs: number
+  if (preset.days === 0) {
+    const midnight = new Date(now)
+    midnight.setHours(0, 0, 0, 0)
+    startMs = midnight.getTime()
+  } else {
+    startMs = now.getTime() - preset.days * 86_400_000
+  }
+  if (minMs !== null) startMs = Math.max(startMs, minMs)
+  return { from: toDatetimeLocal(new Date(startMs)), to }
+}
+
 /** True when the order overlaps [from, to]. An order counts if it was OPEN at any
  *  point in the window — using open_time alone would drop a trade that opened
  *  before the window and closed inside it. */

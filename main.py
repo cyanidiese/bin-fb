@@ -22,6 +22,7 @@ from bot.rate_limit_guard import (
 from bot.system_log import read_entries as read_system_log
 from bot.analyzer import Analyzer
 from bot import analysis_log
+from bot import weight_audit
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
@@ -1547,6 +1548,16 @@ async def run() -> None:
 
         # Hot-reload config and switch scenario if changed
         risk_cfg = load_risk_config()
+        # Audit symbol_weights on every reload. Weights are the biggest lever on real
+        # orders (0 is a hard gate; under TATS they split the budget) and are editable
+        # from the dashboard, by hand over SSH, and by weight_rebalancer — none of which
+        # left a trace. Measured 2026-09-11: ETHFIUSDT 9 -> 3 and SOLUSDT 8 -> 3 were
+        # attributed to the rebalancer, which was disabled; they had been made by hand.
+        # Diffing the live config catches every writer, including future ones.
+        weight_audit.audit(
+            _PROJECT_ROOT / 'data' / f'weight_changes_{current_mode}.json',
+            risk_cfg.get('symbol_weights') or {},
+        )
         new_scenario_name = risk_cfg.get("scenario", "default")
         if new_scenario_name != _active_scenario_name:
             prior_global_level = scenario.get_global_level()

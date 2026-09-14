@@ -1824,6 +1824,15 @@ Preset Efficiency counts always reflected all history regardless of the chart ra
 - **Deliberately NOT filtered** (current state, not history): `preset_ranks` (the Rank
   column), `rank_balances`, `best_preset`, and open real/virtual positions
 - Chart shows "N of M candles in range" when narrowed
+- **Quick presets (session 71)**: Today (since local midnight), Last 24h, Last 7 days,
+  Last 30 days, All history, plus Reset (back to the per-symbol default). Every preset
+  ends at `now`, not midnight, so a running trade stays inside the window and keeps its
+  open right edge on the chart. Starts are clamped to the symbol's earliest data.
+  Defined once in `RANGE_PRESETS` / `presetRange()` so the buttons and the logic cannot
+  drift apart.
+- **The chart x-axis is pinned to [from, to] (session 71).** It previously auto-fitted to
+  the data, so a trade that opened before `from` stretched the axis and painted its
+  rectangle across the y-axis and out of the card. Nothing outside the range is drawn.
 
 ### Strategy Page Time Travel (Session 39)
 Replay bot's trend analysis state at any historical candle index. Users can scrub backward through the strategy timeline to see what signals were active at past moments, including swing points, trend levels, and indicators at that candle.
@@ -1955,6 +1964,68 @@ to clear `min_trades_for_ranking`, and preset rankings shift as presets previous
 down by duplicates rise. Pre- and post-change rankings are not directly comparable.
 
 Spec: `docs/specs/2026-09-13-duplicate-skip-default-on.md`
+
+### Open Positions & Truncated Trades on the Price Chart (Session 71)
+
+The Price Chart now draws **running positions**, not only closed ones, and handles trades
+that extend past either end of the selected range.
+
+**What is drawn:**
+- **Closed trades** — unchanged: green TP zone, red SL zone, amber/sky for partial/trail
+- **Running positions** (`open_real` + `open_virtual`) — the same green-over-red band from
+  their own TP/SL, at a neutral weight since there is no outcome yet
+- **Truncated trades** — a trade that began before `From`, or has not ended, is clipped to
+  the plot area with its cut edge **faded out over ~28px and its vertical border omitted**.
+  That is the cue for "continues past here", so it cannot be misread as a trade that
+  genuinely started or ended at the window edge.
+
+**Why it matters:** an order open for 28 hours was previously invisible on any window
+narrower than its lifetime, and the overlap filter meant a trade that opened before `From`
+drew its rectangle over the y-axis.
+
+**Files**: `dashboard/components/TradesChart.tsx`, `dashboard/app/trades/page.tsx`,
+`dashboard/lib/tradesDateRange.ts`
+**Key details**:
+- All painting is `ctx.clip()`ed to `chart.chartArea`
+- Cut edges use a canvas linear gradient to transparent; the vertical border is skipped
+  on a cut side entirely, while top/bottom borders fade into it
+- Running positions are live state, so they are **not** date-filtered away — but one that
+  opened after `To` is dropped, since it would draw off the right edge of a historical
+  window
+- Open positions are scoped to the selected symbol (`open_real` carries every symbol)
+
+---
+
+### Symbol Weight Audit Log (Session 71)
+
+Records every change to `risk_config.symbol_weights` with old value, new value, timestamp
+and source, to `data/weight_changes_{mode}.json`.
+
+**Why it exists.** Weights are the biggest lever on real-order sizing — weight 0 is a hard
+gate on real orders, and under TATS the weights split the deployable budget. They can be
+changed from the dashboard, by hand over SSH, by `weight_rebalancer`, or by editing
+`risk_config.json` directly, and **none of those left any trace**. Measured 2026-09-11:
+ETHFIUSDT went 9 → 3 and SOLUSDT 8 → 3; with nothing recorded the change was attributed to
+`weight_rebalancer`, which was disabled (`enabled: false`, zero log lines) — the edits had
+been made by hand. A whole line of investigation was spent on a question one log line
+answers.
+
+**It is a detector, not a hook on the writers.** It diffs the live config against the last
+snapshot on every reload, so a manual edit, a dashboard write, or a future code path
+cannot bypass it.
+
+**Files**: `bot/weight_audit.py`, `main.py` (candle-path config reload)
+**Key details**:
+- First run records the snapshot and reports nothing — with no prior state, inventing
+  `0 → 9` for every symbol would bury the real edits that follow
+- A newly added symbol reports `old: null`; a removed one reports `new: null`, because
+  dropping a symbol stops its real orders exactly as setting it to 0 does
+- `9` vs `9.0` is not a change (dashboard writes ints, hand edits write floats)
+- Each change also emits a `WARNING` to `bot.log`, so it is visible without opening the file
+- Capped at 2000 changes; never raises (runs on the candle path)
+- `history(path, symbol=None)` reads it back
+
+---
 
 ### TATS Scenario — "Took All The Shoes" (Sessions 41–42–47)
 Scenario-based capital allocation where only symbols with proven positive live performance are permitted to trade. Locked presets' efficiency scores are evaluated every candle close; symbols that fail the profitability gate are silently excluded from real order placement.

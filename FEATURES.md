@@ -66,6 +66,21 @@ The open-position rows carry a `NOW` badge with a full hover tooltip, and a red 
 - **Confirmation**: inline `Close? Yes | No`, matching the Backtest presets table, with one line of small text above the table saying a real close cannot be undone. One row can be armed at a time
 - A second press is a no-op: `close_order` returns `None` when nothing is open, `close_open_manually` checks the rank first. A timeout returns `pending: true` — never reported as success, since the close may have happened
 
+### Trades Page Symbol Picker — Sorted by Top Preset Profit% (Session 71)
+The symbol picker on the Trades page is ordered descending by the Profit% of each symbol's top preset for the active date shortcut (Today / 24h / 7d / 30d / All) and trading mode. The "top preset" is the locked preset if one exists for that symbol, otherwise the highest-ranked preset by effective score. Uncomputed symbols sort below computed ones in registry order.
+
+**Files**: `dashboard/lib/presetProfit.ts` (new, extracts Profit% formula), `dashboard/app/api/trades/_top-preset.ts` (new, extracts top-preset logic), `dashboard/lib/tradesDateRange.ts` (exports orderInRange), `dashboard/app/api/trades/symbol-scores/route.ts` (new cache route), `dashboard/app/api/trades/route.ts` (uses extracted helpers), `dashboard/app/trades/page.tsx` (fetches scores, sorts picker), `components/SymbolPicker.tsx` (optional scores prop for tooltip)
+**Spec**: `docs/specs/2026-09-24-trades-picker-profit-sort.md`
+**Key details**:
+- **Cache**: `data/symbol_sort_scores_{mode}.json` (gitignored, per-symbol per-shortcut entries with `{pct, preset, fp (fingerprint), at (timestamp)}`)
+- **On-demand computation**: Entry created when a symbol is clicked (`ensure=<symbol>`); uncomputed symbols sit below computed ones. Recomputed server-side on every request if top preset changed, order closed (detected via mtime fingerprint), or TTL expired (10 min for today/24h, 60 min for 7d/30d, never for all)
+- **Fingerprinting** (zero bot changes): Uses mtimes of `real_orders_{SYM}_{mode}.json` and `virtual_orders_rank1_{SYM}_{mode}.json` to detect if top preset's orders closed. Both files written only on close; ranks ≥2 never hold top preset, so their churn triggers nothing
+- **Single source of truth**: `presetProfitPct()` and `topPresetFor()` extracted to `lib/` and `_top-preset.ts`, shared by page table and sort route — the sort key cannot drift from displayed Profit%
+- **Recompute triggers**: symbol click, shortcut change, mode change, lock toggle, manual close. Hand-edited date pickers do not reorder; picker keeps last shortcut (fallback 30d)
+- **Timezone**: "Today" window start sent by browser (local midnight), server never guesses
+- **Atomic cache**: writes via tmp + rename; concurrent requests: last writer wins, losers recomputed next request
+- **No bot impact**: Zero order-path risk; worst case is wrong picker order
+
 ### API Ban Handling — probe only near the end of the stated ban
 Bans are **per-CloudFront-edge, not per-account**, so a probe proves only that the edge it happened to reach is clear. Probing early therefore re-opened the gate, the next request routed to a banned edge, and each such request added ~120s to that edge's ban.
 

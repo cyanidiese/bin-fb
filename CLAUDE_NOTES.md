@@ -1,5 +1,22 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
+## ⟳ RESUME POINT — Session 71 (2026-09-24) — Trades picker sorted by top preset Profit%, not yet deployed
+
+**Branch**: feature/mean-reversion-overlay (spec commit f6733f6, code commit 96884e1)
+
+**Completed this session**:
+- **Trades page symbol picker sorted by Profit% of each symbol's top preset** — cache-based implementation with server-side recompute on preset change/order close/TTL. No bot changes. Verified against independent Python calculation: values match exactly. Next build passes. Not visually verified in browser.
+
+**Status**: COMMITTED, NOT DEPLOYED. Awaiting user confirmation before deploy.
+
+**Open items for next session**:
+1. Deploy with user approval (feature/mean-reversion-overlay → main or direct to live?)
+2. Visual verification in a browser after deploy
+3. **Design note — Rank-1 vs effective score**: dashboard sorts by effective score (highest per preset table), bot knows tier-aware rank key (live-proven beats seed-only). When unlocked, the sort key and displayed Profit% can come from different presets. Currently unused data point: should we log this or align the dashboard to use bot's tie-breaker?
+4. **Profit% scope**: sort key excludes rank-1 virtual orders because `/api/trades` reads ranks 2..max only. Decide whether rank-1 virtual should be included.
+
+---
+
 ## Session 68 (2026-09-08) — mirror instance, ban root cause, and silent failures made visible
 
 **→ Full change-by-change record for sessions 67 and 68, with the bugs each change caused

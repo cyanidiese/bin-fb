@@ -4,6 +4,24 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 71 (2026-09-24) — Trades picker sorted by top preset Profit%
+
+- [x] **Trades page symbol picker sorted DESC by Profit% of each symbol's top preset**
+      (commits f6733f6 spec, 96884e1 code, branch feature/mean-reversion-overlay).
+      Sorts per viewed mode and date shortcut; uncomputed symbols stay at bottom in
+      registry order. Cache-based: `data/symbol_sort_scores_{mode}.json`, entries created
+      on-demand when clicked, invalidated on top-preset change or order close (via file
+      mtime fingerprint), or TTL. Server-side recompute, no bot changes. Zero order-path
+      risk. Verified: values match independent Python calculation exactly (SOL 7d −24.17%,
+      all +42.49%; INJ 7d −2.56%). Next build passes.
+
+- [ ] **Deploy pending (needs user approval):** this feature is on
+      feature/mean-reversion-overlay, not yet deployed.
+
+- [ ] **Visual verification needed:** picker not checked in a browser after deploy.
+
+---
+
 ## Session 70b (2026-09-13) — new-symbol backfill, slippage model, duplicate-skip default
 
 - [x] **ENAUSDT/LINKUSDT root cause: too little kline history, not a code bug.**

@@ -14,6 +14,11 @@ interface Props {
   openVirtual?: Set<string>
   /** Names the instance being viewed, for the tooltips. */
   instanceLabel?: string
+  /** Top preset's Profit% per symbol — what the caller sorted `symbols` by. Tooltip only;
+   *  the order itself is the caller's. */
+  scores?: Record<string, { pct: number | null; preset: string | null }>
+  /** The shortcut the scores cover, e.g. "Last 7 days". */
+  scoresLabel?: string
 }
 
 /**
@@ -26,7 +31,7 @@ interface Props {
  */
 export default function SymbolPicker({
   symbols, selected, onSelect,
-  disabled, dimmed, openReal, openVirtual, instanceLabel,
+  disabled, dimmed, openReal, openVirtual, instanceLabel, scores, scoresLabel,
 }: Props) {
   if (symbols.length === 0) return null
   const where = instanceLabel ? ` on ${instanceLabel}` : ''
@@ -47,8 +52,15 @@ export default function SymbolPicker({
         // Real wins when both are open: it is the position with money behind it.
         const openKind = hasReal ? 'real' : hasVirtual ? 'virtual' : null
 
+        const score = scores?.[sym]
+        const scoreText = !scores ? null
+          : score === undefined ? 'Profit% not computed yet — click to compute'
+          : score.pct === null ? `no ${score.preset ?? 'top preset'} trades${scoresLabel ? ` in ${scoresLabel}` : ''}`
+          : `${score.preset}: ${score.pct >= 0 ? '+' : ''}${score.pct.toFixed(1)}%${scoresLabel ? ` (${scoresLabel})` : ''}`
+
         const title = [
           sym,
+          scoreText,
           isDisabled ? 'disabled in the registry' : null,
           openKind === 'real' ? `real position open${where}` : null,
           openKind === 'virtual' ? `virtual position open${where}` : null,

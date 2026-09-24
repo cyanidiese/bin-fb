@@ -122,7 +122,7 @@ export function presetRange(
 /** True when the order overlaps [from, to]. An order counts if it was OPEN at any
  *  point in the window — using open_time alone would drop a trade that opened
  *  before the window and closed inside it. */
-function orderInRange(
+export function orderInRange(
   o: { open_time?: string | null; close_time?: string | null },
   fromS: number | null,
   toS: number | null,

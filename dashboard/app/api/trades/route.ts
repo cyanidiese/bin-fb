@@ -4,6 +4,8 @@ import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../_utils'
 import { REGISTRY_PATH } from '../symbols/_registry'
+import { rankPresets, type PresetEfficiency } from './_top-preset'
+import { detectRankMax } from './_rank-files'
 
 function readJson(filePath: string, fallback: unknown) {
   try {
@@ -16,16 +18,6 @@ function readJson(filePath: string, fallback: unknown) {
 function currentMode(): string {
   const data = readJson(path.join(BOT_ROOT, 'data', 'bot_mode.json'), {}) as Record<string, string>
   return data.mode ?? 'test'
-}
-
-function detectRankMax(dataDir: string, mode: string): number {
-  try {
-    const re = new RegExp(`^virtual_balance_rank(\\d+)_${mode}\\.json$`)
-    const ranks = fs.readdirSync(dataDir)
-      .map(f => { const m = f.match(re); return m ? parseInt(m[1], 10) : 0 })
-      .filter(n => n > 0)
-    return ranks.length > 0 ? Math.max(...ranks) : 6
-  } catch { return 6 }
 }
 
 export async function GET(req: NextRequest) {
@@ -48,7 +40,7 @@ export async function GET(req: NextRequest) {
     isShadow ? `backtest_results_${symbol}_${mode}.json` : `backtest_results_${symbol}.json`)
 
   const realOrders = readJson(realOrdersPath, []) as unknown[]
-  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number; recent_trades?: number[] }>>
+  const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, PresetEfficiency>>
   const backtest   = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
 
   const symbolEfficiency = efficiency[symbol] ?? {}
@@ -61,53 +53,9 @@ export async function GET(req: NextRequest) {
   // Check if this symbol has a manually locked preset
   const riskConfig = readJson(path.join(BOT_ROOT, 'risk_config.json'), {}) as Record<string, unknown>
 
-  // Mirror VirtualTracker scoring: window-based once warmed up, cumulative fallback while
-  // filling, seeded score (Tier 0) before min_trades are reached.
-  const minTrades = (riskConfig?.min_trades_for_ranking as number) ?? 3
-  const windowSize = (riskConfig?.ranking_window_size as number) ?? 10
-  function effectiveScore(stats: { total_winning_usdt: number; trade_count: number; seeded_winning_usdt?: number; recent_trades?: number[] }): number {
-    if ((stats.trade_count ?? 0) >= minTrades) {
-      const recent = stats.recent_trades ?? []
-      if (recent.length >= windowSize) {
-        return recent.slice(-windowSize).reduce((a, b) => a + b, 0)
-      }
-      return stats.total_winning_usdt
-    }
-    return stats.seeded_winning_usdt ?? 0
-  }
   // the lock set belonging to the instance being viewed, not a shared one
   const lockedPreset: string | null = lockedPresetsFor(riskConfig, mode)[symbol] ?? null
-
-  // Determine best preset: locked preset wins; otherwise highest effective score > 0
-  let bestPreset: string | null = lockedPreset
-  if (!bestPreset) {
-    let bestScore = 0
-    for (const [name, stats] of Object.entries(symbolEfficiency)) {
-      const score = effectiveScore(stats)
-      if (score > bestScore) {
-        bestScore = score
-        bestPreset = name
-      }
-    }
-  }
-
-  // Compute preset ranks for this symbol.
-  // When locked: locked preset = rank 1; remaining presets (excluding locked) sorted by score from rank 2.
-  // When not locked: sorted by score, rank 1 = best.
-  const presetRanks: Record<string, number> = {}
-  const sortedByEff = Object.entries(symbolEfficiency)
-    .sort(([, a], [, b]) => effectiveScore(b) - effectiveScore(a))
-  if (lockedPreset) {
-    presetRanks[lockedPreset] = 1
-    const others = sortedByEff.filter(([name]) => name !== lockedPreset)
-    others.forEach(([name], idx) => {
-      presetRanks[name] = idx + 2
-    })
-  } else {
-    sortedByEff.forEach(([name], idx) => {
-      presetRanks[name] = idx + 1
-    })
-  }
+  const { bestPreset, presetRanks } = rankPresets(symbolEfficiency, lockedPreset, riskConfig)
 
   // Read rank orders (ranks 2–rankMax) for this symbol
   const dataDir = path.join(BOT_ROOT, 'data')

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSymbolContext } from '@/lib/SymbolContext'
 import type { TradesData, RealOrder, RankOrder, VirtualOrder, Kline, DisabledSymbolEntry, OpenRealPosition, OpenVirtualPosition } from '@/lib/types'
 import CollapsibleSection from '@/components/CollapsibleSection'
@@ -15,6 +15,7 @@ import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
   filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
 } from '@/lib/tradesDateRange'
+import { presetProfitPct } from '@/lib/presetProfit'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -180,22 +181,14 @@ function buildPresetRows(data: TradesData): PresetRow[] {
 
     const realCount    = real.length
     const virtualCount = virt.length
-    const totalTrades  = realCount + virtualCount
-    // Denominator is strategy exits only. Using totalTrades divided by every close,
+    // Denominator is strategy exits only. Using the trade count divided by every close,
     // bookkeeping included, so a preset with 40 reshuffles and 10 real exits read ~4x
     // worse than it performed — and unevenly, since reshuffle counts vary wildly by rank.
     const decided      = wins + partials + trails + losses
     const winPct       = decided > 0 ? ((wins + partials + trails) / decided) * 100 : null
 
-    const sumPct = (orders: { entry_price: number; quantity: number; leverage: number; pnl_usdt: number }[]) =>
-      orders.reduce((s, o) => {
-        const margin = o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0
-        return s + (margin > 0 ? (o.pnl_usdt / margin) * 100 : 0)
-      }, 0)
-
-    const profitPct = totalTrades > 0
-      ? sumPct(real) + sumPct(virt.map(o => ({ ...o, pnl_usdt: o.pnl_usdt ?? 0 })))
-      : null
+    // Shared with /api/trades/symbol-scores, which sorts the symbol picker by this figure.
+    const profitPct = presetProfitPct(real, virt)
 
     const rank = data.preset_ranks[name] ?? null
 
@@ -271,6 +264,17 @@ export default function TradesPage() {
   // Persisted rather than the raw dates: re-deriving "Last 7 days" on load keeps the
   // window relative to now, where storing the dates would restore a stale window.
   const [activeRangePreset, setActiveRangePreset] = useLocalStorage<string | null>('trades-range-preset', null)
+  // The shortcut the symbol picker is sorted by. Follows the active shortcut, and keeps
+  // the last one when the dates are edited by hand — reordering on every hand-picked
+  // range would mean computing a score for every date combination. 30d matches the
+  // default ~1-month range.
+  const [sortRange, setSortRange] = useLocalStorage<string>('trades-picker-sort-range', '30d')
+  const sortRangeKey = activeRangePreset ?? sortRange
+  // Top-preset Profit% per symbol for (viewed instance, sortRangeKey), from
+  // /api/trades/symbol-scores. A symbol absent here has not been computed yet.
+  const [sortScores, setSortScores] = useState<Record<string, { pct: number | null; preset: string | null }>>({})
+  // Ignores a response that arrives after a newer request (shortcut clicked twice fast).
+  const scoresReq = useRef(0)
   // Signature of the (preset, symbol, bounds) the current override was derived from,
   // so the preset is re-applied after a reload or a symbol change but not on every render.
   const [appliedPresetSig, setAppliedPresetSig] = useState<string>('')
@@ -343,8 +347,18 @@ export default function TradesPage() {
     for (const s of [...(primaryOrders?.symbols ?? []), ...(viewedOrders?.symbols ?? [])]) {
       if (!seen.has(s)) { seen.add(s); out.push(s) }
     }
-    return out
-  }, [primaryOrders, viewedOrders])
+    // DESC by the top preset's Profit%. Then computed-but-no-trades, then not computed
+    // yet. Array.sort is stable, so ties keep registry order.
+    const bucket = (s: string) => {
+      const e = sortScores[s]
+      return e === undefined ? 2 : e.pct === null ? 1 : 0
+    }
+    return out.sort((a, b) => {
+      const ba = bucket(a), bb = bucket(b)
+      if (ba !== bb) return ba - bb
+      return ba === 0 ? (sortScores[b].pct as number) - (sortScores[a].pct as number) : 0
+    })
+  }, [primaryOrders, viewedOrders, sortScores])
 
   // Dimmed: traded on the primary, but nothing on the instance being viewed. With
   // Primary selected the two sets are identical, so nothing dims — no special case.
@@ -370,6 +384,22 @@ export default function TradesPage() {
     openReal: openRealSymbols,
     openVirtual: openVirtualSymbols,
     instanceLabel: instance === 'primary' ? `primary (${botMode})` : `shadow (${dataMode})`,
+    scores: sortScores,
+    scoresLabel: RANGE_PRESETS.find(p => p.key === sortRangeKey)?.label,
+  }
+
+  /** Re-read the picker's sort keys. `ensure` computes the symbol if it has no entry
+   *  for this shortcut yet; stale entries are recomputed server-side either way. */
+  function loadSortScores(ensure: string | null) {
+    const req = ++scoresReq.current
+    const from = sortRangeKey === 'all' ? null : toEpochSeconds(presetRange(sortRangeKey, null).from)
+    const q = new URLSearchParams({ mode: dataMode, range: sortRangeKey, from: from === null ? '' : String(from) })
+    if (ensure) q.set('ensure', ensure)
+    return fetch(`/api/trades/symbol-scores?${q}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (req === scoresReq.current && d?.scores) setSortScores(d.scores) })
+      // Keep the previous order: a failed refresh must not scramble the picker.
+      .catch(() => {})
   }
 
   /** Re-read the trades payload without touching the user's selection or sort order.
@@ -392,6 +422,15 @@ export default function TradesPage() {
     setSelectedPreset(null)
     void loadTrades(symbol, dataMode)
   }, [symbol, dataMode])
+
+  // Clicking a symbol computes its score for the current shortcut; changing the shortcut
+  // or the instance reorders by that shortcut's scores. Hand-edited dates do not change
+  // sortRangeKey, so they never reorder.
+  useEffect(() => {
+    void loadSortScores(symbol || null)
+    // loadSortScores reads only these three
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, dataMode, sortRangeKey])
 
   useEffect(() => {
     if (!symbol) return
@@ -543,6 +582,7 @@ export default function TradesPage() {
   function applyRangePreset(key: string) {
     const r = presetRange(key, bounds.minMs)
     setActiveRangePreset(key)
+    setSortRange(key)
     setAppliedPresetSig(`${key}|${symbol}|${bounds.minMs ?? ''}`)
     setRangeFromOverride(r.from)
     setRangeToOverride(r.to)
@@ -634,6 +674,9 @@ export default function TradesPage() {
       // Re-read either way: on a timeout the position may well have closed, and on
       // success the snapshot is the authority on what is still open.
       if (symbol) void loadTrades(symbol, dataMode)
+      // A closed top-preset order changes this symbol's sort key. The bot closes on its
+      // next poll, so this may be early — the file fingerprint catches it next refresh.
+      void loadSortScores(symbol || null)
     }
   }
 
@@ -653,6 +696,9 @@ export default function TradesPage() {
       })
       if (res.ok) {
         setLockedPreset(isAlreadyLocked ? null : presetName)
+        // New top preset: every shortcut's entry for this symbol is now stale. The
+        // server sees the preset changed and recomputes each one when it is requested.
+        void loadSortScores(symbol)
       }
     } finally {
       setLockBusy(false)

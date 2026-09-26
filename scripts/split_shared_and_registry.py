@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -135,7 +136,9 @@ def main() -> int:
             path.write_text(json.dumps(data, indent=2))
     if apply:
         for src, dst in copies:
-            dst.write_bytes(src.read_bytes())
+            # copy2 keeps the mtime: main.py reports backtest age from it, and a fresh
+            # timestamp made 13-19-day-old results look brand new (first deploy, 2026-09-26).
+            shutil.copy2(src, dst)
     plan = plan or copies
     if plan and not apply:
         print("dry run — rerun with --apply")

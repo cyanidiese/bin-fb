@@ -15,6 +15,13 @@
 
 **APTUSDT investigation** (Session 72 finding): Test disabled 2026-06-11 (8% WR, 23 trades, −$49) + weight 0 → no real orders. Picker bug hid 12,936 virtual orders. Test L2 signal silence since 2026-09-24 12:45 UTC (1/210 candles with signals vs live 125/139) — testnet wicks differ (e.g. 09-23 low 0.7427 test vs 0.7247 live), test L2 marked 'descending' (BOS 0.781) while price 0.879 ~12% above — possible engine quirk worth separate investigation. JUP, LTC, BTC, LINK test also quiet since 09-24.
 
+**Stale higher-level trend direction** (Session 72 finding — NOT fixed, awaiting user decision):
+- **Root cause**: A Trend level re-evaluates its Break of Structure only inside `setHighPoint`/`setLowPoint` (via `checkIfHigherThanDescBreakOfStructure`/`checkIfLowerThanAscBreakOfStructure`), i.e. only when it **receives a swing point**. L2 receives points only when L1 reverses (L1's BOS-cross handlers push highest/lowest_since to the bigger trend). While L1 keeps trending the same way, L2 gets no points → a close far beyond L2's BOS never flips it. The flip check also uses the delivered swing candle's **close**, not its high/low.
+- **Test case (APTUSDT 2026-09-24 09:30 UTC)**: L1 flipped up, delivered low 0.7431 (close 0.7464 < L2 BOS 0.7535) → L2 marked descending, BOS 0.781. Then 219 candles, **205 closed above 0.781** (from 13:15 same day, max 0.8855); L2 received **zero points** because L1 stayed ascending (7 HH / 7 HL, L1 BOS 0.828). Consequence: test APT 1/210 candles with signals vs live 125/139 (regime filter blocks BUY when descending, recommendation_engine.py:253).
+- **Systemic (replay of last 1500 candles per symbol, both modes, read-only scan in dashboard container)**: L2 direction contradicted by closes beyond its own BOS for **5.5%–52.2% of candles** (test median ~21%); longest stale runs up to 77.5h (AVAX test). L3 worse (up to 100% for ENA test). Currently stale at scan time (2026-09-26 ~17:00 UTC): test THETA, WLD, ETHFI, EIGEN (+14.6% above BOS, real-eligible, weight 3, locked l2_bos_trend); live WLD.
+- **Proposed fix path**: Add flag (e.g. `trend_bos_check_on_close`, default off) that runs the same BOS-cross routine on each closed candle for levels ≥2. Backtest on/off across all symbols & presets (USDT, WR, trade counts) to measure signal change. Then collect virtual stats on the mirror before any real use.
+- **Scripts (session scratchpad, not in repo)**: `l2probe.py` / `stale_scan.py`.
+
 **Next session checklist**:
 - [ ] Bot deploy: reset-signal guard (main.py only-primary check, small 1-line change)
 - [ ] Telegram token rotation + old server log scrub (~30k token occurrences)

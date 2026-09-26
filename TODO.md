@@ -28,8 +28,10 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Rotate Telegram token + scrub old logs** (~30k token in exception URLs). Also kills unknown 409 poller.
 
+- [ ] **Decide on stale L2/L3 trend fix (trend.py BOS check only on point delivery)** — flag + backtest A/B first. See CLAUDE_NOTES.md for root cause, systemic scope (5.5%-52.2% candles), and proposed path. Currently stale: test THETA/WLD/ETHFI/EIGEN; live WLD. Awaiting user decision.
+
 - [ ] **Testnet L2 investigation** (APT/JUP/LTC/BTC/LINK silent since 2026-09-24 12:45 UTC). Test 1/210 candles with signals vs live 125/139.
-      Testnet wicks differ; test L2 'descending' with price 12% above BOS — possible engine quirk.
+      Testnet wicks differ; test L2 'descending' with price 12% above BOS — may be secondary to stale trend issue above.
 
 - [ ] **Weights decision: REZ 14 / ETHFI 8** on disabled symbols (63% alloc). Collect data. Zeroing REZ would enlarge INJ/EIGEN ~1.7×.
 

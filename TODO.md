@@ -14,6 +14,14 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol registry per-mode split: committed (see below).
 
+### Coordinated Mode Switch & Per-Mode Backtests (committed, awaiting deploy approval)
+
+- [x] **Spec** `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md` (d4cf154). User decision: on a mode flip, close all positions at market, then restart.
+- [x] **Implementation** (451e45b bot, bde488c dashboard). 1162 tests pass; tsc + next build clean; E2E on scratch copy of server data.
+- [ ] **Deploy together with the shared-settings/registry change** (same restart, same split script — it now also copies backtest results to `*_test.json`). Verify after: `data/primary_mode.json` = test, mirror still live, `rate_limit_state_test.json` created on first ban only.
+- [ ] **After deploy**: run live backtests for all symbols from the Backtest page (Live) — the mirror's are 19 days old and 7 symbols have none.
+- [ ] **Consider**: scheduled nightly backtest per mode (primary's results are 13–19 days old and drive real-order leverage/allocation).
+
 ### Shared Settings & Per-Mode Symbol Registry (committed, awaiting deploy approval)
 
 - [x] **Spec** `docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md` (1713a94). User decisions: one shared symbol list; strategy rules shared; disable/weights/leverage per mode.

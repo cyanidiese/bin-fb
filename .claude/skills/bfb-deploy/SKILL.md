@@ -178,8 +178,15 @@ per-mode decisions live in gitignored files (`symbol_registry_shared.json`,
 `symbol_registry.json` is a frozen rollback copy nothing reads, so a reset of it is
 harmless. The first deploy of that change must run
 `python3 scripts/split_shared_and_registry.py --apply` on the host **after the bots stop
-and before the rebuild** (single-file bind mounts: a missing file becomes a directory).
+and before the rebuild** (single-file bind mounts: a missing file becomes a directory). The
+same script copies `dashboard/public/backtest_results_{SYM}.json` → `_test.json` (backtest
+results are keyed by mode since spec 2026-09-26-mode-switch-restart-and-per-mode-backtests).
 Until then, the procedure below still applies.
+
+**Mode switches restart the bots by design** (same spec): after the Trading Mode button,
+the primary closes every position at market and exits 0; `restart: unless-stopped` brings
+it back in the new mode and the mirror follows `data/primary_mode.json`. A restart of `bot`
+right after someone pressed that button is expected, not a crash.
 
 `symbol_registry.json` is **tracked by git**, so step 4's `git reset --hard HEAD` silently
 reverts it to the committed roster. Any symbol added or removed since that commit is lost.

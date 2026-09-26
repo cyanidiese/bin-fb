@@ -1681,29 +1681,29 @@ the Telegram menu, and shared-config writes.
 
 | control | where | effect |
 |---|---|---|
-| **Bot mode** | Settings → Trading Mode | decides who trades; takes effect **on restart** |
+| **Bot mode** | Settings → Trading Mode | decides who trades; the primary closes out and restarts into it (see below — committed, not deployed) |
 | **Data view** | Trades page → Instance | decides whose files the dashboard reads; **instant** |
 
 The data-view toggle never writes `bot_mode.json` or `bot_command.json`. Defaults to
 `primary`, so the page behaves exactly as before.
 
-The bot-mode control has always taken effect only on restart: `POST /api/mode` writes
-`bot_mode.json` directly and nothing in the dashboard writes a `switch_mode` command, so
-`ModeManager.switch_mode()` and `main.on_switch_mode()` are unreachable from the UI. The
-dialog now says so (it previously promised order closing and immediate live trading that
-never happened).
+`POST /api/mode` writes `bot_mode.json` directly. **Until the coordinated-switch change
+deploys** the primary only picks it up on a manual restart (and the mirror switches
+early — see "Coordinated Mode Switch" below). After it deploys, the primary closes out and
+restarts by itself; the in-place `on_switch_mode()` / `ModeManager.switch_mode()` are
+removed.
 
 ### How the mirror follows a mode change
 
-`opposite_mode(read_mode_file())` at startup, then `_mirror_watch()` polls every 30s and
-**exits 0** when the primary's mode changes; `restart: unless-stopped` brings it back as
+The opposite of the primary's **running** mode (`data/primary_mode.json`, written by the
+primary at startup; `bot_mode.json` only before any primary has written it — committed,
+not deployed), then `_mirror_watch()` polls every 30s and **exits 0** when it changes; `restart: unless-stopped` brings it back as
 the new opposite. Requires two consecutive confirmations, and treats an absent, torn or
 out-of-vocabulary file as "no change" — the mirror acts by exiting, and a restart loop
 has no way out.
 
-Restarting rather than switching in place is deliberate: `on_switch_mode()` closes
-orders, refetches balance and rebuilds every mode-scoped object, and a partial failure
-would leave one instance writing to a mix of both suffixes.
+Restarting rather than switching in place is deliberate: a fresh process cannot be
+half-switched.
 
 ### File naming: keyed on the instance, not the mode
 
@@ -1717,14 +1717,13 @@ live: the mirror would become the test-mode process and claim every unsuffixed n
 including `dashboard/public/risk_state.json`, which it writes with a zero balance.
 
 Covers `bot.log`, `trades.log`, `analysis.jsonl`, `data/system_log.json`,
-`alert_state.json`, `risk_state.json`, `results_{symbol}.json` and
-`backtest_results_{symbol}.json`. Everything else in `data/` was already `_{mode}`
-suffixed. `symbols.json` stays shared — both write an identical list.
+`alert_state.json`, `risk_state.json` and `results_{symbol}.json` — display and
+diagnostics. Everything else in `data/` is `_{mode}` suffixed. `symbols.json` stays shared.
 
-`backtest_results_{symbol}.json` is the one that matters most: `RiskManager` reads it to
-derive **leverage** and **cross-symbol capital allocation**, so a mirror writing the
-primary's copy would silently resize the trading bot's real orders from a backtest of a
-different market.
+**Backtest results moved to mode keying** (committed, not deployed):
+`backtest_results_{symbol}_{mode}.json` — `RiskManager` derives real-order **leverage** and
+**cross-symbol allocation** from it, so after a mode switch the primary must read the new
+market's copy, not "the primary's". See "Per-Mode Backtest Results" below.
 
 `bot.log`/`trades.log` resolve through `main._log_paths()` before Settings exist, from
 `VIRTUAL_ONLY` plus the recorded mode.
@@ -1779,7 +1778,7 @@ Dashboard writes commands to `data/bot_command.json` (with UUID). Bot polls ever
 
 **Files**: `bot/mode_manager.py`, dashboard API routes
 **Key details**:
-- Commands: switch_mode, stop_bot, test_telegram
+- Commands: stop_bot, close_order, test_telegram (`switch_mode` answers "not supported" once the coordinated switch deploys — a switch goes through `bot_mode.json`)
 - 60–120s timeout per command (with SIGTERM fallback)
 
 ### Docker Deployment — Separate Bot & Dashboard Services (Session 30)
@@ -2328,6 +2327,46 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 **Deployed** 2026-09-26: split at 19:30 UTC after bots stopped (46 keys; 11 test locks, 4 live locks; test file identical to legacy apart from lock layout), rebuild 19:33. `bot` logs `risk_config_test.json (mode=test)`, `bot_mirror` logs `risk_config_live.json (mode=live)`, SOLUSDT real position restored, 22-symbol streams.
 
 **Still shared before real live trading**: `symbol_registry.json` — per-mode split committed (next section), not deployed. Live also needs live API keys and the go-live checklist.
+
+---
+
+## Coordinated Mode Switch (Session 72 — committed, NOT deployed)
+
+Pressing Settings → Trading Mode writes `data/bot_mode.json`. The primary then switches by **closing everything and restarting** (user decision 2026-09-26: close at market, then restart). Spec: `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md`.
+
+**Files**: `main.py::_primary_mode_watch`, `bot/mode_switch.py::close_out`, `bot/mode_manager.py` (`requested_mode_change`, `write_primary_mode`, `read_primary_running_mode`, `instance_mode`), `bot/order_executor.py::exchange_open_symbols`, `config/settings.py::api_keys_present`, `dashboard/components/settings/TradingMode.tsx`, `tests/test_mode_switch.py`.
+
+**Sequence** (primary only, every 30 s):
+1. `bot_mode.json` valid and ≠ running mode → switch pending: the placement pass gets no candidates (no new real orders); Telegram warning.
+2. Second confirmation 30 s later → `close_out()`:
+   - target's API keys missing (`API_KEY`/`API_SECRET` for live) → **refused**: nothing closed, pending cleared, emergency alert, keeps trading; re-armed only when `bot_mode.json` changes again;
+   - else close all virtual positions, close all real positions at market, ask the exchange (`futures_position_information`) — anything still open is closed as untracked (`reconcile_with_exchange`), up to 3 rounds;
+   - not provably flat (still open, or the exchange cannot be asked, e.g. rate-limit ban) → **postponed**: new orders stay stopped, emergency alert, retried every 30 s. Never exits holding old-mode positions.
+3. Flat → write open positions, notify, `sys.exit(0)`; Docker (`restart: unless-stopped`) starts a fresh process in the new mode (config, registry, every data path, endpoints). Verified in the bot container (Python 3.12.14) that `SystemExit` in a task leaves `asyncio.run` with code 0.
+4. The primary writes `data/primary_mode.json` at startup; the mirror follows it (`_mirror_watch`), so it switches only after the primary really runs the new mode — no window where both run the same mode.
+
+Withdrawing the request (setting the mode back) before step 2 resumes real orders. Removed: `on_switch_mode()`, `ModeManager.switch_mode()`, the `switch_mode` command. `rate_limit_state_{mode}.json` (was instance-named; bans belong to an exchange host).
+
+**Why**: the old flow left the primary on the old mode until a manual restart while the mirror restarted within a minute as the opposite of the *new* mode — i.e. the same mode as the primary — both writing the same `_test` files; and the in-place `on_switch_mode` (unreachable) would have kept the old risk config, registry and locks.
+
+## Per-Mode Backtest Results (Session 72 — committed, NOT deployed)
+
+Backtest results belong to a market: `dashboard/public/backtest_results_{SYM}_{mode}.json`, written by every backtest run for that mode, from any instance or the dashboard.
+
+**Files**: `bot/instance_paths.py` (`backtest_results_name(symbol, mode)`, `backtest_results_path(dir, symbol, mode)`), `bot/risk_manager.py`, `main.py`, `bot/telegram_menu.py`, `bot/symbol_discovery.py`, `backtest.py`, `bot/data_feed.py::set_cache_suffix`, `config/settings.py::load_settings(require_keys=)`, `dashboard/app/api/_backtest-results.ts`, `dashboard/app/api/backtest-results/route.ts`, `run-backtest`, `refresh-scores`, `telegram/test`, `trades/_preset-names.ts`, `symbols` routes, `app/backtest/page.tsx`, `app/create/page.tsx`, `tests/test_backtest_results_per_mode.py`.
+
+**Behaviour**:
+- **Read**: the mode's file; for **test** only, fall back to the legacy unsuffixed file (always the testnet primary's). Live never reads testnet results. A non-market mode (`RiskManager(mode='backtest')`) reads the unsuffixed file.
+- **Archives**: `data/backtest_{SYM}_{mode}_{TS}.json`, keep-5 per symbol per mode; results JSON carries `mode`.
+- **Chart export** (`results_{SYM}.json`): goes to the instance running that mode (`backtest._is_mirror()`: `VIRTUAL_ONLY` or mode ≠ primary's running mode), so a dashboard backtest of the other mode never overwrites the trading bot's chart.
+- **Klines**: backtests fetch production candles (as always) and now store them in the production cache `{SYM}_15m_live.json` and read from it in both modes. They used to be saved into the mode's cache — for test that is the testnet bot's own analyzer history (APTUSDT: every candle before Sep 7 identical to production, after that testnet). `DataFeed.set_cache_suffix('test')` refuses production klines.
+- **No API keys needed**: `load_settings(symbol, require_keys=False)` — live backtests work before live keys exist.
+- **Dashboard**: `GET /api/backtest-results?symbol=&mode=` (404 when never backtested). Backtest page: Test/Live selector (`db:backtest:mode`, "· bot" marks the trading mode), runs `/api/run-backtest {mode}`, patches `risk_state` scores only for the bot's mode. Add Symbol backtests the bot's mode, then the other. `refresh-scores` reads only the bot mode's files (it used to mix in the mirror's `_live` files, last one wins). Symbol delete removes both markets' results, charts and kline caches.
+- **Seeding**: `scripts/split_shared_and_registry.py --apply` copies `backtest_results_{SYM}.json` → `_test.json` (never overwrites).
+
+**Why**: keyed by instance, the primary sized orders from the previous market's backtest after a switch; the mirror's results could never be refreshed (all 15 `_live` files 19 days old; ARB, BTC, EGLD, ENA, ETH, LINK, LTC none — the mirror started them with no preset seeds and base leverage).
+
+**Verified** (scratch copy of server data): live backtest with no keys wrote only `_live` files; a test backtest with production fetch left the testnet cache byte-identical and wrote the production cache; dashboard route served test (incl. legacy fallback) / live / 404; refresh-scores used only the test files. 1162 tests pass; tsc and next build clean.
 
 ---
 

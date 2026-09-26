@@ -219,9 +219,10 @@ async def _mirror_watch(mode_manager: "ModeManager") -> None:
             f"{mode_manager.current_mode!r}. Exiting so the container restarts as the "
             f"new opposite."
         )
-        # os._exit rather than sys.exit or a raise: this is a background task, where an
-        # exception would be swallowed by the task and never reach the event loop. The
-        # mirror holds no positions and no credentials, so there is nothing to flush.
+        # os._exit: immediate, nothing to flush — the mirror holds no positions and no
+        # credentials. (A SystemExit raised in a task does leave asyncio.run on Python
+        # 3.12 — verified in the bot container 2026-09-26 — which the primary's switch
+        # relies on to run its normal shutdown path.)
         os._exit(0)
 
 

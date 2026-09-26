@@ -61,6 +61,7 @@ const TTL_MS: Record<string, number | null> = {
   today: 10 * 60_000,
   '24h': 10 * 60_000,
   '7d':  60 * 60_000,
+  '14d': 60 * 60_000,
   '30d': 60 * 60_000,
   all:   null,
 }

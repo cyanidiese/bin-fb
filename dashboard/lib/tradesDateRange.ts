@@ -83,6 +83,7 @@ export const RANGE_PRESETS: { key: string; label: string; days: number | null }[
   { key: 'today', label: 'Today', days: 0 },
   { key: '24h', label: 'Last 24h', days: 1 },
   { key: '7d', label: 'Last 7 days', days: 7 },
+  { key: '14d', label: 'Last 2 weeks', days: 14 },
   { key: '30d', label: 'Last 30 days', days: 30 },
   { key: 'all', label: 'All history', days: null },
 ]

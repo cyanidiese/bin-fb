@@ -29,20 +29,21 @@ const secret = new TextEncoder().encode(process.env.DASHBOARD_SECRET ?? "")
 const token = await new SignJWT({ sub: "dashboard" })
   .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("10m").sign(secret)
 
-// Same window starts the page sends (lib/tradesDateRange.ts presetRange), minute-rounded
+// Same window starts the page sends (lib/tradesDateRange.ts presetRange), minute-rounded.
+// The shortcut list below must match RANGE_PRESETS — tests/test_recalc_script_ranges.py
 // like its datetime-local inputs.
 function fromFor(range) {
   const now = new Date()
   now.setSeconds(0, 0)
   if (range === "all") return ""
   if (range === "today") { now.setHours(0, 0, 0, 0); return String(now.getTime() / 1000) }
-  const days = { "24h": 1, "7d": 7, "30d": 30 }[range]
+  const days = { "24h": 1, "7d": 7, "14d": 14, "30d": 30 }[range]
   return String(now.getTime() / 1000 - days * 86400)
 }
 
 let failed = 0
 for (const mode of ["test", "live"]) {
-  for (const range of ["today", "24h", "7d", "30d", "all"]) {
+  for (const range of ["today", "24h", "7d", "14d", "30d", "all"]) {
     const t0 = Date.now()
     let scores = {}
     for (const sym of symbols) {

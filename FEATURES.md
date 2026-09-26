@@ -49,6 +49,7 @@ A `Duration` column on the Trades orders table for open and closed orders alike,
 - Open rows show the unrealised result from the snapshot and carry a `NOW` badge; a footnote gives the snapshot time, since it is written once per candle
 - Clicking a row selects that symbol on the page
 - Column alignment is asserted in tests: `levelCell()` renders one `<td>` that is not literal in the row markup, so the expected literal count is one below the header count
+- **Collapsible** (Session 72): Widget state persisted in localStorage keys `trades-real-orders-all:open` and `trades-real-orders-all:expanded`
 
 ### Manual Order Close from the Trades Page
 The open-position rows carry a `NOW` badge with a full hover tooltip, and a red ✕ that market-closes that position — real or virtual — after inline confirmation.
@@ -66,18 +67,31 @@ The open-position rows carry a `NOW` badge with a full hover tooltip, and a red 
 - **Confirmation**: inline `Close? Yes | No`, matching the Backtest presets table, with one line of small text above the table saying a real close cannot be undone. One row can be armed at a time
 - A second press is a no-op: `close_order` returns `None` when nothing is open, `close_open_manually` checks the rank first. A timeout returns `pending: true` — never reported as success, since the close may have happened
 
-### Trades Page Symbol Picker — Sorted by Top Preset Profit% (Session 71)
-The symbol picker on the Trades page is ordered descending by the Profit% of each symbol's top preset for the active date shortcut (Today / 24h / 7d / 30d / All) and trading mode. The "top preset" is the locked preset if one exists for that symbol, otherwise the highest-ranked preset by effective score. Uncomputed symbols sort below computed ones in registry order.
+### Auto-Disabled Symbols Banner (Session 72 — Collapsible)
+A banner on the Trades page lists all disabled symbols from `symbol_registry.json` with their hand-written disable reasons (committed, not auto-detected by the bot). The banner is collapsible and its state is persisted.
 
-**Files**: `dashboard/lib/presetProfit.ts` (new, extracts Profit% formula), `dashboard/app/api/trades/_top-preset.ts` (new, extracts top-preset logic), `dashboard/lib/tradesDateRange.ts` (exports orderInRange), `dashboard/app/api/trades/symbol-scores/route.ts` (new cache route), `dashboard/app/api/trades/route.ts` (uses extracted helpers), `dashboard/app/trades/page.tsx` (fetches scores, sorts picker), `components/SymbolPicker.tsx` (optional scores prop for tooltip)
-**Spec**: `docs/specs/2026-09-24-trades-picker-profit-sort.md`
+**Files**: `dashboard/app/trades/page.tsx`, `dashboard/components/AutoDisabledSymbolsBanner.tsx`
 **Key details**:
-- **Cache**: `data/symbol_sort_scores_{mode}.json` (gitignored, per-symbol per-shortcut entries with `{pct, preset, fp (fingerprint), at (timestamp)}`)
-- **On-demand computation**: Entry created when a symbol is clicked (`ensure=<symbol>`); uncomputed symbols sit below computed ones. Recomputed server-side on every request if top preset changed, order closed (detected via mtime fingerprint), or TTL expired (10 min for today/24h, 60 min for 7d/30d, never for all)
-- **Fingerprinting** (zero bot changes): Uses mtimes of `real_orders_{SYM}_{mode}.json` and `virtual_orders_rank1_{SYM}_{mode}.json` to detect if top preset's orders closed. Both files written only on close; ranks ≥2 never hold top preset, so their churn triggers nothing
+- **Disabled symbols source**: `symbol_registry.json` `is_disabled` dict (hand-maintained; the bot's auto-disable code exists but has never fired in production)
+- **Display**: Shows symbol list with each disable reason (git-tracked via commit log; reasons set in June 2026 for structural signal silence or precision errors)
+- **Example disabled symbols** (Session 72 finding): WLD, 1000SHIB, THETA, AVAX, REZ, ETHFI, APT — all carry hand-written June reasons; none were disabled by the bot's auto-disable logic
+- **Risk note**: Server's `symbol_registry.json` is currently modified vs git (some symbols re-enabled locally); re-enabling via git loses the local changes. Decide on tracked-vs-untracked strategy soon.
+- **Collapsible** (Session 72): Banner state persisted in localStorage key `trades-disabled-symbols:open`
+
+### Trades Page Symbol Picker — Sorted by Top Preset Profit% (Session 71–72)
+The symbol picker on the Trades page is ordered descending by the Profit% of each symbol's top preset for the active date shortcut (Today / 24h / 7d / 30d / All) and trading mode. The "top preset" is the locked preset if one exists for that symbol, otherwise the highest-ranked preset by effective score. Uncomputed symbols sort below computed ones in registry order. **Profit% now includes CLOSED rank-1 virtual orders** (Session 72).
+
+**Files**: `dashboard/lib/presetProfit.ts` (new, extracts Profit% formula), `dashboard/app/api/trades/_top-preset.ts` (new, extracts top-preset logic), `dashboard/lib/tradesDateRange.ts` (exports orderInRange), `dashboard/app/api/trades/symbol-scores/route.ts` (new cache route), `dashboard/app/api/trades/route.ts` (uses extracted helpers), `dashboard/app/trades/page.tsx` (fetches scores, sorts picker), `components/SymbolPicker.tsx` (optional scores prop for tooltip), `scripts/recalc_symbol_scores.sh` (server recompute script)
+**Spec**: `docs/specs/2026-09-24-trades-picker-profit-sort.md` (amended Session 72)
+**Key details**:
+- **Profit% includes CLOSED rank-1 virtual orders** (Session 72): Rank 1 is the real-order slot's stand-in; its closed orders represent the top preset's complete performance when no real order was running. `/api/trades` now returns `rank1_orders` as separate field; `filterTradesData` and `buildPresetRows` consume it. Verified on server data: 0 of 27 rank-1 orders share `open_time` with a real order (no double counting).
+- **Cache**: `data/symbol_sort_scores_{mode}.json` (gitignored, per-symbol per-shortcut entries with `{pct, preset, fp (fingerprint), at (timestamp), v (formula version), from (timezone boundary)}`)
+- **On-demand computation**: Entry created when a symbol is clicked (`ensure=<symbol>`); uncomputed symbols sit below computed ones. Recomputed server-side on every request if top preset changed, order closed (detected via mtime fingerprint), TTL expired, formula version mismatches (v2 = includes rank1), or timezone boundary crossed (`from` field).
+- **Fingerprinting** (zero bot changes): Uses mtimes of `real_orders_{SYM}_{mode}.json` and `virtual_orders_rank1_{SYM}_{mode}.json` to detect if top preset's orders closed. Both files written only on close; ranks ≥2 never hold top preset, so their churn triggers nothing.
+- **Server recompute script** (Session 72): `scripts/recalc_symbol_scores.sh [TZ]` bulk-recomputes all symbol scores for all shortcuts/modes on server, using dashboard container's self-signed JWT. Must run after dashboard deploy (formula v2 changes) to update cached scores. Default TZ: Europe/Kyiv. Ran once 2026-09-26: 220 entries, 0 failures, ~8s.
 - **Single source of truth**: `presetProfitPct()` and `topPresetFor()` extracted to `lib/` and `_top-preset.ts`, shared by page table and sort route — the sort key cannot drift from displayed Profit%
-- **Recompute triggers**: symbol click, shortcut change, mode change, lock toggle, manual close. Hand-edited date pickers do not reorder; picker keeps last shortcut (fallback 30d)
-- **Timezone**: "Today" window start sent by browser (local midnight), server never guesses
+- **Recompute triggers**: symbol click, shortcut change, mode change, lock toggle, manual close, formula mismatch, timezone boundary. Hand-edited date pickers do not reorder; picker keeps last shortcut (fallback 30d)
+- **Timezone**: "Today" window start sent by browser (local midnight), server never guesses; `from` field detects when requested midnight differs from cache
 - **Atomic cache**: writes via tmp + rename; concurrent requests: last writer wins, losers recomputed next request
 - **No bot impact**: Zero order-path risk; worst case is wrong picker order
 
@@ -425,6 +439,29 @@ traded. `0.0` disables it (the shipped default).
 - Includes: entry price, **actual fill entry price**, TP, SL, quantity, filled PnL,
   fee, result, signal metadata, balance at open, **wallet at open**
 - Old sessions archived to `real_orders_{SYMBOL}_{MODE}_archive_{YYYYMMDDTHHMMSSZ}.json` on bot restart
+
+### Retry Failed SL Cancels (Session 72)
+When the exchange rejects a stop-loss cancel request (ban, timeout, or -2011 "unknown order"), the bot retries instead of losing the SL order. Failed cancels are persisted and retried on each candle when the rate-limit guard permits.
+
+**Files**: `bot/order_executor.py` (`_cancel_exchange_order`, `_pending_sl_cancels`), `main.py` (`retry_pending_sl_cancels`), `data/pending_sl_cancels_{mode}.json`
+**Key details**:
+- **`_cancel_exchange_order()` return value** (Session 72): Now returns `bool` (True = cancelled, False = retry). `-2011 Unknown order` is treated as already gone (harmless, returns True).
+- **Persistent retry queue**: Failed cancels queue the algoId to `data/pending_sl_cancels_{mode}.json`, reloaded on mode switch.
+- **Retry logic**: `retry_pending_sl_cancels()` runs each candle (in `check_all_orders` and `check_symbol_candle` paths) when rate-limit guard isn't blocking.
+- **Placement guard**: `place_order()` refuses a new order on a symbol while an old SL cancel is pending (returns False, logs warning). A leftover reduce-only STOP_MARKET would fire against the new position.
+- **Measured**: 5 historical occurrences (2026-09-08 to 2026-09-23), all at EIGENUSDT, all caused by `-1003` ban or timeout.
+- **Why**: Without retry, a failed cancel left the exchange SL live while the bot closed the position in software, creating a phantom position that could re-trigger and wipe margin.
+
+### Telegram Token Redaction from Logs (Session 72)
+Bot logs no longer leak the Telegram API token. All exception URLs containing the token are scrubbed before writing to `bot.log` and `trades.log`.
+
+**Files**: `bot/log_redact.py` (new, `RedactingFormatter`), `main.py` (setup_logging)
+**Key details**:
+- **`RedactingFormatter`** (Session 72): Custom `logging.Formatter` subclass that intercepts every log record and calls `strip_telegram_token()` on the formatted message.
+- **Pattern match**: `bot\d+:[A-Z0-9_-]+` matches Binance Telegram bot IDs and tokens; replaced with `botXXX:REDACTED`.
+- **Applied to handlers**: Both `bot.log` and `trades.log` handlers get the formatter in `setup_logging()` (main.py).
+- **Measured impact**: Token appeared ~30,000 times in exception URLs before Session 72 fix (mostly from Telegram `requests` exceptions when network was unavailable). Old log files on server still contain it — recommend rotation/scrubbing.
+- **Why**: Telegram bot token is a secret credential. If leaked, an attacker can send messages to the bot owner via the API, potentially spoofing alerts or disrupting monitoring.
 
 ### Unknown-symbol leverage containment (session 63)
 A symbol with no readable `backtest_results_{symbol}.json` scores **0.0** in

@@ -1,19 +1,40 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## ⟳ RESUME POINT — Session 71 (2026-09-24) — Trades picker sorted by top preset Profit%, not yet deployed
+## ⟳ RESUME POINT — Session 72 (2026-09-26) — Rank-1 virtual included in Profit%; retry SL cancels; Telegram token redacted; bans are per-edge not us
 
-**Branch**: feature/mean-reversion-overlay (spec commit f6733f6, code commit 96884e1)
+**Branch**: feature/mean-reversion-overlay (1dafddf dashboard, 3b70f27 bot)
 
 **Completed this session**:
-- **Trades page symbol picker sorted by Profit% of each symbol's top preset** — cache-based implementation with server-side recompute on preset change/order close/TTL. No bot changes. Verified against independent Python calculation: values match exactly. Next build passes. Not visually verified in browser.
+- **Commit 1dafddf (dashboard)** — Profit% (Trades page Profit% column AND symbol-picker sort key) now includes CLOSED rank-1 virtual orders. Rank 1 is the real-order slot's stand-in; real + rank1 = top preset's full record. Verified on server data: 0 of 27 rank-1 orders share open_time with a real order (no double counting). `/api/trades` returns rank1_orders as separate field; filterTradesData and buildPresetRows use it. Resolves the Profit% scope open question.
+  - symbol-scores cache entries carry `v` (FORMULA_VERSION=2, mismatch → recompute) and `from` (timezone-aware TTL: new day or other timezone → recompute).
+  - **New script** `scripts/recalc_symbol_scores.sh [TZ]`: run on server to bulk recompute all symbol scores (220 entries, ~8s). Must run after dashboard deploy (formula v2).
+  - Real orders widget and Auto-disabled symbols banner are collapsible; localStorage persists state.
+- **Commit 3b70f27 (bot)** — Retry failed SL cancels: `_cancel_exchange_order` now returns bool; -2011 (already gone) is harmless; other failures (ban, timeout) queue algoId to `data/pending_sl_cancels_{mode}.json`; retry runs each candle when guard isn't blocking; place_order refuses new order while SL cancel pending (returns False, logs warning). Reloaded on mode switch. Historical: 5 occurrences (2026-09-08 to 2026-09-23).
+  - Telegram token redaction: `RedactingFormatter` on bot.log and trades.log (main.py setup_logging) strips bot<id>:<token>. Token written ~30k times in exception URLs.
+  - 409 Conflict logged once per 10 min (started ~2026-09-06); mirror does not poll; no local poller on dev Mac — unknown external process.
 
-**Status**: COMMITTED, NOT DEPLOYED. Awaiting user confirmation before deploy.
+**Status**: Dashboard deploy APPROVED by user (1dafddf). Bot deploy (3b70f27) AWAITS USER APPROVAL + graceful stop + deploy.
+
+**Deployment checklist for next session**:
+- [ ] Deploy 1dafddf (dashboard): approved, ready to build
+- [ ] Post-deploy: run `scripts/recalc_symbol_scores.sh` on server to recompute all scores with formula v2
+- [ ] Deploy 3b70f27 (bot): awaiting approval + graceful stop + rebuild
+- [ ] Rotate Telegram token (old token leaked in logs)
+- [ ] Scrub old bot.log files on server (contain unredacted token)
+
+**Findings from Session 72**:
+- **IP bans are per-CloudFront-edge, not us** (resolves long-standing question). Egress is `185.237.14.105` for host and all containers; bans name `15.158.242.x` (AWS CloudFront origin-facing addresses, shared tenant). Our usage <1 weight/min; bans arrive already hours old. Sep 12–20 zero bans with same code. Bans per day Sep21–26: 3,6,8,5,5,1; downtime 9.5–13h/day Sep 23–25 for balance reads. 26/27 recent bans hit the mid-candle balance prefetch. For live API key whitelist 185.237.14.105 only.
+- **Auto-disabled symbols were never auto-disabled.** All 7 disabled symbols (WLD, 1000SHIB, THETA, AVAX, REZ, ETHFI, APT) carry hand-written June reasons committed to symbol_registry.json (last commit 2026-06-11). REZ, ETHFI, AVAX placed 48 real orders Sep 8–14 (−$260.46) while listed disabled — they'd been re-enabled on server; a ~Sep 13 deploy reset git-tracked symbol_registry.json to June 11, re-disabling them. Server's symbol_registry.json is currently modified vs git — risk remains.
+- **Real-eligible now** (tats mode, weight>0, not disabled): INJ 9 real orders, EIGEN 3, SOL 1. SOL's top preset r5_arm15_cooldown is blocklisted AND unlocked → never real trades. EIGEN locked to blocklisted db_layer_0, never traded real. REZ (disabled) holds weight 14, ETHFI (disabled) 8. Zeroing REZ/SOL weights deliberately NOT done because it would enlarge INJ/EIGEN real sizes ~1.7×.
+- **Recommendations for later (not applied, user said "we will re-enable later")**: ETHFI small re-enable candidate (locked preset positive real 4 trades +$48, virtual 253 +$80); TIA small weight candidate; REZ do not re-enable.
+- **Security issue**: Telegram bot token leaked in server logs (30k lines containing token in exception URLs). User should rotate token (also kills unknown 409 poller); old log files still contain it.
 
 **Open items for next session**:
-1. Deploy with user approval (feature/mean-reversion-overlay → main or direct to live?)
-2. Visual verification in a browser after deploy
-3. **Design note — Rank-1 vs effective score**: dashboard sorts by effective score (highest per preset table), bot knows tier-aware rank key (live-proven beats seed-only). When unlocked, the sort key and displayed Profit% can come from different presets. Currently unused data point: should we log this or align the dashboard to use bot's tie-breaker?
-4. **Profit% scope**: sort key excludes rank-1 virtual orders because `/api/trades` reads ranks 2..max only. Decide whether rank-1 virtual should be included.
+1. Deploy 1dafddf (dashboard) + run recalc script
+2. Deploy 3b70f27 (bot) after user approval and graceful stop
+3. Rotate Telegram token and scrub old logs
+4. Decide weights (REZ 14, SOL 1, EIGEN sizing analysis) with data-backed decision
+5. User-data-stream for balance (removes only recurring REST call, zero sizing impact)
 
 ---
 

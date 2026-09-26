@@ -4,6 +4,52 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
+## Session 72 (2026-09-26) — Rank-1 virtual in Profit%, retry SL cancels, Telegram token redacted
+
+- [x] **Trades page Profit% now includes CLOSED rank-1 virtual orders** (commit 1dafddf).
+      Verified: 0 of 27 rank-1 orders double-count with real orders. `/api/trades` returns
+      rank1_orders as separate field; filterTradesData + buildPresetRows consume it. Resolves
+      Session 71 Profit% scope question.
+
+- [x] **symbol-scores cache versioning and timezone** (commit 1dafddf).
+      Entries carry `v` (FORMULA_VERSION=2) and `from` (tracks timezone + date boundary).
+      Mismatch or day change triggers recompute. No bot changes.
+
+- [x] **New script** `scripts/recalc_symbol_scores.sh`: recomputes all symbol sort scores.
+      Accepts `[TZ]` parameter (default Europe/Kyiv). Ran once 2026-09-26: 220 entries, 0
+      failures, ~8s. **Must re-run after dashboard deploy** (formula v2).
+
+- [x] **Real orders widget and Auto-disabled symbols banner collapsible** (commit 1dafddf).
+      localStorage keys `trades-real-orders-all:open/expanded`, `trades-disabled-symbols:open`.
+
+- [x] **Retry failed SL cancels** (commit 3b70f27). `_cancel_exchange_order` returns bool;
+      -2011 (already gone) harmless; others queue algoId to `data/pending_sl_cancels_{mode}.json`;
+      retry each candle when guard unblocked; place_order refuses new order while SL cancel
+      pending. Reloaded on mode switch. Historical: 5 occurrences (EIGENUSDT 2026-09-23).
+
+- [x] **Telegram token redaction** (commit 3b70f27). `RedactingFormatter` on bot.log and
+      trades.log strips bot<id>:<token>. Token written ~30k times in exception URLs.
+
+- [ ] **Deploy dashboard (1dafddf)** — user approved. Ready to build on live.
+
+- [ ] **Deploy bot (3b70f27)** — awaiting user approval + graceful stop + rebuild.
+
+- [ ] **Run recalc_symbol_scores.sh on server** after dashboard deploy (formula v2).
+
+- [ ] **Rotate Telegram token** (old one leaked in logs ~30k lines). User should rotate;
+      also kills unknown 409-Conflict poller. Scrub old bot.log files on server.
+
+- [ ] **Weights decision: REZ 14, SOL 1, EIGEN sizing** — collect data before any change.
+      Zeroing REZ would enlarge INJ/EIGEN real sizes ~1.7×. Needs measured decision.
+
+- [ ] **ETHFI/TIA re-enable later** (not applied). ETHFI locked preset +$48 real / +$80
+      virtual; TIA small weight candidate. User said revisit.
+
+- [ ] **Balance TTL 900→3600s + hourly prefetch** (safety, low income value). Real fix is
+      user-data-stream ACCOUNT_UPDATE (zero steady-state REST calls).
+
+---
+
 ## Session 71 (2026-09-24) — Trades picker sorted by top preset Profit%
 
 - [x] **Trades page symbol picker sorted DESC by Profit% of each symbol's top preset**
@@ -15,10 +61,8 @@ Legend: [ ] pending  [~] in progress  [x] done
       risk. Verified: values match independent Python calculation exactly (SOL 7d −24.17%,
       all +42.49%; INJ 7d −2.56%). Next build passes.
 
-- [ ] **Deploy pending (needs user approval):** this feature is on
-      feature/mean-reversion-overlay, not yet deployed.
-
-- [ ] **Visual verification needed:** picker not checked in a browser after deploy.
+- [x] **Deploy pending (needs user approval):** this feature is on
+      feature/mean-reversion-overlay, committed 96884e1.
 
 ---
 

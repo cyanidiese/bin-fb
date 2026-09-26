@@ -344,6 +344,10 @@ export interface TradesData {
   all_preset_names: string[];
   real_orders: RealOrder[];
   rank_orders: Record<string, RankOrder[]>;   // key = rank number as string e.g. "2", "3"
+  /** Rank 1 — the real slot's stand-in, which opens only while no real order is running.
+   *  Kept out of rank_orders so the chart and orders table are unchanged; used only for
+   *  the preset stats, where real + rank 1 together are the top preset's full record. */
+  rank1_orders?: RankOrder[];
   rank_balances: Record<string, number>;       // key = rank number as string
   preset_ranks: Record<string, number>;        // preset_name -> current rank for this symbol
   disabled_ranks: number[];                    // ranks disabled for this symbol

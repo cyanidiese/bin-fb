@@ -153,6 +153,7 @@ export function filterTradesData(
     ...data,
     real_orders: (data.real_orders as RealOrder[]).filter(o => orderInRange(o, fromS, toS)),
     rank_orders: rankOrders,
+    rank1_orders: data.rank1_orders?.filter(o => orderInRange(o, fromS, toS)),
   }
 }
 

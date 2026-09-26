@@ -78,6 +78,10 @@ export async function GET(req: NextRequest) {
   const disabledRanks: number[] = registry.disabled_ranks?.[symbol] ?? []
   const disabledSymbols: Record<string, { reason: string; disabled_at: string }> = registry.disabled ?? {}
 
+  // Rank 1 separately: see TradesData.rank1_orders.
+  const rank1Orders = readJson(
+    path.join(dataDir, `virtual_orders_rank1_${symbol}_${mode}.json`), []) as unknown[]
+
   // Read currently open positions from in-memory snapshot written after each candle
   const openPositionsPath = path.join(BOT_ROOT, 'data', `open_positions_${mode}.json`)
   const openPositions = readJson(openPositionsPath, { real: [], virtual: [] }) as {
@@ -95,6 +99,7 @@ export async function GET(req: NextRequest) {
     all_preset_names: allPresetNames,
     real_orders: realOrders,
     rank_orders: rankOrders,
+    rank1_orders: rank1Orders,
     rank_balances: rankBalances,
     preset_ranks: presetRanks,
     disabled_ranks: disabledRanks,

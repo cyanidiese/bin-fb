@@ -153,8 +153,13 @@ function buildPresetRows(data: TradesData): PresetRow[] {
     ? data.all_preset_names
     : data.real_orders.map(o => o.preset_name)
 
-  // Flatten all rank orders into a single list for easy lookup per preset
-  const allRankOrders: RankOrder[] = Object.values(data.rank_orders).flat() as RankOrder[]
+  // Flatten all rank orders into a single list for easy lookup per preset. Rank 1 is
+  // included: it holds the top preset's trades whenever no real order was running, and
+  // never duplicates a real one — without it the top row showed only half its record.
+  const allRankOrders: RankOrder[] = [
+    ...(data.rank1_orders ?? []),
+    ...(Object.values(data.rank_orders).flat() as RankOrder[]),
+  ]
 
   return presetNames.map(name => {
     const real = data.real_orders.filter(o => o.preset_name === name)
@@ -269,6 +274,7 @@ export default function TradesPage() {
   // range would mean computing a score for every date combination. 30d matches the
   // default ~1-month range.
   const [sortRange, setSortRange] = useLocalStorage<string>('trades-picker-sort-range', '30d')
+  const [disabledOpen, setDisabledOpen] = useLocalStorage<boolean>('trades-disabled-symbols:open', true)
   const sortRangeKey = activeRangePreset ?? sortRange
   // Top-preset Profit% per symbol for (viewed instance, sortRangeKey), from
   // /api/trades/symbol-scores. A symbol absent here has not been computed yet.
@@ -832,18 +838,26 @@ export default function TradesPage() {
       {/* ── Disabled Symbols Banner ── */}
       {Object.keys(disabledSymbols).length > 0 && (
         <div className="rounded-lg border border-yellow-700/50 bg-yellow-950/30 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wide">
+          <div
+            className="flex items-center justify-between cursor-pointer select-none group"
+            onClick={() => setDisabledOpen(o => !o)}
+          >
+            <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wide group-hover:text-yellow-300 transition-colors">
               Auto-disabled symbols ({Object.keys(disabledSymbols).length})
             </span>
-            <button
-              onClick={handleEnableAll}
-              className="text-xs px-2 py-0.5 rounded bg-yellow-800/60 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
-            >
-              Enable All
-            </button>
+            <span className="flex items-center gap-3">
+              <button
+                onClick={e => { e.stopPropagation(); handleEnableAll() }}
+                className="text-xs px-2 py-0.5 rounded bg-yellow-800/60 text-yellow-200 hover:bg-yellow-700/60 transition-colors"
+              >
+                Enable All
+              </button>
+              <span className="text-[10px] text-gray-600 group-hover:text-gray-300 transition-colors">
+                {disabledOpen ? '▲ Hide' : '▼ Show'}
+              </span>
+            </span>
           </div>
-          <div className="space-y-1">
+          {disabledOpen && <div className="space-y-1">
             {Object.entries(disabledSymbols).map(([sym, entry]) => (
               <div key={sym} className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -863,7 +877,7 @@ export default function TradesPage() {
                 </button>
               </div>
             ))}
-          </div>
+          </div>}
         </div>
       )}
 

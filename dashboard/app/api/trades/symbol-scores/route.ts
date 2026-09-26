@@ -38,8 +38,17 @@ interface ScoreEntry {
   preset: string | null
   fp: string
   at: number
+  /** Window start the entry was computed for (epoch s, null = unbounded). */
+  from?: number | null
+  /** FORMULA_VERSION it was computed with. */
+  v?: number
 }
 type ScoreCache = Record<string, Record<string, ScoreEntry>>
+
+/** Bump whenever computePct changes, so cached entries — "all" never expires — are
+ *  recomputed instead of silently mixing two formulas in one sort.
+ *  2: rank-1 virtual orders included. */
+const FORMULA_VERSION = 2
 
 const TTL_MS: Record<string, number | null> = {
   today: 10 * 60_000,
@@ -80,7 +89,8 @@ interface PnlRecord {
 }
 
 /** Same inputs the page's Profit% column uses: real orders plus CLOSED virtual orders
- *  from ranks 2..max (the page does not load rank 1), filtered by order overlap. */
+ *  from ranks 1..max, filtered by order overlap. Rank 1 is the real slot's stand-in and
+ *  holds the top preset's trades whenever no real order was running. */
 function computePct(
   symbol: string, mode: string, preset: string, fromS: number | null, rankMax: number,
 ): number | null {
@@ -88,7 +98,7 @@ function computePct(
   const real = readJson<PnlRecord[]>(
     path.join(DATA_DIR, `real_orders_${symbol}_${mode}.json`), []).filter(inWindow)
   const virt: PnlRecord[] = []
-  for (let rank = 2; rank <= rankMax; rank++) {
+  for (let rank = 1; rank <= rankMax; rank++) {
     const list = readJson<PnlRecord[]>(
       path.join(DATA_DIR, `virtual_orders_rank${rank}_${symbol}_${mode}.json`), [])
     for (const o of list) {
@@ -130,10 +140,14 @@ export async function GET(req: NextRequest) {
       const top = topPreset(presetRanks)
       const fp = fingerprint(sym, mode)
       const e = cache[sym]?.[range]
-      const fresh = e && e.preset === top && e.fp === fp && (ttl === null || now - e.at < ttl)
+      // "Today" is a fixed midnight, not a sliding window: past midnight, or computed
+      // for another timezone, the entry covers a different day whatever its age.
+      const sameWindow = range !== 'today' || (e?.from ?? null) === fromS
+      const fresh = e && e.v === FORMULA_VERSION && e.preset === top && e.fp === fp && sameWindow
+        && (ttl === null || now - e.at < ttl)
       if (fresh) continue
       const pct = top ? computePct(sym, mode, top, fromS, rankMax) : null
-      cache[sym] = { ...(cache[sym] ?? {}), [range]: { pct, preset: top, fp, at: now } }
+      cache[sym] = { ...(cache[sym] ?? {}), [range]: { pct, preset: top, fp, at: now, from: fromS, v: FORMULA_VERSION } }
       dirty = true
     } catch { /* one bad symbol must not cost the others their sort key */ }
   }

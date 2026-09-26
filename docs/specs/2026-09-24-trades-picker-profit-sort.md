@@ -100,3 +100,28 @@ optional `scores` prop so each button's tooltip shows the Profit% it is sorted b
   unlocked. Sorting follows what the user sees.
 - Known and **not changed here**: the page's Profit% excludes rank-1 virtual orders
   (`/api/trades` reads ranks 2..max). The sort key matches the table as-is.
+
+## Amendment 2026-09-26 — rank 1 included, recalc script, collapsible widgets
+
+**Rank-1 virtual orders now count toward Profit%** (page column and sort key alike).
+Rank 1 is the real slot's stand-in: it opens only while no real order is running, so
+real + rank 1 together are the top preset's full record. Verified on server data: 0 of 27
+rank-1 orders (TIA/INJ/EGLD) share an open_time with a real order — no double counting.
+Before this, a symbol trading only virtually showed almost nothing for its top preset
+(EGLDUSDT `l2_regime_aware_strict`: 12 closed rank-1 trades, all ignored). The API
+returns them as `rank1_orders`, separate from `rank_orders`, so the chart and the orders
+table are unchanged.
+
+**Cache entries carry `v` (FORMULA_VERSION = 2) and `from`.** A version mismatch forces a
+recompute — "all" entries never expire, so without it old and new formulas would mix in
+one sort. "Today" entries also recompute when the requested midnight differs from the
+one they were computed for (a new day, or another timezone).
+
+**`scripts/recalc_symbol_scores.sh [TZ]`** fills every registered symbol × shortcut ×
+mode by calling the route with `ensure=SYM` from inside the dashboard container (signed
+10-minute token), so it can never disagree with the page. Run it after a deploy that
+bumps FORMULA_VERSION, or whenever the picker should be fully sorted at once.
+
+**Real orders and Auto-disabled symbols widgets are collapsible**, state in localStorage
+(`trades-real-orders-all:open`, `trades-real-orders-all:expanded`,
+`trades-disabled-symbols:open`), like every CollapsibleSection on the page.

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { fmtDuration } from '@/lib/datetime'
 import { formatPrice } from '@/lib/formatPrice'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 type RealOrderRow = {
   symbol: string
@@ -53,7 +54,9 @@ export default function RealOrdersWidget({
 }) {
   const [data, setData] = useState<Payload | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
+  // Both persist across reloads, like the page's CollapsibleSections.
+  const [open, setOpen] = useLocalStorage<boolean>('trades-real-orders-all:open', true)
+  const [expanded, setExpanded] = useLocalStorage<boolean>('trades-real-orders-all:expanded', false)
 
   useEffect(() => {
     let alive = true
@@ -93,8 +96,11 @@ export default function RealOrdersWidget({
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-2">
-        <h2 className="text-sm font-semibold text-white">
+      <div
+        className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 cursor-pointer select-none group ${open ? 'mb-2' : ''}`}
+        onClick={() => setOpen(o => !o)}
+      >
+        <h2 className="text-sm font-semibold text-white group-hover:text-gray-300 transition-colors">
           Real orders
           <span className="ml-2 text-xs font-normal text-gray-500">all symbols</span>
         </h2>
@@ -109,15 +115,22 @@ export default function RealOrdersWidget({
         <span className={`text-xs font-semibold ${pnlClass}`}>
           net {data.net_pnl_usdt >= 0 ? '+' : ''}{data.net_pnl_usdt.toFixed(2)} USDT
         </span>
-        {data.orders.length > 8 && (
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="ml-auto text-xs text-gray-500 hover:text-gray-300"
-          >
-            {expanded ? '▲ Show less' : `▼ Show all ${data.orders.length}`}
-          </button>
-        )}
+        <span className="ml-auto flex items-baseline gap-3">
+          {open && data.orders.length > 8 && (
+            <button
+              onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+              className="text-xs text-gray-500 hover:text-gray-300"
+            >
+              {expanded ? '▲ Show less' : `▼ Show all ${data.orders.length}`}
+            </button>
+          )}
+          <span className="text-[10px] text-gray-600 group-hover:text-gray-300 transition-colors">
+            {open ? '▲ Hide' : '▼ Show'}
+          </span>
+        </span>
       </div>
+
+      {open && (<>
 
       <div className="overflow-x-auto">
         <table className="w-full text-xs text-left">
@@ -195,6 +208,7 @@ export default function RealOrdersWidget({
           {new Date(data.open_updated_at).toLocaleTimeString()} — written once per candle.
         </p>
       )}
+      </>)}
     </div>
   )
 }

@@ -79,23 +79,23 @@ A banner on the Trades page lists all disabled symbols from `symbol_registry.jso
 - **Collapsible** (Session 72): Banner state persisted in localStorage key `trades-disabled-symbols:open`
 
 ### Trades Page Symbol Picker — Sorted by Top Preset Profit% (Session 71–72)
-- **Weight / Alloc% label** (Session 72): each item shows `{weight} - {Alloc%}%` top-left, exactly as the Risk page's Per-Symbol Allocation table (weight ÷ sum of all weights; BGF: score×weight share of top-N, `—` outside). Shared formula in `dashboard/lib/allocation.ts`, used by both pages. Emerald = weight > 0 and enabled (can place real orders); grey otherwise.
-- **Live open-position circles** (Session 72): the gold (real) / blue (virtual) circles and the Real orders widget re-read right after a manual close, every 30 s while the tab is visible, and on returning to the tab (`refreshOpenPositions` in `app/trades/page.tsx`). Previously loaded once per page load.
-The symbol picker on the Trades page is ordered descending by the Profit% of each symbol's top preset for the active date shortcut (Today / 24h / 7d / 30d / All) and trading mode. The "top preset" is **the row at the top of the Preset Efficiency table sorted by Profit% DESC**: the locked preset if one exists (the table pins it first), otherwise the preset with the highest Profit% in that window, chosen among the table's rows (backtest names ∪ efficiency keys, `app/api/trades/_preset-names.ts`). Not Rank 1 by effective score (that was the Session 71 definition). Tooltip shows preset, `(locked)`, Profit% and trade count `n` — a max over ~80 presets is biased upward, so a small `n` means luck. Uncomputed symbols sort below computed ones in registry order. **Profit% now includes CLOSED rank-1 virtual orders** (Session 72).
+The symbol picker on the Trades page is ordered descending by the Profit% of each symbol's top preset for the active date shortcut (Today / 24h / 7d / 30d / All) and trading mode. The "top preset" is **the row at the top of the Preset Efficiency table sorted by Profit% DESC**: the locked preset if one exists (the table pins it first), otherwise the preset with the highest Profit% in that window, chosen among the table's rows. **Profit% now includes CLOSED rank-1 virtual orders** (Session 72): Rank 1 is the real-order slot's stand-in; closed rank-1 orders represent the top preset's complete performance when no real order was running. Verified: 0 of 27 rank-1 orders double-count with real orders.
 
-**Files**: `dashboard/lib/presetProfit.ts` (new, extracts Profit% formula), `dashboard/app/api/trades/_top-preset.ts` (new, extracts top-preset logic), `dashboard/lib/tradesDateRange.ts` (exports orderInRange), `dashboard/app/api/trades/symbol-scores/route.ts` (new cache route), `dashboard/app/api/trades/route.ts` (uses extracted helpers), `dashboard/app/trades/page.tsx` (fetches scores, sorts picker), `components/SymbolPicker.tsx` (optional scores prop for tooltip), `scripts/recalc_symbol_scores.sh` (server recompute script)
-**Spec**: `docs/specs/2026-09-24-trades-picker-profit-sort.md` (amended Session 72)
+- **Weight / Alloc% label** (Session 72): each item shows `{weight} - {Alloc%}%` top-left, exactly as the Risk page's Per-Symbol Allocation table (weight ÷ sum of all weights; BGF: score×weight share of top-N, `—` outside). Shared formula in `dashboard/lib/allocation.ts`, used by both pages. Emerald = weight > 0 and enabled (can place real orders); grey otherwise.
+- **Live open-position circles** (Session 72): gold (real) / blue (virtual) circles. Real orders widget re-reads right after manual close, every 30s while tab visible, and on tab focus (`refreshOpenPositions` in `app/trades/page.tsx`).
+- **Picker tooltip**: preset name, `(locked)` if applicable, Profit%, and trade count `n` (small n indicates luck, not skill).
+
+**Files**: `dashboard/lib/presetProfit.ts` (Profit% formula), `dashboard/app/api/trades/_top-preset.ts` (top-preset logic), `dashboard/app/api/trades/symbol-scores/route.ts` (scores reader), `dashboard/app/trades/page.tsx` (fetches scores, sorts picker), `components/SymbolPicker.tsx` (scores prop for tooltip), `scripts/recalc_symbol_scores.sh` (server bulk recompute), `data/preset_profit_{mode}.json` (gitignored, persistent store)
+**Spec**: `docs/specs/2026-09-26-preset-profit-store.md` (Session 72 implementation)
 **Key details**:
-- **Profit% includes CLOSED rank-1 virtual orders** (Session 72): Rank 1 is the real-order slot's stand-in; its closed orders represent the top preset's complete performance when no real order was running. `/api/trades` now returns `rank1_orders` as separate field; `filterTradesData` and `buildPresetRows` consume it. Verified on server data: 0 of 27 rank-1 orders share `open_time` with a real order (no double counting).
-- **Cache**: `data/symbol_sort_scores_{mode}.json` (gitignored, per-symbol per-shortcut entries with `{pct, preset, fp (fingerprint), at (timestamp), v (formula version), from (timezone boundary)}`)
-- **On-demand computation**: Entry created when a symbol is clicked (`ensure=<symbol>`); uncomputed symbols sit below computed ones. Recomputed server-side on every request if the lock changed, any order of the symbol closed (mtime fingerprint), TTL expired, formula version mismatches (v3 = table top row by Profit%), or the "today" midnight differs (`from` field).
-- **Fingerprinting** (zero bot changes): `lock | newest mtime` across `real_orders_{SYM}_{mode}.json` and every `virtual_orders_rank*_{SYM}_{mode}.json`. Any preset's close can overtake the top of an unlocked symbol, so any close invalidates; recompute costs ~50 ms per symbol.
-- **Server recompute script** (Session 72): `scripts/recalc_symbol_scores.sh [TZ]` bulk-recomputes all symbol scores for all shortcuts/modes on server, using dashboard container's self-signed JWT. Must run after dashboard deploy (formula v2 changes) to update cached scores. Default TZ: Europe/Kyiv. Ran once 2026-09-26: 220 entries, 0 failures, ~8s.
-- **Single source of truth**: `presetProfitPct()` and `topPresetFor()` extracted to `lib/` and `_top-preset.ts`, shared by page table and sort route — the sort key cannot drift from displayed Profit%
-- **Recompute triggers**: symbol click, shortcut change, mode change, lock toggle, manual close, formula mismatch, timezone boundary. Hand-edited date pickers do not reorder; picker keeps last shortcut (fallback 30d)
-- **Timezone**: "Today" window start sent by browser (local midnight), server never guesses; `from` field detects when requested midnight differs from cache
-- **Atomic cache**: writes via tmp + rename; concurrent requests: last writer wins, losers recomputed next request
-- **No bot impact**: Zero order-path risk; worst case is wrong picker order
+- **Preset profit% store** (Session 72, commit 2da65a3): `data/preset_profit_{mode}.json` (~220 KB per mode). Structure: `{v:1, formula:4, mode, tz, symbols:{SYM:{fp (fingerprint), at (timestamp), day, ranges:{today|24h|7d|14d|30d|all:{from, presets:{name:[pct, trades]}}}}}}`. Owner: dashboard Node process only; bot untouched.
+- **30s recompute worker** (Session 72): Per mode, recomputes symbols when: (1) order file mtimes change (any close), (2) "today" midnight in PROFIT_TZ crosses, or (3) data older than 10 min. One parse per symbol for all windows. Global mutex prevents collision; yields between symbols.
+- **Reader**: `/api/trades/symbol-scores` derives table top row (locked preset if set, else best Profit%) — lock changes need no recompute.
+- **Server recompute script**: `scripts/recalc_symbol_scores.sh [TZ]` bulk-forces recompute on all symbols. Invoked post-deploy when formula changes. Default TZ: Europe/Kyiv. Last run 2026-09-26: 220 entries, 0 failures, ~8s.
+- **Fingerprinting**: `lock | newest mtime` across `real_orders_{SYM}_{mode}.json` and every `virtual_orders_rank*_{SYM}_{mode}.json` (Session 72 bug fix: now reads `rank*_{SYM}_{mode}.json` via readdir, fixing APTUSDT picker invisibility on 12,936 virtual-only orders).
+- **Invalidation triggers**: lock change, symbol close, timezone boundary, formula mismatch (`v` field), TTL expiry.
+- **Single source of truth**: `presetProfitPct()` and `topPresetFor()` extracted to `lib/` and `_top-preset.ts`, shared by page table and sort route.
+- **No bot impact**: Zero order-path risk; worst case is wrong picker order. Old `data/symbol_sort_scores_{mode}.json` cache is obsolete as of Session 72.
 
 ### API Ban Handling — probe only near the end of the stated ban
 Bans are **per-CloudFront-edge, not per-account**, so a probe proves only that the edge it happened to reach is clear. Probing early therefore re-opened the gate, the next request routed to a banned edge, and each such request added ~120s to that edge's ban.
@@ -1191,10 +1191,24 @@ Virtual order tracking (`/trades`). Real and virtual preset efficiency, performa
 - Live open positions: real orders shown with green LIVE badge, virtual orders with blue LIVE badge, listed before closed orders
 - Position count in section header: "Open Positions (N)"
 - Preset efficiency table: preset name, rank badge (★ Real / #2–#6 / —), trade count, total PnL%, balance
+- Profit% column (Session 72): After PnL USDT column. Computes as `pnl / margin * 100` for closed orders, displays "—" for open rows.
 - Hide virtual-only checkbox: filters out presets with 0 real+virtual trades (seeded from backtest, not yet executed)
 - Candlestick chart with trade entry/exit markers (▲ BUY, ▼ SELL)
-- Recent real orders table (most recent first): symbol, preset, side, entry/exit price, PnL, status, qty
+- Recent real orders table (most recent first): symbol, preset, side, entry/exit price, PnL, Profit%, status, qty
 - Qty column: smart decimal formatting (2 decimals for normal ranges, scientific notation for micro-qty)
+
+### Preset Profit% Store (Session 72)
+Persistent, distributed computation of preset profitability across all date ranges and symbols. The dashboard runs a background 30-second worker that recomputes data when order files change, timezone boundaries cross, or cache ages, making top-preset sorting and per-symbol Profit% accessible without bot involvement.
+
+**Files**: `dashboard/instrumentation.ts` (30s worker), `dashboard/app/api/trades/preset-profit/route.ts` (reader/writer), `dashboard/lib/presetProfit.ts` (Profit% formula), `scripts/recalc_symbol_scores.sh` (bulk server recompute)
+**Key details**:
+- **Storage**: `data/preset_profit_{mode}.json` per mode (~220 KB each, v:1, formula:4). Structure: `{v:1, formula:4, mode, tz, symbols:{SYM:{fp (fingerprint), at (timestamp), day, ranges:{today|24h|7d|14d|30d|all:{from, presets:{name:[pct, trades]}}}}}}`. Only presets with ≥1 trade appear; presets sorted by table order.
+- **30-second worker**: Runs per mode in dashboard container. Recomputes symbol when: (1) order file mtimes change (any close), (2) "today" midnight in PROFIT_TZ (default Europe/Kyiv) crosses, or (3) data ≥10 min old. One parse per symbol for all ranges. Uses global mutex; yields between symbols.
+- **Invalidation**: Fingerprint checks `lock | newest mtime` across `real_orders_{SYM}_{mode}.json` and all `virtual_orders_rank*_{SYM}_{mode}.json` files. Session 72 bug fix: now uses readdir on rank* names (was checking obsolete `virtual_orders_{SYM}_{mode}.json`, invisibly removing symbols with only virtual history — APTUSDT's 12,936 orders are now visible).
+- **Reader**: `GET /api/trades/preset-profit?mode[&symbol][&range]` returns `{SYM: {pct, trades, preset_name}, ...}` for the requested range, presets only.
+- **Writer**: `POST {mode, force, symbols}` forces recompute on specified symbols; `force:true` rebuilds entire mode (~8s for 220 symbols).
+- **Server recompute**: `scripts/recalc_symbol_scores.sh [TZ]` bulk-forces on server (invoked post-dashboard-deploy when formula changes).
+- **Zero bot impact**: Bot never writes preset_profit_*.json; no order-path risk. Formula defined as: `pct = sum(preset_pnl_usdt) / max_leverage / init_balance * 100` where `max_leverage=5`.
 
 ### Risk Page
 Risk management controls (`/risk`). Config editor, real-time state polling, drawdown guard, leverage info.
@@ -1206,6 +1220,11 @@ Risk management controls (`/risk`). Config editor, real-time state polling, draw
 - **C – Leverage Controls**: base leverage, max global leverage, max progression level, allocation weighting toggle
 - **D – Drawdown Guard**: warning %, hard-stop %, current drawdown, peak balance, reset button
 - **E – Live State**: current balance, leverage in use, capital deployed, drawdown status, polling updates every 5s
+- **Instance Switcher** (Session 72): Dropdown toggle (InstanceToggle, localStorage key `bfb-instance` shared with Trades page) that switches which live state (risk_state file + rebalancer log) is displayed on screen. Settings (sections A–D) are shared between primary and mirror instances; only live state display is instance-specific. Primary writes `risk_state.json`, mirror writes `risk_state_{mode}.json`. Note on POST /api/risk: merges onto fresh read, never takes `locked_presets` from request body — locked presets are read fresh from disk.
+
+**Bug fixes (Session 72)**:
+- DrawdownGuard Reset button now uses `POST /api/risk/reset-hard-stop` endpoint (was POSTing a `_reset_hard_stop` flag that did nothing).
+- Bot change: only primary instance consumes `data/reset_hard_stop.signal` (mirror could previously consume it first, causing race conditions).
 
 ### Settings Page
 Configuration and administration (`/settings`). Add/remove symbols, Telegram alerts, start/stop bot, mode switch, discovery.

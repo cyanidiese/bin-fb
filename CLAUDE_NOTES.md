@@ -1,40 +1,25 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## ⟳ RESUME POINT — Session 72 (2026-09-26) — Rank-1 virtual included in Profit%; retry SL cancels; Telegram token redacted; bans are per-edge not us
+## ⟳ RESUME POINT — Session 72 (continued, 2026-09-26) — Preset profit store built (NOT deployed), instances audited, picker live circles & allocation labels
 
-**Branch**: feature/mean-reversion-overlay (1dafddf dashboard, 3b70f27 bot)
+**Branch**: feature/mean-reversion-overlay (commits up to c9f7f37)
 
-**Completed this session**:
-- **Commit 1dafddf (dashboard)** — Profit% (Trades page Profit% column AND symbol-picker sort key) now includes CLOSED rank-1 virtual orders. Rank 1 is the real-order slot's stand-in; real + rank1 = top preset's full record. Verified on server data: 0 of 27 rank-1 orders share open_time with a real order (no double counting). `/api/trades` returns rank1_orders as separate field; filterTradesData and buildPresetRows use it. Resolves the Profit% scope open question.
-  - symbol-scores cache entries carry `v` (FORMULA_VERSION=2, mismatch → recompute) and `from` (timezone-aware TTL: new day or other timezone → recompute).
-  - **New script** `scripts/recalc_symbol_scores.sh [TZ]`: run on server to bulk recompute all symbol scores (220 entries, ~8s). Must run after dashboard deploy (formula v2).
-  - Real orders widget and Auto-disabled symbols banner are collapsible; localStorage persists state.
-- **Commit 3b70f27 (bot)** — Retry failed SL cancels: `_cancel_exchange_order` now returns bool; -2011 (already gone) is harmless; other failures (ban, timeout) queue algoId to `data/pending_sl_cancels_{mode}.json`; retry runs each candle when guard isn't blocking; place_order refuses new order while SL cancel pending (returns False, logs warning). Reloaded on mode switch. Historical: 5 occurrences (2026-09-08 to 2026-09-23).
-  - Telegram token redaction: `RedactingFormatter` on bot.log and trades.log (main.py setup_logging) strips bot<id>:<token>. Token written ~30k times in exception URLs.
-  - 409 Conflict logged once per 10 min (started ~2026-09-06); mirror does not poll; no local poller on dev Mac — unknown external process.
+**Completed this session** (committed; eff305a..c9f7f37 NOT yet deployed — awaiting user approval):
+1. **Commit eff305a (dashboard)** — Live open-position circles (gold real / blue virtual) in trades picker; Real orders widget refreshes every 30s while visible, on tab focus, and after manual close. Picker items show `{weight} - {Alloc%}%` label (shared `dashboard/lib/allocation.ts`, used by Risk page too) with emerald color when weight>0 and enabled.
+2. **Commit 89c4f0d (docs)** — Spec document `docs/specs/2026-09-26-preset-profit-store.md`.
+3. **Commit 2da65a3 (dashboard)** — Preset profit% store: `data/preset_profit_{mode}.json` (~220 KB each, v:1 structure with formula:4). 30s worker per mode recomputes symbols when order mtimes change, "today" boundary crosses PROFIT_TZ, or ≥10 min old. `/api/trades/symbol-scores` reads locked preset (if set) else best Profit% in window. `GET /api/trades/preset-profit?mode[&symbol][&range]; POST {mode, force, symbols}`. `scripts/recalc_symbol_scores.sh` forces recompute via POSTs. Verified 15/15 vs independent Python. Only presets with ≥1 trade appear; presets sort by table order.
+4. **Commit 3ca3ecf (dashboard)** — Trading Orders Profit% column (pnl/margin\*100, "—" for open rows). **Picker bug FIXED**: symbol list checked obsolete `virtual_orders_{SYM}_{mode}.json` (never written), making symbols with only virtual history disappear (APTUSDT 12,936 virtual orders, now visible). Now reads `virtual_orders_rank*_{SYM}_{mode}.json` via readdir.
+5. **Commit c9f7f37 (dashboard+bot)** — Risk config audit: instance switcher (InstanceToggle, localStorage `bfb-instance` shared with Trades page) displays only live state (risk_state file, rebalancer log mode); settings shared between instances. Primary writes `risk_state.json`, mirror `risk_state_{mode}.json`. **BUGS FIXED**: (1) POST /api/risk full save used load-time snapshot, reverting locks changed on Trades page — now merges onto fresh read, never takes `locked_presets` from request body. (2) DrawdownGuard Reset POSTed `_reset_hard_stop` flag that did nothing — now uses `/api/risk/reset-hard-stop`. (3) main.py: only primary consumes `data/reset_hard_stop.signal` (mirror could consume first) — small bot-side change, next deploy.
 
-**Status**: ALL DEPLOYED 2026-09-26 (server at 1302906). Dashboard: picker top = table top row by Profit% DESC (locked else best Profit% in window, FORMULA_VERSION 3, any close of the symbol invalidates) + "Last 2 weeks" (14d) shortcut; recalc script covers 6 shortcuts × 2 modes. Bot 3b70f27 deployed 11:22 UTC with graceful stop. Note: on SIGTERM the container's restart policy briefly restarted `bot` on the old image before `docker stop` — harmless with no real positions, but check open positions first every time.
+**Status** (server at commit 1302906): eff305a..c9f7f37 are committed locally and NOT deployed — dashboard deploy + `scripts/recalc_symbol_scores.sh` + deleting obsolete `data/symbol_sort_scores_*.json` await user approval; the main.py reset-signal guard needs a bot deploy. Live on the server: picker v3 (table top row by Profit%) and the 14d shortcut. Bot deployed 3b70f27 11:22 UTC 2026-09-26 (graceful stop, 22-symbol stream, first real order SOLUSDT 11:30 with exchange SL).
 
-**Deployment checklist for next session**:
-- [ ] Deploy 1dafddf (dashboard): approved, ready to build
-- [ ] Post-deploy: run `scripts/recalc_symbol_scores.sh` on server to recompute all scores with formula v2
-- [x] Deploy 3b70f27 (bot): done 2026-09-26 11:22 UTC
-- [ ] Rotate Telegram token (old token leaked in logs)
-- [ ] Scrub old bot.log files on server (contain unredacted token)
+**APTUSDT investigation** (Session 72 finding): Test disabled 2026-06-11 (8% WR, 23 trades, −$49) + weight 0 → no real orders. Picker bug hid 12,936 virtual orders. Test L2 signal silence since 2026-09-24 12:45 UTC (1/210 candles with signals vs live 125/139) — testnet wicks differ (e.g. 09-23 low 0.7427 test vs 0.7247 live), test L2 marked 'descending' (BOS 0.781) while price 0.879 ~12% above — possible engine quirk worth separate investigation. JUP, LTC, BTC, LINK test also quiet since 09-24.
 
-**Findings from Session 72**:
-- **IP bans are per-CloudFront-edge, not us** (resolves long-standing question). Egress is `185.237.14.105` for host and all containers; bans name `15.158.242.x` (AWS CloudFront origin-facing addresses, shared tenant). Our usage <1 weight/min; bans arrive already hours old. Sep 12–20 zero bans with same code. Bans per day Sep21–26: 3,6,8,5,5,1; downtime 9.5–13h/day Sep 23–25 for balance reads. 26/27 recent bans hit the mid-candle balance prefetch. For live API key whitelist 185.237.14.105 only.
-- **Auto-disabled symbols were never auto-disabled.** All 7 disabled symbols (WLD, 1000SHIB, THETA, AVAX, REZ, ETHFI, APT) carry hand-written June reasons committed to symbol_registry.json (last commit 2026-06-11). REZ, ETHFI, AVAX placed 48 real orders Sep 8–14 (−$260.46) while listed disabled — they'd been re-enabled on server; a ~Sep 13 deploy reset git-tracked symbol_registry.json to June 11, re-disabling them. Server's symbol_registry.json is currently modified vs git — risk remains.
-- **Real-eligible now** (tats mode, weight>0, not disabled): INJ 9 real orders, EIGEN 3, SOL 1. SOL's top preset r5_arm15_cooldown is blocklisted AND unlocked → never real trades. EIGEN locked to blocklisted db_layer_0, never traded real. REZ (disabled) holds weight 14, ETHFI (disabled) 8. Zeroing REZ/SOL weights deliberately NOT done because it would enlarge INJ/EIGEN real sizes ~1.7×.
-- **Recommendations for later (not applied, user said "we will re-enable later")**: ETHFI small re-enable candidate (locked preset positive real 4 trades +$48, virtual 253 +$80); TIA small weight candidate; REZ do not re-enable.
-- **Security issue**: Telegram bot token leaked in server logs (30k lines containing token in exception URLs). User should rotate token (also kills unknown 409 poller); old log files still contain it.
-
-**Open items for next session**:
-1. Deploy 1dafddf (dashboard) + run recalc script
-2. Deploy 3b70f27 (bot) after user approval and graceful stop
-3. Rotate Telegram token and scrub old logs
-4. Decide weights (REZ 14, SOL 1, EIGEN sizing analysis) with data-backed decision
-5. User-data-stream for balance (removes only recurring REST call, zero sizing impact)
+**Next session checklist**:
+- [ ] Bot deploy: reset-signal guard (main.py only-primary check, small 1-line change)
+- [ ] Telegram token rotation + old server log scrub (~30k token occurrences)
+- [ ] Testnet L2 'descending far above BOS' quirk investigation
+- [ ] Weights decision: REZ 14 / ETHFI 8 on disabled symbols = 63% of Alloc% — collect data before change. Zeroing would enlarge INJ/EIGEN real sizes ~1.7×
 
 ---
 

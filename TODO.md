@@ -4,49 +4,36 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
-## Session 72 (2026-09-26) — Rank-1 virtual in Profit%, retry SL cancels, Telegram token redacted
+## Session 72 (2026-09-26) — Preset profit store, picker circles & labels, risk audit — committed, dashboard deploy pending approval
 
 - [x] **Trades page Profit% now includes CLOSED rank-1 virtual orders** (commit 1dafddf).
-      Verified: 0 of 27 rank-1 orders double-count with real orders. `/api/trades` returns
-      rank1_orders as separate field; filterTradesData + buildPresetRows consume it. Resolves
-      Session 71 Profit% scope question.
+      Verified: 0 of 27 rank-1 orders double-count. Resolves Session 71 scope question.
 
-- [x] **symbol-scores cache versioning and timezone** (commit 1dafddf).
-      Entries carry `v` (FORMULA_VERSION=2) and `from` (tracks timezone + date boundary).
-      Mismatch or day change triggers recompute. No bot changes.
+- [x] **Preset profit% store** (commit 2da65a3). `data/preset_profit_{mode}.json` (~220 KB, v:1, formula:4).
+      30s worker per mode; invalidates on mtime/timezone/TTL. Verified 15/15 vs Python.
 
-- [x] **New script** `scripts/recalc_symbol_scores.sh`: recomputes all symbol sort scores.
-      Accepts `[TZ]` parameter (default Europe/Kyiv). Ran once 2026-09-26: 220 entries, 0
-      failures, ~8s. **Must re-run after dashboard deploy** (formula v2).
+- [x] **Picker live circles & allocation labels** (commit eff305a). Gold (real) / blue (virtual) circles.
+      Widget refreshes every 30s visible + on focus + after close. Labels: `{weight} - {Alloc%}%` (emerald if weight>0 & enabled).
 
-- [x] **Real orders widget and Auto-disabled symbols banner collapsible** (commit 1dafddf).
-      localStorage keys `trades-real-orders-all:open/expanded`, `trades-disabled-symbols:open`.
+- [x] **Profit% column in Trading Orders** (commit 3ca3ecf). Pnl/margin\*100. Bug fixed: picker now counts `virtual_orders_rank*_{SYM}_{mode}.json` (APTUSDT 12,936 orders visible).
 
-- [x] **Retry failed SL cancels** (commit 3b70f27). `_cancel_exchange_order` returns bool;
-      -2011 (already gone) harmless; others queue algoId to `data/pending_sl_cancels_{mode}.json`;
-      retry each candle when guard unblocked; place_order refuses new order while SL cancel
-      pending. Reloaded on mode switch. Historical: 5 occurrences (EIGENUSDT 2026-09-23).
+- [x] **Risk config instance audit** (commit c9f7f37). InstanceToggle; settings shared, live state per instance.
+      Bugs: (1) POST /api/risk merges fresh read, never takes locked_presets from body. (2) Reset uses `/api/risk/reset-hard-stop`. (3) Only primary consumes reset_hard_stop.signal (bot change).
 
-- [x] **Telegram token redaction** (commit 3b70f27). `RedactingFormatter` on bot.log and
-      trades.log strips bot<id>:<token>. Token written ~30k times in exception URLs.
+- [ ] **Deploy dashboard (eff305a..c9f7f37)** — awaiting user approval. Then run `scripts/recalc_symbol_scores.sh` and delete obsolete `data/symbol_sort_scores_{test,live}.json`.
 
-- [ ] **Deploy dashboard (1dafddf)** — user approved. Ready to build on live.
+- [x] **Deploy bot (3b70f27)** — deployed 2026-09-26 11:22 UTC. Graceful stop, 22-symbol stream, first real SOLUSDT 11:30.
 
-- [x] **Deploy bot (3b70f27)** — deployed 2026-09-26 11:22 UTC (server at 1302906, graceful stop, 22-symbol stream, first real order SOLUSDT 11:30 with exchange SL). Dashboard also deployed: picker = table top row by Profit% (v3) + Last 2 weeks shortcut; recalc script run (264 entries).
+- [ ] **Bot deploy for reset-signal guard** (main.py: only primary consumes signal). Small 1-line change, can ride next deploy.
 
-- [ ] **Run recalc_symbol_scores.sh on server** after dashboard deploy (formula v2).
+- [ ] **Rotate Telegram token + scrub old logs** (~30k token in exception URLs). Also kills unknown 409 poller.
 
-- [ ] **Rotate Telegram token** (old one leaked in logs ~30k lines). User should rotate;
-      also kills unknown 409-Conflict poller. Scrub old bot.log files on server.
+- [ ] **Testnet L2 investigation** (APT/JUP/LTC/BTC/LINK silent since 2026-09-24 12:45 UTC). Test 1/210 candles with signals vs live 125/139.
+      Testnet wicks differ; test L2 'descending' with price 12% above BOS — possible engine quirk.
 
-- [ ] **Weights decision: REZ 14, SOL 1, EIGEN sizing** — collect data before any change.
-      Zeroing REZ would enlarge INJ/EIGEN real sizes ~1.7×. Needs measured decision.
+- [ ] **Weights decision: REZ 14 / ETHFI 8** on disabled symbols (63% alloc). Collect data. Zeroing REZ would enlarge INJ/EIGEN ~1.7×.
 
-- [ ] **ETHFI/TIA re-enable later** (not applied). ETHFI locked preset +$48 real / +$80
-      virtual; TIA small weight candidate. User said revisit.
-
-- [ ] **Balance TTL 900→3600s + hourly prefetch** (safety, low income value). Real fix is
-      user-data-stream ACCOUNT_UPDATE (zero steady-state REST calls).
+- [ ] **ETHFI/TIA re-enable later** (user deferred). ETHFI locked +$48 real / +$80 virtual; TIA weight candidate.
 
 ---
 

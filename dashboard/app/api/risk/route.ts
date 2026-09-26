@@ -59,7 +59,13 @@ export async function GET() {
   return NextResponse.json({ config, state })
 }
 
-/** POST /api/risk — save full config object to disk, or merge a partial update (e.g. { telegram }) */
+/** POST /api/risk — save the Risk page's config, or merge a partial update (e.g. { telegram }).
+ *
+ *  Both merge onto a FRESH read of the file. The full save used to write the body as-is,
+ *  which is the snapshot the page loaded — so anything changed elsewhere since (a lock
+ *  toggled on the Trades page, Telegram settings) was silently reverted by "Save All".
+ *  `locked_presets` is never taken from the body: it is per-mode and edited only through
+ *  /api/risk/lock-preset, and the Risk page does not edit it. */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try {
@@ -83,7 +89,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Missing field: ${key}` }, { status: 400 })
       }
     }
-    merged = body
+    const { locked_presets: _ignoredLocks, _reset_hard_stop: _ignoredReset, ...rest } = body
+    void _ignoredLocks; void _ignoredReset
+    merged = { ...DEFAULT_CONFIG, ...readJson(CONFIG_PATH, {}), ...rest }
   }
 
   try {

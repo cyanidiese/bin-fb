@@ -17,11 +17,10 @@ export default function DrawdownGuard({ config, state, patchConfig }: Props) {
       'This allows new entries again. Only do this after reviewing ' +
       'your drawdown and confirming you are ready to resume trading.'
     )) {
-      fetch('/api/risk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...config, _reset_hard_stop: true }),
-      })
+      // The signal route is what the bot acts on. This used to POST the whole config with
+      // a `_reset_hard_stop` flag that no code reads — the button reset nothing, and wrote
+      // back a stale copy of the config on the way.
+      void fetch('/api/risk/reset-hard-stop', { method: 'POST' })
     }
   }
 

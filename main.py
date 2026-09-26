@@ -1468,8 +1468,11 @@ async def run() -> None:
             raise SystemExit(0)
 
         # Signal file: dashboard requested a hard-stop reset
+        # Primary only: data/ is shared, and the mirror (which has no hard stop worth
+        # resetting) could otherwise consume the signal first, so the primary's latch
+        # would never clear.
         _reset_signal = _PROJECT_ROOT / "data" / "reset_hard_stop.signal"
-        if _reset_signal.exists():
+        if not _virtual_only and _reset_signal.exists():
             try:
                 _reset_signal.unlink()
                 risk_manager.reset_hard_stop()

@@ -11,6 +11,7 @@ import PerSymbolAllocation from '@/components/risk/PerSymbolAllocation'
 import LeverageControls from '@/components/risk/LeverageControls'
 import DrawdownGuard from '@/components/risk/DrawdownGuard'
 import LiveRiskState from '@/components/risk/LiveRiskState'
+import InstanceToggle, { oppositeMode, type Instance } from '@/components/InstanceToggle'
 import PresetRankingSection from '@/components/risk/PresetRankingSection'
 import MaxLossSection from '@/components/risk/MaxLossSection'
 
@@ -31,12 +32,39 @@ export default function RiskPage() {
       .catch(() => {})
   }, [])
 
+  // Instance switcher, same as the Trades page (and the same saved choice). Settings are
+  // SHARED by both instances — the mirror mounts risk_config.json read-only so both run
+  // identical rules; only locked presets are per mode, and they are edited on the Trades
+  // page. What differs per instance is the live state each one writes: the primary's
+  // risk_state.json, the mirror's risk_state_{mode}.json (bot/instance_paths.py).
+  const [instance, setInstance] = useState<Instance>('primary')
+  const [botMode, setBotMode] = useState<'test' | 'live'>('test')
+  useEffect(() => {
+    fetch('/api/mode')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.mode === 'live' || d?.mode === 'test') setBotMode(d.mode)
+        try {
+          const saved = localStorage.getItem('bfb-instance')
+          if (saved === 'shadow' || saved === 'primary') setInstance(saved)
+        } catch { /* private window — keep the default */ }
+      })
+      .catch(() => {})
+  }, [])
+  function chooseInstance(i: Instance) {
+    setInstance(i)
+    setState(null)   // never show one instance's numbers under the other's label
+    try { localStorage.setItem('bfb-instance', i) } catch { /* private window */ }
+  }
+  const dataMode = instance === 'primary' ? botMode : oppositeMode(botMode)
+  const stateFile = instance === 'primary' ? 'risk_state.json' : `risk_state_${dataMode}.json`
+
   const pollState = useCallback(() => {
-    fetch(`/api/public-file?f=risk_state.json`)
+    fetch(`/api/public-file?f=${stateFile}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setState(data) })
       .catch(() => {})
-  }, [])
+  }, [stateFile])
 
   useEffect(() => {
     pollState()
@@ -90,6 +118,10 @@ export default function RiskPage() {
     <main className="p-4 space-y-6 max-w-3xl">
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-lg font-bold text-white">Risk Manager</h1>
+        <label className="flex items-center gap-2" title="Switches the LIVE STATE shown (balance, drawdown, per-symbol scores). Settings below are shared by both instances.">
+          <span className="text-[11px] uppercase tracking-wider text-gray-500">Instance</span>
+          <InstanceToggle value={instance} onChange={chooseInstance} botMode={botMode} />
+        </label>
         <div className="ml-auto flex items-center gap-3">
           {saveError && <span className="text-xs text-red-400 font-mono">{saveError}</span>}
           {saveOk && <span className="text-xs text-emerald-400 font-mono">Saved ✓</span>}
@@ -103,6 +135,13 @@ export default function RiskPage() {
           </button>
         </div>
       </div>
+
+      <p className="text-[11px] text-gray-500 -mt-3">
+        Settings are shared by both instances (Save All writes the one risk_config.json);
+        the Instance switch changes only the live state shown
+        {instance === 'shadow' && <> — the shadow ({dataMode}, virtual only) holds no real balance</>}.
+        Locked presets are per mode and set on the Trades page.
+      </p>
 
       <ScenarioSection config={config} patchConfig={patchConfig} />
 
@@ -125,7 +164,7 @@ export default function RiskPage() {
       {config.weight_rebalancer && (
         <WeightRebalancerSection
           config={config.weight_rebalancer}
-          mode={state?.mode ?? 'test'}
+          mode={dataMode}
           patchConfig={(patch) => setConfig(prev => prev ? { ...prev, ...patch } : prev)}
         />
       )}

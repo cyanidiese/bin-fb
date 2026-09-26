@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BOT_ROOT } from '../../_utils'
 import path from 'path'
 import fs from 'fs'
+import { botMode, readRiskConfig } from '../../_risk-config'
 
-const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
 const PUBLIC_DIR = path.join(BOT_ROOT, 'dashboard', 'public')
 
 interface Preset {
@@ -107,7 +107,8 @@ export async function POST(req: NextRequest) {
   let token = ''
   let chatId = ''
   try {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    // Bot-wide keys: identical in both mode files; read the bot's mode's.
+    const cfg = readRiskConfig(botMode()) as { telegram?: { token?: string; chat_id?: string | number } }
     token = cfg?.telegram?.token?.trim() ?? ''
     chatId = String(cfg?.telegram?.chat_id ?? '').trim()
   } catch {

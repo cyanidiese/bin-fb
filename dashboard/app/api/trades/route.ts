@@ -6,6 +6,7 @@ import { BOT_ROOT } from '../_utils'
 import { REGISTRY_PATH } from '../symbols/_registry'
 import { rankPresets, type PresetEfficiency } from './_top-preset'
 import { detectRankMax } from './_rank-files'
+import { readRiskConfig } from '../_risk-config'
 import { currentMode, presetNamesFor } from './_preset-names'
 
 function readJson(filePath: string, fallback: unknown) {
@@ -37,7 +38,8 @@ export async function GET(req: NextRequest) {
   const allPresetNames = presetNamesFor(symbol, mode, symbolEfficiency)
 
   // Check if this symbol has a manually locked preset
-  const riskConfig = readJson(path.join(BOT_ROOT, 'risk_config.json'), {}) as Record<string, unknown>
+  // The viewed mode's own risk_config_{mode}.json (per-mode config spec, 2026-09-26).
+  const riskConfig = readRiskConfig(mode === 'live' ? 'live' : 'test')
 
   // the lock set belonging to the instance being viewed, not a shared one
   const lockedPreset: string | null = lockedPresetsFor(riskConfig, mode)[symbol] ?? null

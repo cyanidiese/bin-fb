@@ -342,6 +342,12 @@ export default function TradesPage() {
   // The market this view reads. The shadow always runs the opposite of the bot mode,
   // matching opposite_mode() in bot/mode_manager.py.
   const dataMode = instance === 'primary' ? botMode : oppositeMode(botMode)
+  const dataModeRef = useRef(dataMode)
+  dataModeRef.current = dataMode
+  // Allocation labels follow the viewed instance's own config.
+  useEffect(() => {
+    void loadRisk()   // reads the mode through dataModeRef
+  }, [dataMode])
   // The primary owns the unsuffixed results file — the only name most readers look for.
   // See _results_path() in bot/exporter.py.
   const resultsFile = instance === 'primary'
@@ -502,17 +508,17 @@ export default function TradesPage() {
   /** Weights change under the page too — the rebalancer, a Risk page edit — so this rides
    *  the same 30 s refresh. A failed read keeps the last labels. */
   function loadRisk() {
-    return fetch('/api/risk')
+    // The viewed mode's own risk_config_{mode}.json, and that instance's live state —
+    // test and live have separate weights (per-mode config spec, 2026-09-26). Read via a
+    // ref because the 30 s timer's closure is from the first render.
+    const mode = dataModeRef.current
+    return fetch(`/api/risk?mode=${mode}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         const cfg = d?.config as RiskConfig | undefined
-        if (!cfg) return
+        if (!cfg || d.mode !== dataModeRef.current) return   // switched meanwhile
         setRiskConfig(cfg)
-        // Only Best Gets First needs backtest scores; weight scenarios do not.
-        if (!isBgf(cfg)) return
-        return fetch('/api/public-file?f=risk_state.json')
-          .then(r => r.ok ? r.json() : null)
-          .then(s => { if (s) setRiskState(s) })
+        setRiskState((d.state as RiskState | null) ?? null)
       })
       .catch(() => {})
   }
@@ -540,9 +546,9 @@ export default function TradesPage() {
   }, [data])
 
   useEffect(() => {
-    fetch('/api/risk')
+    fetch(`/api/risk?mode=${dataMode}`)
       .then(r => r.json())
-      // per-mode lock set for the instance being viewed, not a shared dict
+      // per-mode lock set for the instance being viewed, from its own config file
       .then(({ config }) => setLockedPreset(lockedPresetsFor(config, dataMode)[symbol] ?? null))
       .catch(() => setLockedPreset(null))
     // dataMode included: switching Primary/Shadow must re-read the other instance's

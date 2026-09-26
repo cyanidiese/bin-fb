@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import {
+  botMode, isBotWidePatch, modeOr, readRiskConfig, riskConfigPath, updateBothModes,
+  updateRiskConfig, type Config,
+} from '../_risk-config'
 
 const BOT_ROOT = path.resolve(process.cwd(), '..')
-const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
-const STATE_PATH = path.join(BOT_ROOT, 'dashboard', 'public', 'risk_state.json')
+
+/** The live state of whichever instance trades `mode`: the primary writes the
+ *  unsuffixed risk_state.json, the mirror risk_state_{mode}.json (bot/instance_paths.py). */
+function statePath(mode: string): string {
+  const name = mode === botMode() ? 'risk_state.json' : `risk_state_${mode}.json`
+  return path.join(BOT_ROOT, 'dashboard', 'public', name)
+}
 
 const DEFAULT_CONFIG = {
   balance_tiers: [
@@ -52,54 +61,57 @@ function readJson(filePath: string, fallback: unknown) {
   }
 }
 
-/** GET /api/risk — returns { config, state } */
-export async function GET() {
-  const config = { ...DEFAULT_CONFIG, ...readJson(CONFIG_PATH, {}) }
-  const state = readJson(STATE_PATH, null)
-  return NextResponse.json({ config, state })
+/** GET /api/risk?mode=test|live — { mode, file, config, state } for that trading mode
+ *  (default: the bot's). Live falls back to test key by key. */
+export async function GET(req: NextRequest) {
+  const mode = modeOr(new URL(req.url).searchParams.get('mode'))
+  const config = { ...DEFAULT_CONFIG, ...readRiskConfig(mode) }
+  const state = readJson(statePath(mode), null)
+  return NextResponse.json({ mode, file: path.basename(riskConfigPath(mode)), config, state })
 }
 
-/** POST /api/risk — save the Risk page's config, or merge a partial update (e.g. { telegram }).
+/**
+ * POST /api/risk?mode=test|live — save the Risk page's config to risk_config_{mode}.json,
+ * or merge a partial update. Spec: docs/specs/2026-09-26-per-mode-risk-config.md
  *
- *  Both merge onto a FRESH read of the file. The full save used to write the body as-is,
- *  which is the snapshot the page loaded — so anything changed elsewhere since (a lock
- *  toggled on the Trades page, Telegram settings) was silently reverted by "Save All".
- *  `locked_presets` is never taken from the body: it is per-mode and edited only through
- *  /api/risk/lock-preset, and the Risk page does not edit it. */
+ *  - A partial update of bot-wide keys only (telegram, startup_backtest, …) goes to BOTH
+ *    mode files: they describe the bot process, not a market.
+ *  - Anything else goes to the requested mode's file only (default: the bot's mode).
+ *  - Both merge onto a FRESH read of the file. The full save used to write the page's
+ *    load-time snapshot, silently reverting changes made elsewhere since.
+ *  - `locked_presets` is never taken from the body: per mode, edited via lock-preset only.
+ */
 export async function POST(req: NextRequest) {
-  let body: Record<string, unknown>
+  let body: Config
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
+  const mode = modeOr(new URL(req.url).searchParams.get('mode') ?? body._mode)
+  const { locked_presets: _l, _reset_hard_stop: _r, _mode: _m, ...rest } = body
+  void _l; void _r; void _m
 
-  // Allow partial updates (e.g. { telegram }) — merge into existing config
   const required = ['balance_tiers', 'base_leverage', 'max_leverage',
                     'min_profit_factor', 'drawdown_warning_pct',
                     'drawdown_hard_stop_pct', 'symbol_weights']
-  const isPartialUpdate = required.every(k => !(k in body))
-
-  let merged: Record<string, unknown>
-  if (isPartialUpdate) {
-    merged = { ...DEFAULT_CONFIG, ...readJson(CONFIG_PATH, {}), ...body }
-  } else {
+  const isPartialUpdate = required.every(k => !(k in rest))
+  if (!isPartialUpdate) {
     for (const key of required) {
-      if (!(key in body)) {
+      if (!(key in rest)) {
         return NextResponse.json({ error: `Missing field: ${key}` }, { status: 400 })
       }
     }
-    const { locked_presets: _ignoredLocks, _reset_hard_stop: _ignoredReset, ...rest } = body
-    void _ignoredLocks; void _ignoredReset
-    merged = { ...DEFAULT_CONFIG, ...readJson(CONFIG_PATH, {}), ...rest }
   }
 
   try {
-    // Write directly — atomic rename fails on Docker single-file bind mounts (EBUSY)
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2))
+    if (isPartialUpdate && isBotWidePatch(rest)) {
+      updateBothModes(cfg => ({ ...cfg, ...rest }))
+      return NextResponse.json({ ok: true, mode: 'both' })
+    }
+    updateRiskConfig(mode, cfg => ({ ...cfg, ...rest }))
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }
-
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, mode, file: path.basename(riskConfigPath(mode)) })
 }

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import fs from 'fs'
-import path from 'path'
-import { BOT_ROOT } from '../../_utils'
+import { readRiskConfig } from '../../_risk-config'
 import { lockedPresetsFor } from '../../_locked-presets'
 import { RANGE_PRESETS } from '@/lib/tradesDateRange'
 import { loadStore, refresh, topRow, type Mode, type TopRow } from '../_preset-profit-store'
@@ -35,9 +33,8 @@ export async function GET(req: NextRequest) {
     if (ensure && !loadStore(mode as Mode).symbols[ensure]) await refresh(mode as Mode, { symbols: [ensure] })
   } catch { /* serve whatever is stored */ }
 
-  let riskConfig: unknown = {}
-  try { riskConfig = JSON.parse(fs.readFileSync(path.join(BOT_ROOT, 'risk_config.json'), 'utf8')) } catch { /* no locks */ }
-  const locks = lockedPresetsFor(riskConfig, mode)
+  // Locks of the viewed mode, from its own risk_config_{mode}.json.
+  const locks = lockedPresetsFor(readRiskConfig(mode as Mode), mode)
 
   const store = loadStore(mode as Mode)
   const scores: Record<string, TopRow> = {}

@@ -25,20 +25,14 @@ export default function RiskPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveOk, setSaveOk] = useState(false)
 
-  useEffect(() => {
-    fetch('/api/risk')
-      .then(r => r.json())
-      .then(({ config: cfg }) => setConfig(cfg))
-      .catch(() => {})
-  }, [])
-
-  // Instance switcher, same as the Trades page (and the same saved choice). Settings are
-  // SHARED by both instances — the mirror mounts risk_config.json read-only so both run
-  // identical rules; only locked presets are per mode, and they are edited on the Trades
-  // page. What differs per instance is the live state each one writes: the primary's
-  // risk_state.json, the mirror's risk_state_{mode}.json (bot/instance_paths.py).
+  // Instance switcher, same as the Trades page (and the same saved choice). Each trading
+  // mode has its own config file, risk_config_{mode}.json (spec
+  // 2026-09-26-per-mode-risk-config), so the switch selects BOTH the settings being edited
+  // and saved, and the live state shown: the primary's risk_state.json, the mirror's
+  // risk_state_{mode}.json (bot/instance_paths.py).
   const [instance, setInstance] = useState<Instance>('primary')
   const [botMode, setBotMode] = useState<'test' | 'live'>('test')
+  const [modeReady, setModeReady] = useState(false)
   useEffect(() => {
     fetch('/api/mode')
       .then(r => r.ok ? r.json() : null)
@@ -50,13 +44,36 @@ export default function RiskPage() {
         } catch { /* private window — keep the default */ }
       })
       .catch(() => {})
+      .finally(() => setModeReady(true))
   }, [])
   function chooseInstance(i: Instance) {
+    if (i === instance) return
     setInstance(i)
-    setState(null)   // never show one instance's numbers under the other's label
+    setState(null)    // never show one instance's numbers under the other's label
+    setConfig(null)   // nor its settings: the other mode's file loads next
+    setSaveError(null)
     try { localStorage.setItem('bfb-instance', i) } catch { /* private window */ }
   }
   const dataMode = instance === 'primary' ? botMode : oppositeMode(botMode)
+
+  // The mode the config on screen was loaded for — Save All writes exactly that file,
+  // even if the switch moved while a save was in flight.
+  const [configMode, setConfigMode] = useState<'test' | 'live' | null>(null)
+  const [configFile, setConfigFile] = useState<string | null>(null)
+  useEffect(() => {
+    if (!modeReady) return
+    let alive = true
+    fetch(`/api/risk?mode=${dataMode}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!alive || !d?.config) return
+        setConfig(d.config)
+        setConfigMode(d.mode)
+        setConfigFile(d.file ?? null)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [dataMode, modeReady])
   const stateFile = instance === 'primary' ? 'risk_state.json' : `risk_state_${dataMode}.json`
 
   const pollState = useCallback(() => {
@@ -88,7 +105,8 @@ export default function RiskPage() {
     setSaveError(null)
     setSaveOk(false)
     try {
-      const res = await fetch('/api/risk', {
+      if (!configMode) return
+      const res = await fetch(`/api/risk?mode=${configMode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
@@ -118,7 +136,7 @@ export default function RiskPage() {
     <main className="p-4 space-y-6 max-w-3xl">
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-lg font-bold text-white">Risk Manager</h1>
-        <label className="flex items-center gap-2" title="Switches the LIVE STATE shown (balance, drawdown, per-symbol scores). Settings below are shared by both instances.">
+        <label className="flex items-center gap-2" title="Selects which trading mode's settings you edit and save (risk_config_{mode}.json), and whose live state is shown.">
           <span className="text-[11px] uppercase tracking-wider text-gray-500">Instance</span>
           <InstanceToggle value={instance} onChange={chooseInstance} botMode={botMode} />
         </label>
@@ -137,10 +155,11 @@ export default function RiskPage() {
       </div>
 
       <p className="text-[11px] text-gray-500 -mt-3">
-        Settings are shared by both instances (Save All writes the one risk_config.json);
-        the Instance switch changes only the live state shown
-        {instance === 'shadow' && <> — the shadow ({dataMode}, virtual only) holds no real balance</>}.
-        Locked presets are per mode and set on the Trades page.
+        Editing the <span className="text-gray-300 font-semibold">{configMode ?? dataMode}</span> settings
+        {configFile && <> — Save All writes <span className="font-mono text-gray-400">{configFile}</span></>}.
+        Test and live keep separate settings; a setting live has never saved is read from test.
+        {instance === 'shadow' && <> The shadow ({dataMode}, virtual only) holds no real balance.</>}
+        {' '}Locked presets are set on the Trades page; Telegram settings apply to both.
       </p>
 
       <ScenarioSection config={config} patchConfig={patchConfig} />

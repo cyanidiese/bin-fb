@@ -3,18 +3,18 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from './_registry'
+import { updateBothModes } from '../_risk-config'
 
-const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
-
+/** The roster is shared by both modes, so a new symbol gets a weight entry in both
+ *  risk_config_{mode}.json files. An existing weight is never overwritten. */
 function addToSymbolWeights(symbol: string): void {
   try {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-    if (!cfg.symbol_weights) cfg.symbol_weights = {}
-    if (!(symbol in cfg.symbol_weights)) {
-      cfg.symbol_weights[symbol] = 1
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
-    }
-  } catch { /* config not yet created — bot will add it on first write */ }
+    updateBothModes(cfg => {
+      const w = { ...(cfg.symbol_weights as Record<string, number> | undefined ?? {}) }
+      if (!(symbol in w)) w[symbol] = 1
+      return { ...cfg, symbol_weights: w }
+    })
+  } catch { /* unwritable — the Risk page shows missing symbols at weight 1 anyway */ }
 }
 
 const MODE_PATH = path.join(BOT_ROOT, 'data', 'bot_mode.json')

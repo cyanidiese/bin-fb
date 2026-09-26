@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from '../_registry'
+import { updateBothModes } from '../../_risk-config'
 
-const CONFIG_PATH = path.join(BOT_ROOT, 'risk_config.json')
-
+/** The roster is shared, so a removed symbol leaves both modes' weights. */
 function removeFromSymbolWeights(symbol: string): void {
   try {
-    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-    if (cfg.symbol_weights && symbol in cfg.symbol_weights) {
-      delete cfg.symbol_weights[symbol]
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
-    }
-  } catch { /* config missing — nothing to remove */ }
+    updateBothModes(cfg => {
+      const w = { ...(cfg.symbol_weights as Record<string, number> | undefined ?? {}) }
+      delete w[symbol]
+      return { ...cfg, symbol_weights: w }
+    })
+  } catch { /* unwritable — nothing to remove */ }
 }
 
 function deleteSymbolFiles(symbol: string): void {

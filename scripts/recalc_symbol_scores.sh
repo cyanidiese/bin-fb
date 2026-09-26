@@ -1,66 +1,46 @@
 #!/usr/bin/env bash
-# Recompute the Trades picker sort keys (top-preset Profit%) for every registered
-# symbol × every date shortcut × both modes, into data/symbol_sort_scores_{mode}.json.
+# Rebuild the preset Profit% store — every preset × date shortcut × registered symbol —
+# for both modes: data/preset_profit_test.json and data/preset_profit_live.json.
+# Spec: docs/specs/2026-09-26-preset-profit-store.md
 #
-# Run on the server:   bash scripts/recalc_symbol_scores.sh [Europe/Kyiv]
+# Run on the server:   bash scripts/recalc_symbol_scores.sh
 #
-# The computation itself is the dashboard's /api/trades/symbol-scores route, called
-# once per symbol with ensure=SYM — exactly what a click on the picker does — so the
-# script can never disagree with what the page shows. It runs
-# inside the dashboard container, signs a 10-minute session token with the same
-# DASHBOARD_SECRET the login route uses, and calls the route on localhost.
-#
-# The optional argument is the timezone whose midnight "Today" starts at — it must be
-# the browser's, because the page asks for local midnight. Other shortcuts slide and
-# are timezone-free. Harmless to re-run: entries that are already fresh are kept.
+# Normally unnecessary: the dashboard's background worker (instrumentation.ts) refreshes
+# stale symbols every 30 s. Use this after a deploy that changes the formula, or to force
+# everything at once. The computation is the dashboard's own (POST /api/trades/preset-profit),
+# so it can never disagree with the page. It runs inside the dashboard container, signs a
+# 10-minute session token with the DASHBOARD_SECRET the login route uses, and calls the
+# route on localhost. "Today" starts at midnight in PROFIT_TZ (default Europe/Kyiv),
+# set on the dashboard, not here.
 set -euo pipefail
 
-TZ_NAME="${1:-Europe/Kyiv}"
 CONTAINER="${DASHBOARD_CONTAINER:-dashboard}"
 
-docker exec -e TZ="$TZ_NAME" -w /app/dashboard "$CONTAINER" node --input-type=module -e '
+docker exec -w /app/dashboard "$CONTAINER" node --input-type=module -e '
 import { SignJWT } from "jose"
-import fs from "fs"
-
-// Every symbol the picker can show — the list /api/trades/symbols reads.
-const symbols = JSON.parse(fs.readFileSync("/app/dashboard/public/symbols.json", "utf8")).symbols ?? []
 
 const secret = new TextEncoder().encode(process.env.DASHBOARD_SECRET ?? "")
 const token = await new SignJWT({ sub: "dashboard" })
   .setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("10m").sign(secret)
-
-// Same window starts the page sends (lib/tradesDateRange.ts presetRange), minute-rounded.
-// The shortcut list below must match RANGE_PRESETS — tests/test_recalc_script_ranges.py
-// like its datetime-local inputs.
-function fromFor(range) {
-  const now = new Date()
-  now.setSeconds(0, 0)
-  if (range === "all") return ""
-  if (range === "today") { now.setHours(0, 0, 0, 0); return String(now.getTime() / 1000) }
-  const days = { "24h": 1, "7d": 7, "14d": 14, "30d": 30 }[range]
-  return String(now.getTime() / 1000 - days * 86400)
-}
+const headers = { cookie: `auth_token=${token}`, "content-type": "application/json" }
 
 let failed = 0
 for (const mode of ["test", "live"]) {
-  for (const range of ["today", "24h", "7d", "14d", "30d", "all"]) {
-    const t0 = Date.now()
-    let scores = {}
-    for (const sym of symbols) {
-      const url = `http://localhost:3000/api/trades/symbol-scores?mode=${mode}&range=${range}&from=${fromFor(range)}&ensure=${sym}`
-      try {
-        const r = await fetch(url, { headers: { cookie: `auth_token=${token}` }, redirect: "manual" })
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        scores = (await r.json()).scores
-        if (!scores[sym]) throw new Error("no entry written")
-      } catch (e) {
-        failed++
-        console.error(`${mode} ${range} ${sym} FAILED: ${e.message}`)
-      }
-    }
-    const vals = symbols.map(s => scores[s]).filter(Boolean)
-    const withPct = vals.filter(v => v.pct !== null).length
-    console.log(`${mode.padEnd(4)} ${range.padEnd(5)} ${String(vals.length).padStart(3)}/${symbols.length} symbols, ${String(withPct).padStart(3)} with trades  (${Date.now() - t0} ms)`)
+  try {
+    const r = await fetch("http://localhost:3000/api/trades/preset-profit",
+      { method: "POST", headers, redirect: "manual", body: JSON.stringify({ mode, force: true }) })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const { recomputed, ms } = await r.json()
+    const s = await (await fetch(`http://localhost:3000/api/trades/preset-profit?mode=${mode}`,
+      { headers, redirect: "manual" })).json()
+    const syms = Object.values(s.symbols)
+    const ranges = Object.keys(syms[0]?.ranges ?? {})
+    const cells = syms.reduce((n, x) => n + Object.values(x.ranges)
+      .reduce((m, rg) => m + Object.keys(rg.presets).length, 0), 0)
+    console.log(`${mode.padEnd(4)} ${recomputed.length} symbols x ${ranges.length} shortcuts (${ranges.join(", ")}): ${cells} preset numbers stored in ${ms} ms`)
+  } catch (e) {
+    failed++
+    console.error(`${mode} FAILED: ${e.message}`)
   }
 }
 process.exit(failed ? 1 : 0)

@@ -26,7 +26,8 @@ from bot.analyzer import Analyzer
 from bot.backtester import Backtester
 from bot.data_feed import DataFeed
 from bot.exporter import export, _results_path
-from bot.instance_paths import backtest_results_name
+from bot.instance_paths import backtest_results_name, backtest_results_path
+from bot.mode_manager import read_primary_running_mode
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config, config_path as risk_config_path
 
@@ -39,13 +40,14 @@ logger = logging.getLogger('backtest')
 
 
 def _is_mirror() -> bool:
-    """True when this backtest belongs to the virtual-only mirror instance.
-
-    main.py runs this module as a subprocess, so the container's VIRTUAL_ONLY comes
-    along for free. The dashboard's own /api/run-backtest runs without it, so a
-    user-triggered backtest correctly writes the primary's files.
+    """True when this backtest's CHART export belongs to the mirror instance: run inside
+    the mirror (VIRTUAL_ONLY), or run for a mode the primary is not running — the
+    dashboard can now backtest either mode, and a live-mode run must not overwrite the
+    testnet primary's chart. Backtest results themselves are keyed by mode, not by this.
     """
-    return os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    if os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes'):
+        return True
+    return _env_mode() != read_primary_running_mode()
 
 
 def _env_mode() -> str:
@@ -63,33 +65,40 @@ def _dashboard_path(symbol: str) -> Path:
 
     Reads the environment instead of taking a parameter because main.py invokes this
     module as a subprocess, so the container's VIRTUAL_ONLY comes along for free. The
-    dashboard's own /api/run-backtest runs without VIRTUAL_ONLY, so a user-triggered
-    backtest correctly writes the primary's file.
+    file is keyed by mode (spec 2026-09-26-mode-switch-restart-and-per-mode-backtests),
+    so a run for either mode, from either instance or the dashboard, lands in that
+    market's file.
 
     Read at call time, not import time: --mode assigns os.environ['TRADING_MODE'] in
     main() before settings load, and this must see that value.
     """
-    return Path('dashboard') / 'public' / backtest_results_name(
-        symbol, _env_mode(), _is_mirror())
+    return Path('dashboard') / 'public' / backtest_results_name(symbol, _env_mode())
 
 
 def run_for_symbol(symbol: str, args) -> None:
-    settings = load_settings(symbol)
+    # A backtest never touches a private endpoint: no API keys needed (a live-mode
+    # backtest must work before live keys exist).
+    settings = load_settings(symbol, require_keys=False)
 
+    # Backtests run on PRODUCTION klines in both modes (public data, far more stable
+    # than testnet). They used to be saved into the mode's cache, which for test is the
+    # testnet bot's own analyzer history — so production candles got mixed with the
+    # testnet websocket's (APTUSDT: identical to production before Sep 7, testnet after).
+    # They now go to the production cache, {SYM}_{tf}_live.json: the same market the
+    # mirror streams into it. The testnet cache is written only by the testnet bot.
+    prod_cache = Path('data') / f'{symbol}_{settings.timeframe}_live.json'
     if args.klines:
         klines_path = Path(args.klines)
     else:
-        suffix = 'test' if settings.trading_mode == 'test' else 'live'
-        klines_path = Path('data') / f'{symbol}_{settings.timeframe}_{suffix}.json'
+        klines_path = prod_cache
 
     if not args.no_fetch and not args.klines:
         try:
-            # live_klines=True: always fetch from production API regardless of TRADING_MODE.
-            # Klines are public data and production is far more stable than testnet.
-            # The cache file path is unchanged (mode-appropriate suffix).
+            # live_klines=True + a live-mode cache path: fetch production, store production.
             feed = DataFeed(settings, live_klines=True)
+            feed.set_cache_suffix('live')
             feed.refresh_klines(symbol, settings.timeframe, fetch_count=args.klines_count)
-            logger.info(f"[{symbol}] Kline cache refreshed from production API")
+            logger.info(f"[{symbol}] Production kline cache refreshed ({prod_cache.name})")
         except Exception as e:
             logger.warning(f"[{symbol}] Could not refresh klines: {e} — using existing cache")
 
@@ -148,9 +157,10 @@ def run_for_symbol(symbol: str, args) -> None:
     code_locked = set(LOCKED_PRESETS.keys())
     extra_locked: list[str] = []
     dashboard_path = _dashboard_path(symbol)
-    if dashboard_path.exists():
+    previous = backtest_results_path(dashboard_path.parent, symbol, _env_mode())
+    if previous.exists():
         try:
-            with open(dashboard_path) as f:
+            with open(previous) as f:
                 old = json.load(f)
             extra_locked = [
                 n for n in old.get('locked_presets', [])
@@ -169,14 +179,16 @@ def run_for_symbol(symbol: str, args) -> None:
         'locked_presets': list(code_locked) + extra_locked,
     }
 
-    archive_path = Path('data') / f'backtest_{symbol}_{ts}.json'
+    mode = _env_mode()
+    output['mode'] = mode
+    archive_path = Path('data') / f'backtest_{symbol}_{mode}_{ts}.json'
     archive_path.parent.mkdir(exist_ok=True)
     with open(archive_path, 'w') as f:
         json.dump(output, f, indent=2)
     logger.info(f"[{symbol}] Archive saved to {archive_path}")
 
-    # Keep only the 5 most recent archives for this symbol.
-    all_archives = sorted(Path('data').glob(f'backtest_{symbol}_????????T??????.json'))
+    # Keep only the 5 most recent archives for this symbol and mode.
+    all_archives = sorted(Path('data').glob(f'backtest_{symbol}_{mode}_????????T??????.json'))
     for stale in all_archives[:-5]:
         try:
             stale.unlink()

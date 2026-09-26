@@ -14,7 +14,8 @@ from pathlib import Path
 
 from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import (
-    load_settings, Settings, max_profit_cap_applies, clamp_sl_to_max,
+    load_settings, Settings, max_profit_cap_applies, clamp_sl_to_max, api_key_names,
+    api_keys_present,
 )
 from bot.log_redact import RedactingFormatter
 from bot.rate_limit_guard import (
@@ -27,8 +28,9 @@ from bot import weight_audit
 from bot.data_feed import DataFeed
 from bot.recommendation_engine import RecommendationEngine
 from bot.exporter import export, write_symbols_json
-from bot.mode_manager import ModeManager, opposite_mode, read_mode_file
-from bot.instance_paths import backtest_results_name, instance_path
+from bot.mode_manager import ModeManager, instance_mode
+from bot.mode_switch import close_out
+from bot.instance_paths import backtest_results_path, instance_path
 from bot.notifier import Notifier
 from bot.telegram_menu import TelegramMenu
 from bot.order_executor import BotHaltError, OrderExecutor, OrderState
@@ -133,7 +135,7 @@ def _log_paths() -> tuple[Path, Path]:
     `tail` working after a mode switch.
     """
     mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
-    mode = opposite_mode(read_mode_file()) if mirror else 'test'
+    mode = instance_mode(True) if mirror else 'test'
     base = Path('logs')
     return (_instance_path(base, 'bot.log', mode, mirror),
             _instance_path(base, 'trades.log', mode, mirror))
@@ -191,10 +193,9 @@ def _resolve_mode(base_settings: "Settings", mode_manager: "ModeManager") -> str
 async def _mirror_watch(mode_manager: "ModeManager") -> None:
     """Exit when the primary's mode changes, so the container restarts as its opposite.
 
-    Restarting beats switching in place: on_switch_mode() closes orders, refetches the
-    balance and rebuilds every mode-scoped object, and a partial failure would leave
-    this instance writing to a mix of both suffixes. A fresh process cannot be
-    half-switched.
+    Follows data/primary_mode.json — the mode the primary is actually running — so it
+    switches only after the primary has closed out and restarted. Restarting beats
+    switching in place: a fresh process cannot be half-switched.
 
     Two consecutive confirmations 30s apart are required. bot_mode.json is written
     atomically by both its writers so a torn read is not possible, but the dashboard
@@ -232,7 +233,9 @@ async def run() -> None:
     # Same inputs as _log_paths/_instance_mode below: the mirror trades the opposite of
     # bot_mode. Checked against the resolved mode once ModeManager exists.
     _cfg_mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
-    _cfg_mode = opposite_mode(read_mode_file()) if _cfg_mirror else read_mode_file()
+    # Mirror: the opposite of the mode the primary is RUNNING (data/primary_mode.json),
+    # not of the requested one — see bot/mode_manager.py.
+    _cfg_mode = instance_mode(_cfg_mirror)
     set_active_mode(_cfg_mode)
     logger.info(f"Risk config: {risk_config_path().name} (mode={_cfg_mode})")
     risk_cfg = load_risk_config()
@@ -265,8 +268,7 @@ async def run() -> None:
     # ModeManager exists (ModeManager takes the notifier). Resolve the mode from the
     # same two inputs ModeManager uses, then check below that they agree — if they ever
     # diverged, one instance would split its output across two suffixes.
-    _instance_mode = (
-        opposite_mode(read_mode_file()) if _virtual_only else read_mode_file())
+    _instance_mode = instance_mode(_virtual_only)
 
     notifier = Notifier(
         log_path=_instance_path(
@@ -306,6 +308,10 @@ async def run() -> None:
         # market's risk settings is the one outcome that must not be silent.
         raise RuntimeError(
             f"Risk config mode {_cfg_mode!r} disagrees with resolved mode {current_mode!r}")
+
+    # Set by _primary_mode_watch from the moment a mode change is requested until the
+    # process exits: no new real orders while the switch closes everything.
+    _switch_pending: list[str | None] = [None]
 
     risk_manager = RiskManager(
         mode=current_mode,
@@ -459,6 +465,12 @@ async def run() -> None:
 
     started_at = datetime.now(timezone.utc).isoformat()
     try:
+        # The mirror follows this (not bot_mode.json), so it only switches once the
+        # primary really runs the new mode.
+        mode_manager.write_primary_mode(started_at)
+    except Exception as exc:
+        logger.warning(f"Failed to write primary_mode.json: {exc}")
+    try:
         _write_pid()
         _write_bot_state(running=True, mode=current_mode, started_at=started_at,
                          symbols_active=len(symbols))
@@ -508,8 +520,8 @@ async def run() -> None:
         # as well as the virtual tracker's preset seeds.
         _ages, _missing = [], []
         for _sym in symbols:
-            _bt_file = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
-                _sym, current_mode, _virtual_only)
+            _bt_file = backtest_results_path(
+                _PROJECT_ROOT / "dashboard" / "public", _sym, current_mode)
             if _bt_file.exists():
                 _ages.append((time.time() - _bt_file.stat().st_mtime) / 3600.0)
             else:
@@ -528,10 +540,9 @@ async def run() -> None:
             )
 
     for sym in symbols:
-        # Seed from THIS instance's backtest. The mirror backtested the other market;
-        # seeding the primary's file would mix the two markets' preset statistics.
-        bt_path = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
-            sym, current_mode, _virtual_only)
+        # Seed from the backtest of the market this instance trades (keyed by mode).
+        bt_path = backtest_results_path(
+            _PROJECT_ROOT / "dashboard" / "public", sym, current_mode)
         virtual_tracker.seed_from_backtest(sym, bt_path)
 
     feed = DataFeed(first_settings, live_klines=first_settings.live_klines)
@@ -544,8 +555,9 @@ async def run() -> None:
     # startup calls — kline loads, leverage brackets, balance — straight into the
     # active ban, extending it by ~2 minutes each. Loaded before DataFeed is used so
     # the first request is already suppressed.
-    _rl_state_path = _instance_path(
-        _PROJECT_ROOT / "data", "rate_limit_state.json", current_mode, _virtual_only)
+    # Keyed by mode: a ban belongs to an exchange host (testnet or production), not to
+    # an instance, so after a mode switch the primary must not inherit the old host's ban.
+    _rl_state_path = _PROJECT_ROOT / "data" / f"rate_limit_state_{current_mode}.json"
     rl_guard.load_state(_rl_state_path)
 
     # Close out a ban alert the previous run never resolved. Guard state is in-memory,
@@ -1699,6 +1711,9 @@ async def run() -> None:
         # pass without restructuring the allocation logic below — the flag only ever
         # removes work, it never alters an order.
         _placement_symbols = [] if _virtual_only else symbol_registry.get_symbols()
+        if _switch_pending[0] is not None:
+            # A mode switch is closing everything: no new real orders (skip only).
+            _placement_symbols = []
         for sym in _placement_symbols:
             if symbol_registry.is_disabled(sym):
                 continue
@@ -2148,67 +2163,6 @@ async def run() -> None:
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 
-    async def on_switch_mode(target_mode: str) -> None:
-        nonlocal virtual_tracker, virtual_order_simulator, scenario
-        current_symbols = symbol_registry.get_symbols()
-        await virtual_order_simulator.close_all_open(current_symbols, feed)
-        await order_executor.close_all_orders_at_market()
-        order_executor.reset_for_mode_switch(target_mode)
-        risk_manager.reset_for_mode_switch(target_mode)
-        settings_new = load_settings(current_symbols[0])
-        feed.reinit(target_mode, settings_new.api_key, settings_new.api_secret)
-        bt_result = await asyncio.to_thread(
-            subprocess.run,
-            [sys.executable, "backtest.py", "--mode", target_mode],
-            capture_output=True,
-            cwd=str(_PROJECT_ROOT),
-        )
-        if bt_result.returncode != 0:
-            notifier.notify(
-                "emergency",
-                f"Backtest failed during mode switch to {target_mode}",
-                bt_result.stderr.decode()[:500],
-                "main",
-            )
-            return
-        if not _virtual_only:
-            await order_executor.fetch_leverage_brackets(current_symbols)
-        for symbol in current_symbols:
-            klines_new = await asyncio.to_thread(feed.refresh_klines, symbol, timeframe, 1500)
-            analyzers[symbol].build_from_klines(klines_new)
-        virtual_tracker = VirtualTracker(
-            mode=target_mode,
-            orders_path=_PROJECT_ROOT / "data" / f"virtual_orders_{target_mode}.json",
-            efficiency_path=_PROJECT_ROOT / "data" / f"preset_efficiency_{target_mode}.json",
-            get_min_trades=_get_min_trades,
-        )
-        for sym in current_symbols:
-            bt_path = _PROJECT_ROOT / "dashboard" / "public" / backtest_results_name(
-                sym, mode_manager.current_mode, _virtual_only)
-            virtual_tracker.seed_from_backtest(sym, bt_path)
-        scenario.reset_for_mode(
-            target_mode,
-            _scenario_data_path(_active_scenario_name, target_mode),
-        )
-        virtual_order_simulator = VirtualOrderSimulator(
-            mode=target_mode,
-            all_presets=all_presets,
-            project_root=_PROJECT_ROOT,
-            get_leverage=_virtual_lev,
-            initial_balance=0.0,
-            virtual_tracker=virtual_tracker,
-            min_notionals=min_notionals,
-            get_allocation=risk_manager.get_allocation_for_balance,
-            get_scenario=lambda: _active_scenario_name,
-            rank_max=len(all_presets),
-            is_rank_disabled=symbol_registry.is_rank_disabled,
-        )
-        switch_balance = await order_executor.fetch_account_balance()
-        if switch_balance > 0:
-            risk_manager.update_balance(switch_balance)
-        virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
-        notifier.notify("info", f"Mode switched to {target_mode}", "", "mode_manager")
-
     async def on_close_order(payload: dict) -> dict:
         """Close one open position on request from the dashboard.
 
@@ -2301,6 +2255,83 @@ async def run() -> None:
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
 
+    async def _primary_mode_watch() -> None:
+        """Switch modes by closing everything and restarting (primary only).
+
+        The dashboard's Trading Mode button writes data/bot_mode.json. On a change:
+        new real orders stop at once; after a second confirmation 30 s later the target
+        is checked (its API keys must exist — otherwise refuse and keep trading); then
+        every virtual and real position is closed at market and the exchange is checked
+        flat; then the process exits and Docker starts it fresh in the new mode, where
+        config, registry, data paths and endpoints all resolve by the normal startup.
+        It never exits holding positions of the old mode.
+        Spec: docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md
+        """
+        refused: str | None = None
+        confirmations = 0
+        while True:
+            await asyncio.sleep(30.0)
+            target = mode_manager.requested_mode_change()
+            if target is None or target == refused:
+                if target is None:
+                    refused = None
+                    if _switch_pending[0] is not None:
+                        logger.info("Mode switch: request withdrawn — resuming real orders")
+                        _switch_pending[0] = None
+                confirmations = 0
+                continue
+            if _switch_pending[0] != target:
+                _switch_pending[0] = target
+                confirmations = 0
+                logger.warning(
+                    f"Mode switch requested: {mode_manager.current_mode} -> {target}. "
+                    f"New real orders stopped; confirming in 30s")
+                notifier.notify(
+                    "warning", f"Mode switch to {target} requested",
+                    "New real orders stopped. Open positions will be closed at market and "
+                    "the bot will restart in the new mode.", "mode_switch")
+            confirmations += 1
+            if confirmations < 2:
+                continue
+            result = await close_out(
+                target,
+                keys_present=api_keys_present,
+                close_virtual=lambda: virtual_order_simulator.close_all_open(
+                    symbol_registry.get_symbols(), feed),
+                close_real=order_executor.close_all_orders_at_market,
+                open_on_exchange=order_executor.exchange_open_symbols,
+                # primary-only task; guard kept explicit
+                close_untracked=(order_executor.reconcile_with_exchange
+                                 if not _virtual_only else asyncio.sleep),
+                sleep=asyncio.sleep,
+            )
+            if result.outcome == 'refused':
+                refused = target
+                _switch_pending[0] = None
+                names = ', '.join(api_key_names(target))
+                logger.error(f"Mode switch to {target} REFUSED: {names} not set — keeps trading "
+                             f"{mode_manager.current_mode}")
+                notifier.notify(
+                    "emergency", f"Mode switch to {target} refused",
+                    f"{names} missing from .env. Nothing was closed; the bot keeps trading "
+                    f"{mode_manager.current_mode}.", "mode_switch")
+                continue
+            _write_open_positions()
+            if result.outcome == 'postponed':
+                left = result.still_open
+                what = 'position check unavailable' if left is None else f"still open: {', '.join(left)}"
+                logger.error(f"Mode switch to {target} postponed — {what}. No new real orders; retrying")
+                notifier.notify(
+                    "emergency", f"Mode switch to {target} postponed",
+                    f"Could not confirm the account is flat ({what}). New real orders stay "
+                    "stopped; retrying every 30s.", "mode_switch")
+                confirmations = 1   # retry on the next cycle without re-confirming
+                continue
+            logger.warning(f"Mode switch to {target}: account flat — restarting into {target}")
+            notifier.notify("info", f"Restarting in {target} mode",
+                            "All positions closed at market.", "mode_switch")
+            sys.exit(0)
+
     # Register SIGTERM handler so `docker stop` / deploy triggers the same graceful
     # shutdown as the dashboard Stop button (closes virtual + real orders before exit).
     asyncio.get_running_loop().add_signal_handler(
@@ -2318,8 +2349,7 @@ async def run() -> None:
     _poll_task = None
     if not _virtual_only:
         _poll_task = asyncio.create_task(
-            mode_manager.poll_loop(on_switch_mode=on_switch_mode, on_stop_bot=on_stop_bot,
-                                   on_close_order=on_close_order)
+            mode_manager.poll_loop(on_stop_bot=on_stop_bot, on_close_order=on_close_order)
         )
     _hb_task = asyncio.create_task(
         _heartbeat_loop(mode_manager, started_at, symbol_registry)
@@ -2398,11 +2428,14 @@ async def run() -> None:
     if not _virtual_only:
         _menu_task = asyncio.create_task(telegram_menu.run())
 
-    # Only the mirror self-exits on a bot-mode change. The primary keeps its mode until
-    # it is restarted deliberately — nothing may restart the bot that holds positions.
+    # Both instances restart on a mode change. The primary closes every position first
+    # (_primary_mode_watch); the mirror follows once the primary runs the new mode.
     _mirror_task = None
+    _switch_task = None
     if _virtual_only:
         _mirror_task = asyncio.create_task(_mirror_watch(mode_manager))
+    else:
+        _switch_task = asyncio.create_task(_primary_mode_watch())
 
     try:
         await feed.stream_combined(

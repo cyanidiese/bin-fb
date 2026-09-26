@@ -10,6 +10,7 @@ from typing import Callable, TYPE_CHECKING
 
 import requests
 
+from bot.instance_paths import backtest_results_path
 from bot.telegram_views import (
     render_main_menu, render_status, render_symbols,
     render_symbol_active, render_symbol_disabled, render_symbol_paused,
@@ -436,7 +437,7 @@ class TelegramMenu:
         return render_virtual_history(symbol, orders[:10])
 
     def _screen_backtest_symbol(self, symbol: str) -> tuple[str, dict]:
-        path = self._root / "dashboard" / "public" / f"backtest_results_{symbol}.json"
+        path = backtest_results_path(self._root / "dashboard" / "public", symbol, self._get_mode())
         top5: list[dict] = []
         if path.exists():
             try:

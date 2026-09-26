@@ -21,6 +21,10 @@ Creates (never overwrites an existing file):
                                  leverage_overrides from symbol_registry.json
   symbol_registry_live.json    ← copy of the test state (the user's rule: missing live
                                  config comes from test)
+  dashboard/public/backtest_results_{SYM}_test.json
+                               ← backtest_results_{SYM}.json, the testnet primary's
+                                 (results are keyed by mode since spec
+                                 2026-09-26-mode-switch-restart-and-per-mode-backtests)
 The legacy files are not modified — they stay as the rollback path.
 Stdlib only; SHARED_KEYS is parsed out of config/risk_config.py so the list has one home.
 """
@@ -110,10 +114,29 @@ def main() -> int:
         plan.append((live_state_path, live_state,
                      f"disabled={sorted(live_state.get('disabled', {}))} (copy of test)"))
 
+    # ── backtest results by mode ────────────────────────────────────────
+    public = ROOT / "dashboard" / "public"
+    copies: list[tuple[Path, Path]] = []
+    if public.is_dir():
+        for legacy_bt in sorted(public.glob("backtest_results_*.json")):
+            stem = legacy_bt.stem[len("backtest_results_"):]
+            if not stem or stem.endswith(("_test", "_live")):
+                continue
+            target = public / f"backtest_results_{stem}_test.json"
+            if not target.exists():
+                copies.append((legacy_bt, target))
+    if copies:
+        print(f"backtest results: {'COPYING' if apply else 'would copy'} {len(copies)} "
+              f"file(s) to *_test.json (e.g. {copies[0][1].name})")
+
     for path, data, summary in plan:
         print(f"{path.name}: {'WRITING' if apply else 'would write'} — {summary}")
         if apply:
             path.write_text(json.dumps(data, indent=2))
+    if apply:
+        for src, dst in copies:
+            dst.write_bytes(src.read_bytes())
+    plan = plan or copies
     if plan and not apply:
         print("dry run — rerun with --apply")
     return 0

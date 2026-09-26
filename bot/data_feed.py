@@ -520,6 +520,16 @@ class DataFeed:
     # Cache helpers                                                        #
     # ------------------------------------------------------------------ #
 
+    def set_cache_suffix(self, suffix: str) -> None:
+        """Point the kline cache at another market's file. backtest.py uses 'live' so the
+        production candles it fetches land in the production cache, never in the testnet
+        bot's own history (spec 2026-09-26-mode-switch-restart-and-per-mode-backtests)."""
+        if suffix not in ('test', 'live'):
+            raise ValueError(f"cache suffix must be 'test' or 'live', got {suffix!r}")
+        if suffix == 'test' and self._klines_source == 'production':
+            raise ValueError("refusing to store production klines in the testnet cache")
+        self._mode_suffix = suffix
+
     def _cache_path(self, symbol: str, timeframe: str) -> Path:
         return Path('data') / f'{symbol}_{timeframe}_{self._mode_suffix}.json'
 

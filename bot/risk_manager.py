@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from bot.instance_paths import backtest_results_name
+from bot.instance_paths import backtest_results_path
 from config.risk_config import config_path as _risk_config_path
 
 if TYPE_CHECKING:
@@ -536,13 +536,8 @@ class RiskManager:
         return score, pf
 
     def _backtest_path(self, symbol: str) -> Path:
-        """This instance's backtest results for `symbol`.
-
-        Reads self._mode rather than a captured value because reset_for_mode_switch()
-        reassigns it, and the path must follow.
-        """
-        return self._results_dir / backtest_results_name(
-            symbol, self._mode, self._mirror)
+        """The backtest results of the market this instance trades (keyed by mode)."""
+        return backtest_results_path(self._results_dir, symbol, self._mode)
 
     def _compute_perf_score(self, symbol: str) -> tuple[float, float, float]:
         """Read backtest_results_{symbol}.json and compute scores.

@@ -167,7 +167,19 @@ class Settings:
     mr_sl_buf: float = 0.5
 
 
-def load_settings(symbol: str | None = None) -> Settings:
+def api_key_names(mode: str) -> tuple[str, str]:
+    """The .env variables holding the API credentials for a trading mode."""
+    return ('TESTNET_API_KEY', 'TESTNET_API_SECRET') if mode == 'test' else ('API_KEY', 'API_SECRET')
+
+
+def api_keys_present(mode: str) -> bool:
+    """True when both credentials for `mode` are set — i.e. the primary could trade it.
+    The mode switch refuses a target it cannot run rather than closing positions and
+    restarting into a crash loop."""
+    return all(os.getenv(name, '') for name in api_key_names(mode))
+
+
+def load_settings(symbol: str | None = None, require_keys: bool = True) -> Settings:
     import logging as _logging
     _raw_mode = os.getenv('TRADING_MODE', 'test').lower()
     trading_mode = 'test' if _raw_mode == 'testnet' else _raw_mode
@@ -180,14 +192,9 @@ def load_settings(symbol: str | None = None) -> Settings:
 
     _virtual_only = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
 
-    if trading_mode == 'test':
-        api_key = os.getenv('TESTNET_API_KEY', '')
-        api_secret = os.getenv('TESTNET_API_SECRET', '')
-        key_names = ('TESTNET_API_KEY', 'TESTNET_API_SECRET')
-    else:
-        api_key = os.getenv('API_KEY', '')
-        api_secret = os.getenv('API_SECRET', '')
-        key_names = ('API_KEY', 'API_SECRET')
+    key_names = api_key_names(trading_mode)
+    api_key = os.getenv(key_names[0], '')
+    api_secret = os.getenv(key_names[1], '')
 
     missing = []
     if _virtual_only:
@@ -206,7 +213,9 @@ def load_settings(symbol: str | None = None) -> Settings:
                 "not be able to trade.", ' and '.join(key_names)
             )
         api_key = api_secret = ''
-    else:
+    elif require_keys:
+        # A backtest (require_keys=False) never touches a private endpoint; demanding
+        # live keys made a live-mode backtest impossible before live keys exist.
         if not api_key:
             missing.append(key_names[0])
         if not api_secret:

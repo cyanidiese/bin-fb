@@ -13,6 +13,10 @@ the whole point of this module:
   mirror,  live mode  ->  risk_state_live.json
   mirror,  test mode  ->  risk_state_test.json
 
+Market data that a trading decision is derived from is NOT named here — it is keyed by
+mode, because after a mode switch the primary must read the new market's copy:
+backtest_results_name() below, and everything under data/ (orders, efficiency, klines).
+
 Keying on the mode instead would look equivalent today and break the moment the primary
 goes live: the mirror would then be the test-mode process and would claim the unsuffixed
 names — including `dashboard/public/risk_state.json`, which it writes with a zero
@@ -46,13 +50,27 @@ def instance_path(base: Path, name: str, mode: str, mirror: bool) -> Path:
     return base / f'{stem}_{mode}.{ext}'
 
 
-def backtest_results_name(symbol: str, mode: str, mirror: bool) -> str:
-    """Filename for a symbol's backtest results.
+def backtest_results_name(symbol: str, mode: str) -> str:
+    """Filename for a symbol's backtest results: keyed by MARKET (mode), not instance.
 
-    Split out from `instance_path` because this one file is read from three different
-    places that each build the directory themselves, and getting it wrong is expensive:
-    `RiskManager._compute_perf_score()` derives leverage and cross-symbol capital
-    allocation from it, so a mirror writing the primary's copy would resize real orders
-    from a backtest of a different market.
+    `RiskManager._compute_perf_score()` derives real-order leverage and cross-symbol
+    capital allocation from this file, and the virtual tracker seeds from it. Keyed by
+    instance it meant "whoever is primary": after a mode switch the primary sized orders
+    from the previous market's backtest, and the mirror's copy could never be refreshed
+    from the dashboard. Spec: docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md
     """
-    return instance_path(Path('.'), f'backtest_results_{symbol}.json', mode, mirror).name
+    return f'backtest_results_{symbol}_{mode}.json'
+
+
+def backtest_results_path(directory: Path, symbol: str, mode: str) -> Path:
+    """Where to READ a symbol's backtest for `mode`. Falls back to the legacy unsuffixed
+    file for test only — it was always the testnet primary's. Never across markets."""
+    if mode not in ('test', 'live'):
+        # Not a market (RiskManager(mode='backtest') in tools/tests): the unsuffixed file.
+        return directory / f'backtest_results_{symbol}.json'
+    p = directory / backtest_results_name(symbol, mode)
+    if not p.exists() and mode == 'test':
+        legacy = directory / f'backtest_results_{symbol}.json'
+        if legacy.exists():
+            return legacy
+    return p

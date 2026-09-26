@@ -17,6 +17,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_MODE_PATH = _PROJECT_ROOT / "data" / "bot_mode.json"
 _DEFAULT_COMMAND_PATH = _PROJECT_ROOT / "data" / "bot_command.json"
 _DEFAULT_RESULT_PATH = _PROJECT_ROOT / "data" / "bot_command_result.json"
+# The mode the primary is actually RUNNING, written by the primary once it is up. The
+# mirror follows this, not bot_mode.json: bot_mode.json is the requested mode and flips
+# the moment someone presses the button, while the primary is still closing positions in
+# the old mode. Following the request put both instances in the same mode, writing the
+# same files. Spec: docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md
+_DEFAULT_PRIMARY_PATH = _PROJECT_ROOT / "data" / "primary_mode.json"
 
 POLL_INTERVAL = 2.0  # seconds
 
@@ -47,6 +53,32 @@ def read_mode_file(path: Path = _DEFAULT_MODE_PATH) -> str:
         return 'test'
 
 
+def _valid_mode_in(path: Path) -> str | None:
+    """'test'/'live' from a mode file, or None if absent, torn or out of vocabulary."""
+    try:
+        m = json.loads(path.read_text()).get('mode')
+    except (json.JSONDecodeError, ValueError, OSError, AttributeError):
+        return None
+    return m if m in ('test', 'live') else None
+
+
+def read_primary_running_mode(primary_path: Path = _DEFAULT_PRIMARY_PATH,
+                              mode_path: Path = _DEFAULT_MODE_PATH) -> str:
+    """The mode the primary is running: primary_mode.json, else bot_mode.json (before
+    the first primary start that writes it), else 'test'."""
+    return _valid_mode_in(primary_path) or read_mode_file(mode_path)
+
+
+def instance_mode(mirror: bool, primary_path: Path = _DEFAULT_PRIMARY_PATH,
+                  mode_path: Path = _DEFAULT_MODE_PATH) -> str:
+    """The mode this process runs. Primary: the requested mode (bot_mode.json) — it
+    reads it at startup, and a later change makes it restart. Mirror: the opposite of
+    what the primary is actually running."""
+    if mirror:
+        return opposite_mode(read_primary_running_mode(primary_path, mode_path))
+    return read_mode_file(mode_path)
+
+
 class ModeManager:
     def __init__(
         self,
@@ -55,8 +87,10 @@ class ModeManager:
         result_path: Path = _DEFAULT_RESULT_PATH,
         notifier: Notifier | None = None,
         mirror: bool = False,
+        primary_path: Path = _DEFAULT_PRIMARY_PATH,
     ) -> None:
         self._mode_path = mode_path
+        self._primary_path = primary_path
         self._command_path = command_path
         self._result_path = result_path
         self._notifier = notifier
@@ -67,7 +101,8 @@ class ModeManager:
         # container restart; see mirror_target_changed().
         self._mirror = mirror
         self.current_mode: str = (
-            opposite_mode(self._read_mode()) if mirror else self._read_mode()
+            opposite_mode(read_primary_running_mode(primary_path, mode_path))
+            if mirror else self._read_mode()
         )
 
     # ------------------------------------------------------------------ #
@@ -102,15 +137,35 @@ class ModeManager:
         swallows errors and returns 'test', which would make a momentarily-missing file
         look like a real flip to test.
         """
-        if not self._mirror or not self._mode_path.exists():
+        if not self._mirror:
             return False
-        try:
-            raw = json.loads(self._mode_path.read_text()).get('mode')
-        except (json.JSONDecodeError, ValueError, OSError):
-            return False
-        if raw not in ('test', 'live'):
+        # The primary's running mode; bot_mode.json only until a primary has written it.
+        raw = _valid_mode_in(self._primary_path)
+        if raw is None:
+            if not self._mode_path.exists():
+                return False
+            raw = _valid_mode_in(self._mode_path)
+        if raw is None:
             return False
         return opposite_mode(raw) != self.current_mode
+
+    def write_primary_mode(self, started_at: str) -> None:
+        """Primary only: record the mode this process is running, for the mirror."""
+        if self._mirror:
+            return
+        self._primary_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._primary_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"mode": self.current_mode, "started_at": started_at}))
+        tmp.replace(self._primary_path)
+
+    def requested_mode_change(self) -> str | None:
+        """Primary only: the mode requested in bot_mode.json when it differs from the
+        running one, else None. Absent, torn or unknown values answer None — acting on
+        them would close real positions for nothing."""
+        if self._mirror:
+            return None
+        raw = _valid_mode_in(self._mode_path)
+        return raw if raw is not None and raw != self.current_mode else None
 
     def _write_mode(self, mode: str) -> None:
         self._mode_path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +203,6 @@ class ModeManager:
 
     async def poll_loop(
         self,
-        on_switch_mode: Callable[[str], Awaitable[None]],
         on_stop_bot: Callable[[], Awaitable[None]],
         on_close_order: Optional[Callable[[dict], Awaitable[dict]]] = None,
     ) -> None:
@@ -163,9 +217,14 @@ class ModeManager:
             async with self._lock:
                 try:
                     if cmd_type == "switch_mode":
-                        target = cmd.get("payload", {}).get("target_mode", "test")
-                        await on_switch_mode(target)
-                        self._write_result(cmd_id, ok=True)
+                        # A switch is requested through bot_mode.json (the dashboard's
+                        # Trading Mode button); the primary then closes everything and
+                        # restarts. There is no in-place switch any more.
+                        self._write_result(
+                            cmd_id, ok=False,
+                            error="switch_mode is not supported — use the Trading Mode "
+                                  "button (writes bot_mode.json; the bot closes positions "
+                                  "and restarts)")
                     elif cmd_type == "stop_bot":
                         await on_stop_bot()
                         self._write_result(cmd_id, ok=True)
@@ -199,22 +258,6 @@ class ModeManager:
     # ------------------------------------------------------------------ #
     # High-level sequences                                                 #
     # ------------------------------------------------------------------ #
-
-    async def switch_mode(
-        self,
-        target_mode: str,
-        close_all: Callable[[], Awaitable[None]],
-        run_backtest: Callable[[str], Awaitable[None]],
-    ) -> None:
-        if target_mode == self.current_mode:
-            logger.info(f"Already in {target_mode} mode — no switch needed")
-            return
-
-        logger.info(f"Switching mode: {self.current_mode} → {target_mode}")
-        await close_all()
-        await run_backtest(target_mode)
-        self._write_mode(target_mode)
-        logger.info(f"Mode switch complete — now in {target_mode}")
 
     async def stop_bot(
         self,

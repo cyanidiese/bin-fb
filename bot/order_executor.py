@@ -1201,6 +1201,25 @@ class OrderExecutor:
             rl_guard.note_exception(_key, exc)
             logger.warning(f"Reconciliation failed: {exc}")
 
+    async def exchange_open_symbols(self) -> list[str] | None:
+        """Symbols with a non-zero position on the exchange, or None when that cannot be
+        known right now (no feed, rate-limit ban, request failed). Used by the mode switch
+        to prove the account is flat before the process exits — the bot's own
+        `_open_orders` is not proof, because close_all_orders_at_market() forgets an
+        order even when its close failed."""
+        if self._feed is None:
+            return None
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        if rl_guard.blocked_for(_key) > 0:
+            return None
+        try:
+            positions = await asyncio.to_thread(self._feed.client.futures_position_information)
+        except Exception as exc:
+            rl_guard.note_exception(_key, exc)
+            logger.warning(f"Position check failed: {exc}")
+            return None
+        return sorted(p['symbol'] for p in positions if float(p.get('positionAmt', 0)) != 0)
+
     async def sync_positions_with_exchange(self) -> None:
         """Detect positions that were closed externally (e.g. exchange SL fired while bot ran).
         Clears stale _open_orders entries so the symbol becomes IDLE again."""

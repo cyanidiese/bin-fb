@@ -16,6 +16,8 @@ from pathlib import Path
 import requests
 
 from config.settings import load_settings
+from bot.instance_paths import backtest_results_path
+from config.risk_config import active_mode
 from config.risk_config import load_risk_config
 from bot.data_feed import DataFeed
 from bot.backtester import Backtester
@@ -101,7 +103,7 @@ class SymbolDiscovery:
         """Return top-N presets ranked by avg total_profit_pct across active symbols."""
         scores: dict[str, list[float]] = {}
         for sym in active:
-            path = _DASHBOARD_PUBLIC / f"backtest_results_{sym}.json"
+            path = backtest_results_path(_DASHBOARD_PUBLIC, sym, active_mode())
             try:
                 data = json.loads(path.read_text())
                 for name, pdata in data.get("presets", {}).items():
@@ -122,7 +124,7 @@ class SymbolDiscovery:
         """Avg efficiency of the best preset across all active symbols with results."""
         efficiencies: list[float] = []
         for sym in active:
-            path = _DASHBOARD_PUBLIC / f"backtest_results_{sym}.json"
+            path = backtest_results_path(_DASHBOARD_PUBLIC, sym, active_mode())
             try:
                 data = json.loads(path.read_text())
                 presets = data.get("presets", {})

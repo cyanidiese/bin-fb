@@ -49,40 +49,11 @@ def test_poll_returns_none_when_no_command(tmp_path):
     assert mm._read_and_clear_command() is None
 
 
-@pytest.mark.asyncio
-async def test_switch_mode_calls_close_orders_then_updates_mode(tmp_path):
+def test_in_place_switch_is_gone(tmp_path):
+    """Mode switches happen by closing everything and restarting (main.py
+    _primary_mode_watch). The half-complete in-place switch must not come back."""
     mm = _make_mm(tmp_path)
-
-    close_called = []
-    backtest_called = []
-
-    async def fake_close():
-        close_called.append(True)
-
-    async def fake_backtest(mode):
-        backtest_called.append(mode)
-
-    await mm.switch_mode("live", close_all=fake_close, run_backtest=fake_backtest)
-
-    assert close_called == [True]
-    assert backtest_called == ["live"]
-    assert mm.current_mode == "live"
-
-
-@pytest.mark.asyncio
-async def test_switch_mode_same_mode_is_noop(tmp_path):
-    mm = _make_mm(tmp_path)
-
-    close_called = []
-
-    async def fake_close():
-        close_called.append(True)
-
-    async def fake_backtest(mode):
-        pass
-
-    await mm.switch_mode("test", close_all=fake_close, run_backtest=fake_backtest)
-    assert close_called == []  # no orders closed, no switch
+    assert not hasattr(mm, 'switch_mode')
 
 
 @pytest.mark.asyncio

@@ -392,7 +392,7 @@ export default function TradesPage() {
     () => new Set(viewedOrders?.openReal ?? []), [viewedOrders])
   const openVirtualSymbols = useMemo(
     () => new Set(viewedOrders?.openVirtual ?? []), [viewedOrders])
-  // disabled lives in symbol_registry.json, so it is the same for both instances.
+  // disabled is per trading mode (symbol_registry_{mode}.json): the viewed instance's own.
   const disabledSymbolSet = useMemo(
     () => new Set(Object.keys(disabledSymbols)), [disabledSymbols])
 
@@ -681,7 +681,7 @@ export default function TradesPage() {
   async function handleEnableSymbol(sym: string) {
     setDisabledSymbols(prev => { const n = { ...prev }; delete n[sym]; return n })
     try {
-      await fetch(`/api/symbols/${sym}/enable`, { method: 'PATCH' })
+      await fetch(`/api/symbols/${sym}/enable?mode=${dataMode}`, { method: 'PATCH' })
     } catch {
       // revert on failure — re-fetch would be needed but this is rare
     }
@@ -690,7 +690,7 @@ export default function TradesPage() {
   async function handleEnableAll() {
     setDisabledSymbols({})
     try {
-      await fetch('/api/symbols/enable-all', { method: 'POST' })
+      await fetch(`/api/symbols/enable-all?mode=${dataMode}`, { method: 'POST' })
     } catch {
       // revert
     }
@@ -703,7 +703,7 @@ export default function TradesPage() {
     // Optimistic update
     setDisabledRanks(prev => willDisable ? [...prev, rank] : prev.filter(r => r !== rank))
     try {
-      await fetch(`/api/symbols/${symbol}/rank-disable`, {
+      await fetch(`/api/symbols/${symbol}/rank-disable?mode=${dataMode}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rank, disabled: willDisable }),
@@ -910,7 +910,7 @@ export default function TradesPage() {
             onClick={() => setDisabledOpen(o => !o)}
           >
             <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wide group-hover:text-yellow-300 transition-colors">
-              Auto-disabled symbols ({Object.keys(disabledSymbols).length})
+              Disabled symbols — {dataMode} ({Object.keys(disabledSymbols).length})
             </span>
             <span className="flex items-center gap-3">
               <button

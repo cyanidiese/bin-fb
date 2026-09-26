@@ -1,11 +1,11 @@
-import { NextResponse } from 'next/server'
-import { readRegistry, writeRegistry } from '../_registry'
+import { NextRequest, NextResponse } from 'next/server'
+import { modeParam, readSymbolState, updateSymbolState } from '../_registry'
 
-/** POST /api/symbols/enable-all — clear all auto-disabled symbols. */
-export async function POST() {
-  const reg = readRegistry()
-  const count = Object.keys(reg.disabled ?? {}).length
-  delete reg.disabled
-  writeRegistry(reg)
-  return NextResponse.json({ ok: true, cleared: count })
+/** POST /api/symbols/enable-all?mode=test|live — clear that mode's disabled symbols
+ *  (default: the bot's mode). */
+export async function POST(req: NextRequest) {
+  const mode = modeParam(req.url)
+  const count = Object.keys(readSymbolState(mode).disabled ?? {}).length
+  updateSymbolState(mode, st => ({ ...st, disabled: {} }))
+  return NextResponse.json({ ok: true, mode, cleared: count })
 }

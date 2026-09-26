@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
-import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from '../_registry'
+import { BOT_ROOT, isAlive, readRoster, writeRoster } from '../_registry'
 import { updateBothModes } from '../../_risk-config'
 
 /** The roster is shared, so a removed symbol leaves both modes' weights. */
@@ -53,7 +53,7 @@ export async function DELETE(
   const { symbol: raw } = await params
   const symbol = raw.toUpperCase()
 
-  const reg = readRegistry()
+  const reg = readRoster()
   if (!reg.symbols.includes(symbol)) {
     return NextResponse.json({ error: `${symbol} is not active` }, { status: 404 })
   }
@@ -67,9 +67,12 @@ export async function DELETE(
     }
   }
 
+  // The roster is shared: the symbol leaves both modes at once. Its per-mode decisions
+  // (disabled, weights, …) stay in symbol_registry_{mode}.json, harmless without a roster
+  // entry, and come back as they were if the symbol is re-added.
   reg.symbols = reg.symbols.filter(s => s !== symbol)
   delete reg.status[symbol]
-  writeRegistry(reg)
+  writeRoster(reg)
   removeFromSymbolWeights(symbol)
 
   deleteSymbolFiles(symbol)

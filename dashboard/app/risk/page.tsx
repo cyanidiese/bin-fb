@@ -17,6 +17,18 @@ import MaxLossSection from '@/components/risk/MaxLossSection'
 
 const POLL_MS = 5000
 
+/** Top-level fields of `next` that differ from `base` (deep, via JSON). locked_presets is
+ *  never sent — it is edited per mode on the Trades page. */
+function changedFields(base: RiskConfig | null, next: RiskConfig): Partial<RiskConfig> {
+  const out: Record<string, unknown> = {}
+  const b = (base ?? {}) as unknown as Record<string, unknown>
+  for (const [k, v] of Object.entries(next as unknown as Record<string, unknown>)) {
+    if (k === 'locked_presets') continue
+    if (JSON.stringify(v) !== JSON.stringify(b[k])) out[k] = v
+  }
+  return out as Partial<RiskConfig>
+}
+
 export default function RiskPage() {
   const { availableSymbols } = useSymbolContext()
   const [config, setConfig] = useState<RiskConfig | null>(null)
@@ -51,6 +63,7 @@ export default function RiskPage() {
     setInstance(i)
     setState(null)    // never show one instance's numbers under the other's label
     setConfig(null)   // nor its settings: the other mode's file loads next
+    setLoaded(null)
     setSaveError(null)
     try { localStorage.setItem('bfb-instance', i) } catch { /* private window */ }
   }
@@ -60,6 +73,10 @@ export default function RiskPage() {
   // even if the switch moved while a save was in flight.
   const [configMode, setConfigMode] = useState<'test' | 'live' | null>(null)
   const [configFile, setConfigFile] = useState<string | null>(null)
+  // The config as loaded — Save All sends only what differs from it, so a save never
+  // reverts a field someone changed elsewhere (Settings, the other mode) since the load.
+  const [loaded, setLoaded] = useState<RiskConfig | null>(null)
+  const [noChanges, setNoChanges] = useState(false)
   useEffect(() => {
     if (!modeReady) return
     let alive = true
@@ -68,6 +85,7 @@ export default function RiskPage() {
       .then(d => {
         if (!alive || !d?.config) return
         setConfig(d.config)
+        setLoaded(d.config)
         setConfigMode(d.mode)
         setConfigFile(d.file ?? null)
       })
@@ -104,15 +122,23 @@ export default function RiskPage() {
     setSaving(true)
     setSaveError(null)
     setSaveOk(false)
+    setNoChanges(false)
     try {
       if (!configMode) return
+      const changed = changedFields(loaded, config)
+      if (Object.keys(changed).length === 0) {
+        setNoChanges(true)
+        setTimeout(() => setNoChanges(false), 3000)
+        return
+      }
       const res = await fetch(`/api/risk?mode=${configMode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(changed),
       })
       const data = await res.json()
       if (!res.ok) { setSaveError(data.error ?? `HTTP ${res.status}`); return }
+      setLoaded(config)
       setSaveOk(true)
       setTimeout(() => setSaveOk(false), 3000)
     } catch (e) {
@@ -143,6 +169,7 @@ export default function RiskPage() {
         <div className="ml-auto flex items-center gap-3">
           {saveError && <span className="text-xs text-red-400 font-mono">{saveError}</span>}
           {saveOk && <span className="text-xs text-emerald-400 font-mono">Saved ✓</span>}
+          {noChanges && <span className="text-xs text-gray-500 font-mono">No changes</span>}
           <button
             onClick={handleSave}
             disabled={saving}
@@ -159,7 +186,8 @@ export default function RiskPage() {
         {configFile && <> — Save All writes <span className="font-mono text-gray-400">{configFile}</span></>}.
         Test and live keep separate settings; a setting live has never saved is read from test.
         {instance === 'shadow' && <> The shadow ({dataMode}, virtual only) holds no real balance.</>}
-        {' '}Locked presets are set on the Trades page; Telegram settings apply to both.
+        {' '}Shared by both modes (<span className="font-mono text-gray-400">risk_config_shared.json</span>):
+        preset ranking, signal filters, Telegram and backtest settings. Locked presets are set on the Trades page.
       </p>
 
       <ScenarioSection config={config} patchConfig={patchConfig} />

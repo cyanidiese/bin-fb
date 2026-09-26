@@ -16,11 +16,22 @@ interface DisabledEntry {
   disabled_at: string
 }
 
+type Mode = 'test' | 'live'
+const MODES: Mode[] = ['test', 'live']
+
+/** GET /api/symbols: the shared roster plus each mode's own decisions
+ *  (spec 2026-09-26-shared-settings-and-per-mode-registry). */
 interface RegistryData {
   symbols: string[]
   updated_at: string
   status: Record<string, SymbolStatus>
   disabled?: Record<string, DisabledEntry>
+  modes?: Partial<Record<Mode, { disabled?: Record<string, DisabledEntry> }>>
+}
+
+function isDisabledIn(registry: RegistryData | null, mode: Mode, sym: string): boolean {
+  const m = registry?.modes?.[mode]
+  return !!(m ? m.disabled?.[sym] : registry?.disabled?.[sym])
 }
 
 interface Props {
@@ -51,7 +62,7 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
-  const [toggling, setToggling] = useState<string | null>(null)
+  const [toggling, setToggling] = useState<string | null>(null)   // `${mode}:${symbol}`
   const [perfScores, setPerfScores] = useState<Record<string, number | null>>({})
   const [sortCol, setSortCol] = useState<SortCol>('profit')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -117,17 +128,17 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
     }
   }
 
-  async function handleToggleDisable(symbol: string) {
-    const isDisabled = !!registry?.disabled?.[symbol]
+  async function handleToggleDisable(symbol: string, mode: Mode) {
+    const isDisabled = isDisabledIn(registry, mode, symbol)
     if (!isDisabled) {
-      if (!window.confirm(`Disable ${symbol}?\n\nThe bot will stop placing new orders for this symbol. Open positions are not affected.`)) return
+      if (!window.confirm(`Disable ${symbol} in ${mode} mode?\n\nThat mode stops placing new real orders for this symbol (virtual data keeps collecting). The other mode is not affected. Open positions are not affected.`)) return
     }
-    setToggling(symbol)
+    setToggling(`${mode}:${symbol}`)
     try {
       if (isDisabled) {
-        await fetch(`/api/symbols/${symbol}/enable`, { method: 'PATCH' })
+        await fetch(`/api/symbols/${symbol}/enable?mode=${mode}`, { method: 'PATCH' })
       } else {
-        await fetch(`/api/symbols/${symbol}/disable`, {
+        await fetch(`/api/symbols/${symbol}/disable?mode=${mode}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason: 'manual' }),
@@ -166,13 +177,13 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
         <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
           <p
             className="text-xs text-gray-500 font-semibold uppercase tracking-wide"
-            title="Symbols currently tracked by the bot. Add or remove symbols below."
+            title="Symbols tracked by the bot — one list for both modes. Add or remove symbols below; enable or disable each mode separately."
           >
             Active Symbols
           </p>
           <span
             className="text-[10px] text-gray-600 font-mono"
-            title="Timestamp of the last change to symbol_registry.json"
+            title="Timestamp of the last change to the symbol list (symbol_registry_shared.json)"
           >
             {registry ? `${registry.symbols.length} symbol${registry.symbols.length !== 1 ? 's' : ''} · updated ${updatedAt}` : 'Loading…'}
           </span>
@@ -203,6 +214,13 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
                 >
                   Profit %{sortCol === 'profit' ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
                 </th>
+                {MODES.map(m => (
+                  <th
+                    key={m}
+                    className="text-center px-2 py-2 font-normal capitalize"
+                    title={`Real orders in ${m} mode (symbol_registry_${m}.json). Each mode is enabled or disabled on its own.`}
+                  >{m}</th>
+                ))}
                 <th className="px-4 py-2" />
               </tr>
             </thead>
@@ -210,13 +228,16 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
               {sortedSymbols.map(sym => {
                 const st = registry.status[sym] ?? { backtest: 'none', pid: null }
                 const score = perfScores[sym]
-                const isDisabled = !!registry.disabled?.[sym]
+                const offIn = MODES.filter(m => isDisabledIn(registry, m, sym))
+                const isDisabled = offIn.length === MODES.length   // dim only when off everywhere
                 return (
                   <tr key={sym} className={`border-b border-gray-900 ${isDisabled ? 'opacity-50' : 'hover:bg-gray-900/40'}`}>
                     <td className="px-4 py-2 font-semibold">
                       <span className={isDisabled ? 'text-gray-500' : 'text-indigo-300'}>{sym}</span>
-                      {isDisabled && (
-                        <span className="ml-1.5 text-[9px] text-red-400 font-semibold uppercase tracking-wide">off</span>
+                      {offIn.length > 0 && (
+                        <span className="ml-1.5 text-[9px] text-red-400 font-semibold uppercase tracking-wide">
+                          {isDisabled ? 'off' : `off in ${offIn.join(', ')}`}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-2">
@@ -228,19 +249,27 @@ export default function SymbolRegistry({ registry, onRefetch }: Props) {
                         : <span className="text-gray-700">—</span>
                       }
                     </td>
+                    {MODES.map(m => {
+                      const off = isDisabledIn(registry, m, sym)
+                      const busy = toggling === `${m}:${sym}`
+                      return (
+                        <td key={m} className="px-2 py-2 text-center">
+                          <button
+                            onClick={() => handleToggleDisable(sym, m)}
+                            disabled={busy}
+                            title={off ? `Re-enable ${sym} in ${m} mode` : `Disable ${sym} in ${m} mode — stops new real orders there`}
+                            className={off
+                              ? 'px-2 py-0.5 rounded border border-emerald-900/60 bg-emerald-950/30 text-emerald-400 text-[10px] font-semibold hover:bg-emerald-900/40 hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+                              : 'px-2 py-0.5 rounded border border-yellow-900/60 bg-yellow-950/30 text-yellow-600 text-[10px] font-semibold hover:bg-yellow-900/40 hover:text-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+                            }
+                          >
+                            {busy ? '…' : off ? 'Enable' : 'Disable'}
+                          </button>
+                        </td>
+                      )
+                    })}
                     <td className="px-4 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleToggleDisable(sym)}
-                          disabled={toggling === sym}
-                          title={isDisabled ? `Re-enable ${sym} for trading` : `Disable ${sym} — bot will stop placing new orders`}
-                          className={isDisabled
-                            ? 'px-2 py-0.5 rounded border border-emerald-900/60 bg-emerald-950/30 text-emerald-400 text-[10px] font-semibold hover:bg-emerald-900/40 hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
-                            : 'px-2 py-0.5 rounded border border-yellow-900/60 bg-yellow-950/30 text-yellow-600 text-[10px] font-semibold hover:bg-yellow-900/40 hover:text-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
-                          }
-                        >
-                          {toggling === sym ? '…' : isDisabled ? 'Enable' : 'Disable'}
-                        </button>
                         <button
                           onClick={() => handleRemove(sym)}
                           disabled={removing === sym}

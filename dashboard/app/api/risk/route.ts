@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import {
-  botMode, isBotWidePatch, modeOr, readRiskConfig, riskConfigPath, updateBothModes,
-  updateRiskConfig, type Config,
+  SHARED_KEYS, botMode, modeOr, readRiskConfig, riskConfigPath, saveRiskPatch, type Config,
 } from '../_risk-config'
 
 const BOT_ROOT = path.resolve(process.cwd(), '..')
@@ -61,24 +60,29 @@ function readJson(filePath: string, fallback: unknown) {
   }
 }
 
-/** GET /api/risk?mode=test|live — { mode, file, config, state } for that trading mode
- *  (default: the bot's). Live falls back to test key by key. */
+/** GET /api/risk?mode=test|live — { mode, file, config, state, shared_keys } for that
+ *  trading mode (default: the bot's). Live falls back to test key by key; shared keys come
+ *  from risk_config_shared.json. */
 export async function GET(req: NextRequest) {
   const mode = modeOr(new URL(req.url).searchParams.get('mode'))
   const config = { ...DEFAULT_CONFIG, ...readRiskConfig(mode) }
   const state = readJson(statePath(mode), null)
-  return NextResponse.json({ mode, file: path.basename(riskConfigPath(mode)), config, state })
+  return NextResponse.json({
+    mode, file: path.basename(riskConfigPath(mode)), config, state, shared_keys: SHARED_KEYS,
+  })
 }
 
 /**
- * POST /api/risk?mode=test|live — save the Risk page's config to risk_config_{mode}.json,
- * or merge a partial update. Spec: docs/specs/2026-09-26-per-mode-risk-config.md
+ * POST /api/risk?mode=test|live — merge an update into the config.
+ * Specs: docs/specs/2026-09-26-per-mode-risk-config.md,
+ *        docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md
  *
- *  - A partial update of bot-wide keys only (telegram, startup_backtest, …) goes to BOTH
- *    mode files: they describe the bot process, not a market.
- *  - Anything else goes to the requested mode's file only (default: the bot's mode).
- *  - Both merge onto a FRESH read of the file. The full save used to write the page's
- *    load-time snapshot, silently reverting changes made elsewhere since.
+ *  - Every POST is a merge onto a FRESH read, so fields not in the body are never lost.
+ *    The Risk page sends only the fields it changed: a full snapshot would revert
+ *    anything edited elsewhere (Settings, /bfb-config, the other mode) since it loaded.
+ *  - Shared keys (SHARED_KEYS: Telegram, signal filters, preset ranking, …) go to
+ *    risk_config_shared.json — one value for both modes.
+ *  - Everything else goes to the requested mode's file (default: the bot's mode).
  *  - `locked_presets` is never taken from the body: per mode, edited via lock-preset only.
  */
 export async function POST(req: NextRequest) {
@@ -88,30 +92,20 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ error: 'Body must be a JSON object' }, { status: 400 })
+  }
   const mode = modeOr(new URL(req.url).searchParams.get('mode') ?? body._mode)
   const { locked_presets: _l, _reset_hard_stop: _r, _mode: _m, ...rest } = body
   void _l; void _r; void _m
 
-  const required = ['balance_tiers', 'base_leverage', 'max_leverage',
-                    'min_profit_factor', 'drawdown_warning_pct',
-                    'drawdown_hard_stop_pct', 'symbol_weights']
-  const isPartialUpdate = required.every(k => !(k in rest))
-  if (!isPartialUpdate) {
-    for (const key of required) {
-      if (!(key in rest)) {
-        return NextResponse.json({ error: `Missing field: ${key}` }, { status: 400 })
-      }
-    }
-  }
-
   try {
-    if (isPartialUpdate && isBotWidePatch(rest)) {
-      updateBothModes(cfg => ({ ...cfg, ...rest }))
-      return NextResponse.json({ ok: true, mode: 'both' })
-    }
-    updateRiskConfig(mode, cfg => ({ ...cfg, ...rest }))
+    const written = saveRiskPatch(mode, rest)
+    return NextResponse.json({
+      ok: true, mode, file: path.basename(riskConfigPath(mode)),
+      shared: written.shared, own: written.own,
+    })
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }
-  return NextResponse.json({ ok: true, mode, file: path.basename(riskConfigPath(mode)) })
 }

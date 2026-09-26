@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
-import { BOT_ROOT, readRegistry, writeRegistry, isAlive } from './_registry'
+import {
+  BOT_ROOT, MODES, isAlive, modeParam, readRoster, readSymbolState, writeRoster,
+} from './_registry'
 import { updateBothModes } from '../_risk-config'
 
 /** The roster is shared by both modes, so a new symbol gets a weight entry in both
@@ -80,21 +82,25 @@ async function writePlaceholderResults(symbol: string): Promise<void> {
   }
 }
 
-/** GET /api/symbols — return registry, reconciling any stale "running" statuses. */
-export async function GET() {
-  const reg = readRegistry()
+/** GET /api/symbols?mode=test|live — the shared roster ⊕ that mode's decisions (default:
+ *  the bot's mode), plus `modes: {test, live}` so a page can show both side by side.
+ *  Reconciles stale "running" backtest statuses. */
+export async function GET(req: NextRequest) {
+  const roster = readRoster()
 
   let dirty = false
-  for (const [sym, st] of Object.entries(reg.status)) {
+  for (const [sym, st] of Object.entries(roster.status)) {
     if (st.backtest === 'running' && !isAlive(st.pid)) {
       // Process died without updating the file (server restart, crash, etc.)
-      reg.status[sym] = { backtest: 'error', pid: null }
+      roster.status[sym] = { backtest: 'error', pid: null }
       dirty = true
     }
   }
-  if (dirty) writeRegistry(reg)
+  if (dirty) writeRoster(roster)
 
-  return NextResponse.json(reg)
+  const mode = modeParam(req.url)
+  const modes = Object.fromEntries(MODES.map(m => [m, readSymbolState(m)]))
+  return NextResponse.json({ ...roster, ...modes[mode], mode, modes })
 }
 
 /** POST /api/symbols — add a symbol and immediately start a backtest for it. */
@@ -121,14 +127,15 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const reg = readRegistry()
+  const reg = readRoster()
   if (reg.symbols.includes(symbol)) {
     return NextResponse.json({ error: `${symbol} is already active` }, { status: 409 })
   }
 
+  // The roster is shared: the symbol is added for both modes at once.
   reg.symbols.push(symbol)
   reg.status[symbol] = { backtest: 'running', pid: null }
-  writeRegistry(reg)
+  writeRoster(reg)
   addToSymbolWeights(symbol)
 
   // Write a placeholder results file immediately so the Strategy page shows the
@@ -146,20 +153,20 @@ export async function POST(req: NextRequest) {
 
   // Store PID immediately so DELETE can kill the process if needed.
   if (child.pid) {
-    const reg2 = readRegistry()
+    const reg2 = readRoster()
     if (reg2.symbols.includes(symbol)) {
       reg2.status[symbol] = { backtest: 'running', pid: child.pid }
-      writeRegistry(reg2)
+      writeRoster(reg2)
     }
   }
 
   // Update status when the process finishes.
   child.on('close', (code: number | null) => {
-    const current = readRegistry()
+    const current = readRoster()
     if (!current.symbols.includes(symbol)) return // was removed while running
     if (current.status[symbol]?.backtest === 'running') {
       current.status[symbol] = { backtest: code === 0 ? 'complete' : 'error', pid: null }
-      writeRegistry(current)
+      writeRoster(current)
     }
   })
 

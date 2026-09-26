@@ -1,28 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { readRegistry, writeRegistry } from '../../_registry'
+import { modeParam, updateSymbolState, readSymbolState } from '../../_registry'
 
-/** PATCH /api/symbols/[symbol]/enable — remove a symbol from the disabled list. */
+/** PATCH /api/symbols/[symbol]/enable?mode=test|live — remove a symbol from that mode's
+ *  disabled list (default: the bot's mode). The other mode is not touched. */
 export async function PATCH(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
   const { symbol: raw } = await params
   const symbol = raw.toUpperCase()
+  const mode = modeParam(req.url)
 
-  const reg = readRegistry()
-  if (!reg.disabled?.[symbol]) {
-    return NextResponse.json({ ok: true, symbol, was_disabled: false })
+  if (!readSymbolState(mode).disabled?.[symbol]) {
+    return NextResponse.json({ ok: true, symbol, mode, was_disabled: false })
   }
 
-  const prevWeight = reg.disabled[symbol].prev_weight ?? 1
-  delete reg.disabled[symbol]
-  if (Object.keys(reg.disabled).length === 0) {
-    delete reg.disabled
-  }
-  if (!reg.weights) reg.weights = {}
-  reg.weights[symbol] = prevWeight
+  updateSymbolState(mode, st => {
+    const disabled = { ...(st.disabled ?? {}) }
+    const prevWeight = disabled[symbol]?.prev_weight ?? 1
+    delete disabled[symbol]
+    return { ...st, disabled, weights: { ...(st.weights ?? {}), [symbol]: prevWeight } }
+  })
 
-  writeRegistry(reg)
-
-  return NextResponse.json({ ok: true, symbol, was_disabled: true })
+  return NextResponse.json({ ok: true, symbol, mode, was_disabled: true })
 }

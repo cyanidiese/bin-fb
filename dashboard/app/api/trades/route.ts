@@ -3,7 +3,7 @@ import { lockedPresetsFor } from '../_locked-presets'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../_utils'
-import { REGISTRY_PATH } from '../symbols/_registry'
+import { readSymbolState } from '../symbols/_registry'
 import { rankPresets, type PresetEfficiency } from './_top-preset'
 import { detectRankMax } from './_rank-files'
 import { readRiskConfig } from '../_risk-config'
@@ -58,11 +58,8 @@ export async function GET(req: NextRequest) {
     rankBalances[String(rank)] = balData.balance ?? 0
   }
 
-  // Read disabled_ranks and disabled symbols from the registry
-  const registry = readJson(REGISTRY_PATH, {}) as {
-    disabled_ranks?: Record<string, number[]>
-    disabled?: Record<string, { reason: string; disabled_at: string }>
-  }
+  // disabled_ranks and disabled symbols of the viewed mode (symbol_registry_{mode}.json)
+  const registry = readSymbolState(mode === 'live' ? 'live' : 'test')
   const disabledRanks: number[] = registry.disabled_ranks?.[symbol] ?? []
   const disabledSymbols: Record<string, { reason: string; disabled_at: string }> = registry.disabled ?? {}
 

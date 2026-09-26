@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../../_utils'
+import { readRoster } from '../../symbols/_registry'
 
 function readJson(p: string, fallback: unknown) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback }
@@ -13,8 +14,7 @@ function currentMode(): string {
 }
 
 function activeSymbols(): string[] {
-  const data = readJson(path.join(BOT_ROOT, 'symbol_registry.json'), { symbols: [] }) as { symbols: string[] }
-  return data.symbols ?? []
+  return readRoster().symbols
 }
 
 export async function POST() {

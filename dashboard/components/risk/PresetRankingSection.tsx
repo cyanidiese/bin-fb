@@ -49,7 +49,13 @@ export default function PresetRankingSection({ config, availableSymbols, patchCo
 
   return (
     <section className={SECTION_CLS}>
-      <p className={SECTION_HEADER_CLS}>Preset Ranking</p>
+      <p className={SECTION_HEADER_CLS}>
+        Preset Ranking
+        <span
+          className="ml-2 align-middle text-[10px] font-normal normal-case tracking-normal text-sky-400/80 border border-sky-900/60 rounded px-1"
+          title="Preset ranking is shared: one value for test and live (risk_config_shared.json), so both instances rank presets the same way."
+        >shared by both modes</span>
+      </p>
       <div className={SECTION_BODY_CLS}>
 
         {/* Global threshold */}

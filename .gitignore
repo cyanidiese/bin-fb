@@ -41,6 +41,10 @@ data/
 risk_config.json
 risk_config_test.json
 risk_config_live.json
+risk_config_shared.json
+symbol_registry_shared.json
+symbol_registry_test.json
+symbol_registry_live.json
 
 # Runtime state files (generated at runtime, not committed)
 data/bot_pid.json

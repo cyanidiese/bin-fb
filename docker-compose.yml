@@ -13,6 +13,13 @@ services:
       # host first (scripts/split_risk_config.py), or Docker creates directories.
       - ./risk_config_test.json:/app/risk_config_test.json
       - ./risk_config_live.json:/app/risk_config_live.json
+      # Shared settings + per-mode symbol registry
+      # (docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md). Must exist on the
+      # host first (scripts/split_shared_and_registry.py), or Docker creates directories.
+      - ./risk_config_shared.json:/app/risk_config_shared.json
+      - ./symbol_registry_shared.json:/app/symbol_registry_shared.json
+      - ./symbol_registry_test.json:/app/symbol_registry_test.json
+      - ./symbol_registry_live.json:/app/symbol_registry_live.json
       - ./symbol_registry.json:/app/symbol_registry.json
     command: >
       sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot.log 2>&1'
@@ -61,6 +68,10 @@ services:
       - ./risk_config.json:/app/risk_config.json:ro
       - ./risk_config_test.json:/app/risk_config_test.json:ro
       - ./risk_config_live.json:/app/risk_config_live.json:ro
+      - ./risk_config_shared.json:/app/risk_config_shared.json:ro
+      - ./symbol_registry_shared.json:/app/symbol_registry_shared.json:ro
+      - ./symbol_registry_test.json:/app/symbol_registry_test.json:ro
+      - ./symbol_registry_live.json:/app/symbol_registry_live.json:ro
       - ./symbol_registry.json:/app/symbol_registry.json:ro
     # Python's own handler writes logs/bot_{mode}.log; this redirect only catches
     # crashes that happen before logging initialises. Both need rotation.
@@ -85,6 +96,13 @@ services:
       # host first (scripts/split_risk_config.py), or Docker creates directories.
       - ./risk_config_test.json:/app/risk_config_test.json
       - ./risk_config_live.json:/app/risk_config_live.json
+      # Shared settings + per-mode symbol registry
+      # (docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md). Must exist on the
+      # host first (scripts/split_shared_and_registry.py), or Docker creates directories.
+      - ./risk_config_shared.json:/app/risk_config_shared.json
+      - ./symbol_registry_shared.json:/app/symbol_registry_shared.json
+      - ./symbol_registry_test.json:/app/symbol_registry_test.json
+      - ./symbol_registry_live.json:/app/symbol_registry_live.json
       - ./symbol_registry.json:/app/symbol_registry.json
     command: >
       sh -c 'cd /app/dashboard && node_modules/.bin/next start -p 3000'

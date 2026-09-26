@@ -252,6 +252,9 @@ async def run() -> None:
         # Shared config is input only for the mirror. Task 2 skips the callers that
         # mutate it; this closes the one write reachable from __init__.
         read_only=_virtual_only,
+        # Roster shared (symbol_registry_shared.json); disabled/paused/weights/leverage
+        # per trading mode (symbol_registry_{mode}.json) — the same mode as the risk config.
+        mode=_cfg_mode,
     )
     symbols = symbol_registry.get_symbols()
     if not symbols:

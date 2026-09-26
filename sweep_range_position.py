@@ -29,15 +29,19 @@ from config.settings import Settings
 SWEEP_VALUES = [1.0, 0.8, 0.65, 0.5, 0.3, 0.1]
 OUTPUT_CSV = Path('sweep_range_position_results.csv')
 
-REGISTRY_PATH = Path('symbol_registry.json')
+REGISTRY_PATH = Path('symbol_registry.json')          # legacy single file
+ROSTER_PATH = Path('symbol_registry_shared.json')      # roster, shared by both modes
+TEST_STATE_PATH = Path('symbol_registry_test.json')    # testnet disabled/paused/weights
 
 
 def get_active_symbols() -> list[str]:
-    if REGISTRY_PATH.exists():
-        data = json.loads(REGISTRY_PATH.read_text())
-        disabled = set(data.get('disabled', {}).keys())
-        return [s for s in data.get('symbols', []) if s not in disabled]
-    raise RuntimeError('symbol_registry.json not found')
+    roster = ROSTER_PATH if ROSTER_PATH.exists() else REGISTRY_PATH
+    state = TEST_STATE_PATH if TEST_STATE_PATH.exists() else REGISTRY_PATH
+    if roster.exists():
+        symbols = json.loads(roster.read_text()).get('symbols', [])
+        disabled = set(json.loads(state.read_text()).get('disabled', {}).keys()) if state.exists() else set()
+        return [s for s in symbols if s not in disabled]
+    raise RuntimeError('symbol_registry_shared.json / symbol_registry.json not found')
 
 
 def find_klines(symbol: str, timeframe: str = '15m') -> list | None:

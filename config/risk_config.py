@@ -126,11 +126,31 @@ _CONFIG_PATH = _ROOT / "risk_config.json"
 
 MODES = ("test", "live")
 
-# Keys about the bot process rather than a trading mode. Stored in both mode files so each
-# is complete on its own; the dashboard writes them to both.
-BOT_WIDE_KEYS = (
+# Keys that are the same for both modes, kept in risk_config_shared.json.
+# The rule: shared = anything that shapes signals, preset ranking or virtual/backtest
+# accounting, plus process settings — two instances with different values would be
+# measuring different strategies. Per mode = everything that decides real orders and money.
+# Spec: docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md
+# Must match SHARED_KEYS in dashboard/app/api/_risk-config.ts.
+SHARED_KEYS = (
+    # process
     "telegram", "telegram_notify_interval_s", "emergency_repeat_interval_s",
-    "warning_repeat_interval_s", "startup_backtest", "backtest_klines",
+    "warning_repeat_interval_s", "analysis_log_enabled", "analysis_log_max_mb",
+    "analysis_log_backups",
+    # backtest method
+    "startup_backtest", "backtest_klines", "backtest_initial_balance_usdt",
+    "backtest_seed_leverage_factor", "backtest_entry_slippage_pct",
+    # virtual accounting
+    "virtual_max_age_candles", "slippage_model_enabled", "slippage_default_pct",
+    "slippage_min_samples", "slippage_per_symbol",
+    # signal filters
+    "global_min_rr", "global_max_rr", "global_min_sl_pct", "entry_zone_max_pct",
+    "global_trend_regime_filter", "global_trend_regime_lookback",
+    "global_blocked_signal_types", "global_max_level", "global_correction_weight",
+    "global_enforce_parent_alignment", "per_symbol_settings",
+    # preset ranking
+    "preset_blocklist", "ranking_window_size", "min_trades_for_ranking",
+    "min_trades_for_ranking_per_symbol", "preset_hysteresis_pct", "preset_cooldown_trades",
 )
 
 # The trading mode this process runs. main.py sets it first thing; backtest.py from
@@ -159,6 +179,17 @@ def config_path(mode: str | None = None) -> Path:
     return _ROOT / f"risk_config_{mode or active_mode()}.json"
 
 
+def shared_config_path() -> Path:
+    """risk_config_shared.json — the SHARED_KEYS, one value for both modes."""
+    return _ROOT / "risk_config_shared.json"
+
+
+def _shared_overlay() -> dict:
+    """The shared file's SHARED_KEYS. Missing file → {} so the mode files' copies apply."""
+    shared = _read(shared_config_path())
+    return {k: shared[k] for k in SHARED_KEYS if k in shared}
+
+
 def _read(path: Path) -> dict:
     try:
         data = json.loads(path.read_text())
@@ -174,6 +205,8 @@ def load_risk_config(path: Path | None = None, mode: str | None = None) -> dict:
     later — reads test's value, which is the user's rule that missing live config comes
     from test. locked_presets is nested per mode ({"test": {...}} in the test file), so
     that fallback can never hand testnet's locks to live.
+
+    SHARED_KEYS come from risk_config_shared.json and win over any copy in a mode file.
 
     Never creates a file: the mirror mounts its config read-only. With an explicit `path`
     the old single-file behaviour applies (tests, tools), including creating defaults.
@@ -198,7 +231,8 @@ def load_risk_config(path: Path | None = None, mode: str | None = None) -> dict:
     with _LOCK:
         base = _read(config_path("test")) if m == "live" else {}
         own = _read(config_path(m))
-    return {**DEFAULT_CONFIG, **base, **own}
+        shared = _shared_overlay()
+    return {**DEFAULT_CONFIG, **base, **own, **shared}
 
 
 def save_risk_config(config: dict, path: Path | None = None, mode: str | None = None) -> None:

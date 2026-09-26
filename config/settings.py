@@ -6,8 +6,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Registry file lives in the project root (one level up from config/).
-_REGISTRY_PATH = Path(__file__).resolve().parent.parent / 'symbol_registry.json'
+# The roster lives in the project root (one level up from config/): the shared file,
+# else the legacy single registry. Spec 2026-09-26-shared-settings-and-per-mode-registry.
+_ROOT = Path(__file__).resolve().parent.parent
+_ROSTER_PATHS = (_ROOT / 'symbol_registry_shared.json', _ROOT / 'symbol_registry.json')
 
 load_dotenv()
 
@@ -297,14 +299,16 @@ def load_settings(symbol: str | None = None) -> Settings:
 
 def load_symbols() -> list[str]:
     # Registry file is the authority when it exists and is readable.
-    if _REGISTRY_PATH.exists():
+    for path in _ROSTER_PATHS:
+        if not path.exists():
+            continue
         try:
-            data = json.loads(_REGISTRY_PATH.read_text())
+            data = json.loads(path.read_text())
             symbols = [s.strip().upper() for s in data.get('symbols', []) if s.strip()]
             if symbols:
                 return symbols
         except Exception:
-            pass  # fall through to .env
+            pass  # try the next file, then .env
 
     # Fall back to .env
     raw = os.getenv('SYMBOLS', '').strip()

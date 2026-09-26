@@ -1,9 +1,18 @@
 """
 Single source of truth for active symbols.
 
-Seed behaviour: if symbol_registry.json does not exist, it is created from
-the symbols list passed as `seed_symbols` (typically loaded from .env).
-After that, the file is the authority — the .env list is ignored.
+Two layouts:
+- **Per mode** (`mode=` given, what main.py uses). The roster is shared by both modes and
+  lives in symbol_registry_shared.json (`symbols`, `status`). What is decided about a
+  symbol — disabled, paused, disabled_ranks, weights, leverage_overrides — is per trading
+  mode, in symbol_registry_{mode}.json. Spec:
+  docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md
+- **Single file** (`registry_path=`): everything in one file — the legacy
+  symbol_registry.json layout, kept for tools and tests.
+
+Seed behaviour: a missing roster comes from the legacy symbol_registry.json, else from
+`seed_symbols` (typically .env). A missing mode state comes from the test state file (live
+only), else from the legacy file's fields. After that, the files are the authority.
 """
 import json
 import logging
@@ -17,6 +26,32 @@ from config.safe_write import write_json
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PATH = Path('symbol_registry.json')
+_ROOT = Path(__file__).resolve().parent.parent
+MODES = ('test', 'live')
+STATE_KEYS = ('weights', 'disabled', 'disabled_ranks', 'paused', 'leverage_overrides')
+
+
+def roster_path(root: Path = _ROOT) -> Path:
+    return root / 'symbol_registry_shared.json'
+
+
+def state_path(mode: str, root: Path = _ROOT) -> Path:
+    return root / f'symbol_registry_{mode}.json'
+
+
+def legacy_path(root: Path = _ROOT) -> Path:
+    return root / 'symbol_registry.json'
+
+
+def _read_json(path: Path) -> dict | None:
+    """Parsed dict, None if missing; raises on an unreadable file so callers can refuse
+    to overwrite what they could not parse."""
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f'{path.name} is not a JSON object')
+    return data
 
 Event = Literal['added', 'removed']
 
@@ -25,10 +60,24 @@ class SymbolRegistry:
     def __init__(
         self,
         seed_symbols: list[str],
-        registry_path: Path = _DEFAULT_PATH,
+        registry_path: Path | None = None,
         read_only: bool = False,
+        mode: str | None = None,
+        root: Path = _ROOT,
     ) -> None:
-        self._path = registry_path
+        if mode is not None and registry_path is not None:
+            raise ValueError('pass either mode (per-mode layout) or registry_path, not both')
+        if mode is not None and mode not in MODES:
+            raise ValueError(f'mode must be one of {MODES}, got {mode!r}')
+        self._mode = mode
+        self._root = root
+        if mode is None:
+            # single-file layout: roster and state in one file
+            self._path = registry_path if registry_path is not None else _DEFAULT_PATH
+            self._roster_path = self._path
+        else:
+            self._path = state_path(mode, root)
+            self._roster_path = roster_path(root)
         # The mirror instance mounts symbol_registry.json :ro — it shares the trading
         # bot's rules and must never mutate them. Defaults to False so the trading
         # bot is unaffected.
@@ -54,7 +103,7 @@ class SymbolRegistry:
                 return False, f'{symbol} is already active'
             self._symbols.append(symbol)
             self._status[symbol] = {'backtest': 'none', 'pid': None}
-            self._persist()
+            self._persist(roster=True)
         self._fire('added', symbol)
         return True, ''
 
@@ -65,7 +114,7 @@ class SymbolRegistry:
                 return False, f'{symbol} is not active'
             self._symbols.remove(symbol)
             self._status.pop(symbol, None)
-            self._persist()
+            self._persist(roster=True)
         self._fire('removed', symbol)
         return True, ''
 
@@ -188,10 +237,13 @@ class SymbolRegistry:
         symbols were added for virtual-only observation, the registry held 22, and the
         running bot stayed subscribed to 16 and processed nothing for the new six.
         """
-        if not self._path.exists():
-            return [], []
         try:
-            data = json.loads(self._path.read_text())
+            data = self._read_state_for_reload()
+            if data is None:
+                return [], []
+            if self._roster_path != self._path:
+                roster = _read_json(self._roster_path)
+                data = {**data, 'symbols': (roster or {}).get('symbols')}
         except Exception as exc:
             logger.warning(f"SymbolRegistry.reload_from_disk: cannot read file ({exc}) — keeping current state")
             return [], []
@@ -224,7 +276,29 @@ class SymbolRegistry:
 
     # ── internal ────────────────────────────────────────────────────────
 
+    def _read_state_for_reload(self) -> dict | None:
+        """The state this instance should run from right now. Per mode, a missing own file
+        falls back like _load does (live → test → legacy), so a live mirror started before
+        its file existed still follows the decisions it was seeded from."""
+        if self._mode is None:
+            return _read_json(self._path)
+        for p in self._state_sources():
+            d = _read_json(p)
+            if d is not None:
+                return d
+        return None
+
+    def _state_sources(self) -> list[Path]:
+        chain = [state_path(self._mode, self._root)]
+        if self._mode == 'live':
+            chain.append(state_path('test', self._root))
+        chain.append(legacy_path(self._root))
+        return chain
+
     def _load(self, seed: list[str]) -> None:
+        if self._mode is not None:
+            self._load_per_mode(seed)
+            return
         existed = self._path.exists()
         if existed:
             try:
@@ -265,20 +339,89 @@ class SymbolRegistry:
         self._persist()
         logger.info(f"SymbolRegistry: seeded {len(self._symbols)} symbol(s) from config")
 
-    def _persist(self) -> None:
-        data = {
-            'symbols': self._symbols,
-            'updated_at': datetime.now(timezone.utc).isoformat(),
-            'status': self._status,
+    def _load_per_mode(self, seed: list[str]) -> None:
+        """Roster from the shared file, state from this mode's file (with fallbacks).
+        A file that exists but cannot be parsed is never overwritten: the instance runs
+        from the fallback in memory and a later restart can recover it."""
+        # roster
+        roster = None
+        roster_unreadable = False
+        for p in (self._roster_path, legacy_path(self._root)):
+            try:
+                roster = _read_json(p)
+            except Exception as exc:
+                logger.error(f"SymbolRegistry: cannot read {p} ({exc})")
+                roster_unreadable = roster_unreadable or p == self._roster_path
+                continue
+            if roster is not None:
+                if p != self._roster_path:
+                    logger.info(f"SymbolRegistry: roster seeded from {p.name}")
+                break
+        if roster and roster.get('symbols'):
+            self._symbols = [str(s).upper() for s in roster['symbols']]
+            self._status = roster.get('status', {})
+        else:
+            self._symbols = [s.upper() for s in seed]
+            self._status = {s: {'backtest': 'none', 'pid': None} for s in self._symbols}
+        # state
+        state = None
+        own_unreadable = False
+        for p in self._state_sources():
+            try:
+                state = _read_json(p)
+            except Exception as exc:
+                logger.error(f"SymbolRegistry: cannot read {p} ({exc})")
+                own_unreadable = own_unreadable or p == self._path
+                continue
+            if state is not None:
+                if p != self._path:
+                    logger.info(f"SymbolRegistry: {self._mode} state seeded from {p.name}")
+                break
+        state = state or {}
+        self._weights = state.get('weights') or (
+            {s: 1.0 / len(self._symbols) for s in self._symbols} if self._symbols else {})
+        self._disabled = state.get('disabled', {})
+        self._disabled_ranks = state.get('disabled_ranks', {})
+        self._paused = state.get('paused', {})
+        self._leverage_overrides = {k: int(v) for k, v in state.get('leverage_overrides', {}).items()}
+        logger.info(
+            f"SymbolRegistry: {len(self._symbols)} symbol(s) from {self._roster_path.name}, "
+            f"{self._mode} state from {self._path.name}, {len(self._disabled)} disabled")
+        # Create what is missing, never what is unreadable.
+        if not own_unreadable and not self._path.exists():
+            self._persist()
+        if not roster_unreadable and not self._roster_path.exists():
+            self._persist(roster=True, state=False)
+
+    def _persist(self, roster: bool = False, state: bool = True) -> None:
+        """Write the state. `roster=True` also writes the roster — only add/remove do (and
+        first-start seeding, with state=False). Decisions (disable, pause, weights) never
+        rewrite the roster file, which the dashboard owns (it updates `status` while
+        backtests run)."""
+        now = datetime.now(timezone.utc).isoformat()
+        fields = {
+            'updated_at': now,
             'weights': self._weights,
             'disabled': self._disabled,
             'disabled_ranks': self._disabled_ranks,
             'paused': self._paused,
             'leverage_overrides': self._leverage_overrides,
         }
+        if self._mode is None:
+            data = {'symbols': self._symbols, 'updated_at': now, 'status': self._status, **fields}
+        else:
+            data = {'mode': self._mode, **fields}
         if self._read_only:
             logger.debug(
                 f"SymbolRegistry: read-only instance — not writing {self._path}")
+            return
+        if roster and self._roster_path != self._path:
+            try:
+                write_json(self._roster_path, {
+                    'symbols': self._symbols, 'updated_at': now, 'status': self._status})
+            except Exception as exc:
+                logger.error(f"SymbolRegistry: failed to write {self._roster_path}: {exc}")
+        if not state:
             return
         # write_json prefers tmp+rename and falls back to an in-place write on a
         # bind-mounted file, where rename returns EBUSY. Two processes read this file

@@ -90,7 +90,8 @@ def main() -> None:
     # Load active symbols from registry.
     try:
         import json as _j
-        reg = _j.loads(Path("symbol_registry.json").read_text())
+        _roster = Path("symbol_registry_shared.json")
+        reg = _j.loads((_roster if _roster.exists() else Path("symbol_registry.json")).read_text())
         active = reg.get("symbols", [])
     except Exception:
         active = load_symbols()

@@ -38,14 +38,22 @@ export async function GET(req: NextRequest) {
   const all = registeredSymbols()
   const dir = path.join(BOT_ROOT, 'data')
 
-  // Symbols with any closed orders on disk. size > 2 skips an empty "[]".
-  const withOrders = new Set(all.filter(sym => {
-    const realPath = path.join(dir, `real_orders_${sym}_${mode}.json`)
-    const virtPath = path.join(dir, `virtual_orders_${sym}_${mode}.json`)
-    const hasReal = fs.existsSync(realPath) && fs.statSync(realPath).size > 2
-    const hasVirt = fs.existsSync(virtPath) && fs.statSync(virtPath).size > 2
-    return hasReal || hasVirt
-  }))
+  // Symbols with any orders on disk: real, or virtual in any rank. size > 2 skips "[]".
+  //
+  // Virtual history lives in virtual_orders_rank{N}_{SYM}_{mode}.json. This used to check
+  // virtual_orders_{SYM}_{mode}.json, a name no longer written, so a symbol with only
+  // virtual history vanished from the picker — APTUSDT in test, hand-disabled since
+  // June, had 12,936 virtual orders and was invisible. One readdir covers every rank.
+  const withFiles = new Set<string>()
+  const nonEmpty = (f: string) => { try { return fs.statSync(path.join(dir, f)).size > 2 } catch { return false } }
+  const re = new RegExp(`^(?:real_orders|virtual_orders_rank\\d+)_([A-Z0-9]+)_${mode}\\.json$`)
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const m = f.match(re)
+      if (m && !withFiles.has(m[1]) && nonEmpty(f)) withFiles.add(m[1])
+    }
+  } catch { /* data dir unreadable — only open positions below */ }
+  const withOrders = new Set(all.filter(sym => withFiles.has(sym)))
 
   // Positions open right now, from the snapshot the bot writes after each candle.
   const openReal = new Set<string>()

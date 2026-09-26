@@ -11,13 +11,17 @@ interface PnlOrder {
   pnl_usdt: number | null
 }
 
+/** One order's return on its own margin, in percent — negative for a loss. 0 when the
+ *  margin cannot be derived (missing leverage or quantity). */
+export function orderMarginPct(o: PnlOrder): number {
+  const margin = o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0
+  return margin > 0 ? ((o.pnl_usdt ?? 0) / margin) * 100 : 0
+}
+
 /** Sum of each order's return on its own margin, in percent. Orders are summed rather
  *  than averaged so a preset that trades more earns more — matching how the pool grows. */
 export function sumMarginPct(orders: PnlOrder[]): number {
-  return orders.reduce((s, o) => {
-    const margin = o.leverage > 0 ? (o.entry_price * o.quantity) / o.leverage : 0
-    return s + (margin > 0 ? ((o.pnl_usdt ?? 0) / margin) * 100 : 0)
-  }, 0)
+  return orders.reduce((s, o) => s + orderMarginPct(o), 0)
 }
 
 /** Profit% for a preset, given its real orders and its CLOSED virtual orders.

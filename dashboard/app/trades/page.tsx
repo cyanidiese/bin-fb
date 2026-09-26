@@ -15,7 +15,7 @@ import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
   filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
 } from '@/lib/tradesDateRange'
-import { presetProfitPct, type SymbolScore } from '@/lib/presetProfit'
+import { orderMarginPct, presetProfitPct, type SymbolScore } from '@/lib/presetProfit'
 import { isBgf, symbolAllocations } from '@/lib/allocation'
 import type { RiskConfig, RiskState } from '@/lib/risk-types'
 
@@ -409,12 +409,12 @@ export default function TradesPage() {
     scoresLabel: RANGE_PRESETS.find(p => p.key === sortRangeKey)?.label,
   }
 
-  /** Re-read the picker's sort keys. `ensure` computes the symbol if it has no entry
-   *  for this shortcut yet; stale entries are recomputed server-side either way. */
+  /** Re-read the picker's sort keys from the preset Profit% store. `ensure` computes the
+   *  symbol if the store lacks it; stale symbols are refreshed server-side either way.
+   *  "Today" is the store's (PROFIT_TZ, the user's timezone), not the browser's. */
   function loadSortScores(ensure: string | null) {
     const req = ++scoresReq.current
-    const from = sortRangeKey === 'all' ? null : toEpochSeconds(presetRange(sortRangeKey, null).from)
-    const q = new URLSearchParams({ mode: dataMode, range: sortRangeKey, from: from === null ? '' : String(from) })
+    const q = new URLSearchParams({ mode: dataMode, range: sortRangeKey })
     if (ensure) q.set('ensure', ensure)
     return fetch(`/api/trades/symbol-scores?${q}`)
       .then(r => r.ok ? r.json() : null)
@@ -741,8 +741,7 @@ export default function TradesPage() {
       // widget update now rather than at the next 30 s refresh.
       if (symbol) void loadTrades(symbol, dataMode)
       refreshOpenPositions()
-      // A closed top-preset order changes this symbol's sort key. The bot closes on its
-      // next poll, so this may be early — the file fingerprint catches it next refresh.
+      // A close changes this symbol's numbers; the store notices it by file mtime.
       void loadSortScores(symbol || null)
     }
   }
@@ -1223,6 +1222,7 @@ export default function TradesPage() {
                   <th className="py-2 pr-3 text-right">Entry</th>
                   <th className="py-2 pr-3 text-right">Close</th>
                   <th className="py-2 pr-3 text-right">PnL USDT</th>
+                  <th className="py-2 pr-3 text-right" title="PnL as a percentage of the order's own margin — the per-order figure the Profit% column above sums. Negative for a loss.">Profit%</th>
                   <th className="py-2 pr-3">Result</th>
                   <th className="py-2 pr-3 text-right" title="How long the order was open. Counts up while it is still running.">Duration</th>
                   <th className="py-2 text-right">Time</th>
@@ -1290,6 +1290,7 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-right text-gray-400 font-mono text-xs">{fmtQty(order.quantity)}</td>
                     <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">{fmtPrice(order.entry_price)}</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
@@ -1361,6 +1362,7 @@ export default function TradesPage() {
                     <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">{fmtPrice(order.entry_price)}</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600 font-mono text-xs">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-gray-600">—</td>
                     <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">
                       {fmtDuration(durationSeconds(order.open_time))}
@@ -1384,6 +1386,9 @@ export default function TradesPage() {
                   const leverage = order.leverage ?? null
                   const scenario = realOrder?.scenario ?? rankOrder?.scenario ?? null
                   const rankLabel = rankOrder?.rank != null ? `Rank #${rankOrder.rank}` : 'Virtual'
+                  const profitPct = pnl != null && quantity != null && leverage != null
+                    ? orderMarginPct({ entry_price: entryPrice, quantity, leverage, pnl_usdt: pnl })
+                    : null
                   return (
                     <tr key={i} className="border-b border-gray-800">
                       <td className="py-1.5 pr-3 font-mono text-xs text-white">{order.preset_name}</td>
@@ -1409,6 +1414,9 @@ export default function TradesPage() {
                       </td>
                       <td className={`py-1.5 pr-3 text-right font-medium ${pnl != null ? pnlClass(pnl) : 'text-gray-600'}`}>
                         {pnl != null ? pnlFmt(pnl) : '—'}
+                      </td>
+                      <td className={`py-1.5 pr-3 text-right font-mono text-xs ${profitPct != null ? pnlClass(profitPct) : 'text-gray-600'}`}>
+                        {profitPct != null ? `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(2)}%` : '—'}
                       </td>
                       <td className={`py-1.5 pr-3 capitalize ${resultColor(String(result))}`}>{result || '—'}</td>
                       <td className="py-1.5 pr-3 text-right text-gray-300 font-mono text-xs">

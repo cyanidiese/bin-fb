@@ -13,12 +13,12 @@
   - Telegram token redaction: `RedactingFormatter` on bot.log and trades.log (main.py setup_logging) strips bot<id>:<token>. Token written ~30k times in exception URLs.
   - 409 Conflict logged once per 10 min (started ~2026-09-06); mirror does not poll; no local poller on dev Mac — unknown external process.
 
-**Status**: Dashboard deploy APPROVED by user (1dafddf). Bot deploy (3b70f27) AWAITS USER APPROVAL + graceful stop + deploy.
+**Status**: ALL DEPLOYED 2026-09-26 (server at 1302906). Dashboard: picker top = table top row by Profit% DESC (locked else best Profit% in window, FORMULA_VERSION 3, any close of the symbol invalidates) + "Last 2 weeks" (14d) shortcut; recalc script covers 6 shortcuts × 2 modes. Bot 3b70f27 deployed 11:22 UTC with graceful stop. Note: on SIGTERM the container's restart policy briefly restarted `bot` on the old image before `docker stop` — harmless with no real positions, but check open positions first every time.
 
 **Deployment checklist for next session**:
 - [ ] Deploy 1dafddf (dashboard): approved, ready to build
 - [ ] Post-deploy: run `scripts/recalc_symbol_scores.sh` on server to recompute all scores with formula v2
-- [ ] Deploy 3b70f27 (bot): awaiting approval + graceful stop + rebuild
+- [x] Deploy 3b70f27 (bot): done 2026-09-26 11:22 UTC
 - [ ] Rotate Telegram token (old token leaked in logs)
 - [ ] Scrub old bot.log files on server (contain unredacted token)
 

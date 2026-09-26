@@ -32,7 +32,7 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Deploy dashboard (1dafddf)** — user approved. Ready to build on live.
 
-- [ ] **Deploy bot (3b70f27)** — awaiting user approval + graceful stop + rebuild.
+- [x] **Deploy bot (3b70f27)** — deployed 2026-09-26 11:22 UTC (server at 1302906, graceful stop, 22-symbol stream, first real order SOLUSDT 11:30 with exchange SL). Dashboard also deployed: picker = table top row by Profit% (v3) + Last 2 weeks shortcut; recalc script run (264 entries).
 
 - [ ] **Run recalc_symbol_scores.sh on server** after dashboard deploy (formula v2).
 

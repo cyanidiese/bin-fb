@@ -19,10 +19,17 @@ function deleteSymbolFiles(symbol: string): void {
   const publicDir = path.join(BOT_ROOT, 'dashboard', 'public')
   const dataDir = path.join(BOT_ROOT, 'data')
 
+  // Both markets: backtest results are keyed by mode, the mirror has its own chart file
+  // and kline cache.
   const candidates = [
     path.join(publicDir, `backtest_results_${symbol}.json`),
+    path.join(publicDir, `backtest_results_${symbol}_test.json`),
+    path.join(publicDir, `backtest_results_${symbol}_live.json`),
     path.join(publicDir, `results_${symbol}.json`),
+    path.join(publicDir, `results_${symbol}_test.json`),
+    path.join(publicDir, `results_${symbol}_live.json`),
     path.join(dataDir, `${symbol}_15m_test.json`),
+    path.join(dataDir, `${symbol}_15m_live.json`),
     path.join(dataDir, `${symbol}_15m.json`),
   ]
 

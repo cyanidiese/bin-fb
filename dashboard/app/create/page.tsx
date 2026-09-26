@@ -125,7 +125,7 @@ export default function CreatePresetPage() {
 
   // Reload preset list whenever the selected symbol changes
   useEffect(() => {
-    fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+    fetch(`/api/backtest-results?symbol=${symbol}`)
       .then(r => r.ok ? r.json() : null)
       .then((d: BacktestResults | null) => { if (d) setBacktestData(d) })
       .catch(() => null)
@@ -297,7 +297,7 @@ export default function CreatePresetPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setSaveStatus('saved')
-      fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+      fetch(`/api/backtest-results?symbol=${symbol}`)
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setBacktestData(d) })
         .catch(() => null)

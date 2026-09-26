@@ -44,6 +44,15 @@ export default function BacktestPage() {
   const [runError, setRunError] = useState<string | null>(null)
   const { symbol, availableSymbols } = useSymbolContext()
   const [allSymbolData, setAllSymbolData] = useState<Record<string, BacktestResults | null>>({})
+  // Which market's backtest is shown and run. Results are keyed by mode
+  // (backtest_results_{SYM}_{mode}.json — spec 2026-09-26-mode-switch-restart-and-per-mode-backtests).
+  const [btMode, setBtMode] = useLocalStorage<'test' | 'live'>('db:backtest:mode', 'test')
+  const [botMode, setBotMode] = useState<'test' | 'live'>('test')
+  useEffect(() => {
+    fetch('/api/mode').then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.mode === 'live' || d?.mode === 'test') setBotMode(d.mode) })
+      .catch(() => {})
+  }, [])
   const [vizFilteredTrades, setVizFilteredTrades] = useState<BacktestTrade[] | null>(null)
 
   const [tableFilters, setTableFilters] = useLocalStorage('db:backtest:tableFilters', initTableFilters())
@@ -82,7 +91,7 @@ export default function BacktestPage() {
         body: JSON.stringify({ name, action }),
       })
       if (!res.ok) return
-      const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+      const r = await fetch(`/api/backtest-results?symbol=${symbol}&mode=${btMode}`)
       if (!r.ok) return
       setData(await r.json())
     } catch { /* silently ignore network errors */ }
@@ -97,7 +106,7 @@ export default function BacktestPage() {
       const res = await fetch('/api/run-backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ klines_count: klinesCount, symbol }),
+        body: JSON.stringify({ klines_count: klinesCount, symbol, mode: btMode }),
       })
       const json = await res.json()
       if (!res.ok) {
@@ -110,14 +119,15 @@ export default function BacktestPage() {
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 2000))
         try {
-          const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+          const r = await fetch(`/api/backtest-results?symbol=${symbol}&mode=${btMode}`)
           if (!r.ok) continue
           const result: BacktestResults = await r.json()
           if (result.generated_at !== snapshotTs) {
             setData(result)
             updated = true
             // Patch risk_state.json so Risk page B widget shows updated scores immediately
-            fetch('/api/refresh-scores', { method: 'POST' }).catch(() => {})
+            // (the trading bot's market only).
+            if (btMode === botMode) fetch('/api/refresh-scores', { method: 'POST' }).catch(() => {})
             break
           }
         } catch { /* keep polling */ }
@@ -139,7 +149,7 @@ export default function BacktestPage() {
       })
       if (!res.ok) return
       // Refetch so all derived state (filteredPresets, activePreset) updates atomically
-      const r = await fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+      const r = await fetch(`/api/backtest-results?symbol=${symbol}&mode=${btMode}`)
       if (!r.ok) return
       const json: BacktestResults = await r.json()
       setData(json)
@@ -155,7 +165,7 @@ export default function BacktestPage() {
     const MAX_RETRIES = 20  // 20 × 3s = 60s polling window
 
     function load() {
-      fetch(`/api/public-file?f=backtest_results_${symbol}.json`)
+      fetch(`/api/backtest-results?symbol=${symbol}&mode=${btMode}`)
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`)
           return r.json()
@@ -184,13 +194,13 @@ export default function BacktestPage() {
 
     load()
     return () => { cancelled = true }
-  }, [symbol])
+  }, [symbol, btMode])
 
   useEffect(() => {
     if (availableSymbols.length < 2) return
     Promise.all(
       availableSymbols.map(s =>
-        fetch(`/api/public-file?f=backtest_results_${s}.json`)
+        fetch(`/api/backtest-results?symbol=${s}&mode=${btMode}`)
           .then(r => (r.ok ? r.json() : null))
           .catch(() => null)
       )
@@ -199,7 +209,7 @@ export default function BacktestPage() {
       availableSymbols.forEach((s, i) => { map[s] = results[i] as BacktestResults | null })
       setAllSymbolData(map)
     })
-  }, [availableSymbols])
+  }, [availableSymbols, btMode])
 
   const presetList: BacktestPreset[] = useMemo(() => {
     if (!data) return []
@@ -261,6 +271,23 @@ export default function BacktestPage() {
               {runError}
             </span>
           )}
+          <div
+            className="flex items-center rounded border border-gray-700 overflow-hidden text-[11px]"
+            title="Which market's backtest to show and run. Test and live each keep their own results; the trading bot sizes orders from its own market's."
+          >
+            {(['test', 'live'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => setBtMode(m)}
+                disabled={isRunning}
+                className={`px-2 py-1 capitalize transition-colors disabled:opacity-40 ${
+                  btMode === m ? 'bg-indigo-900/70 text-indigo-200' : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                {m}{m === botMode ? ' · bot' : ''}
+              </button>
+            ))}
+          </div>
           <label className="flex items-center gap-1.5 text-xs text-gray-500">
             <span className="uppercase tracking-wider">Klines</span>
             <input

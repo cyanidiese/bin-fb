@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { BOT_ROOT } from '../../_utils'
-import path from 'path'
-import fs from 'fs'
 import { botMode, readRiskConfig } from '../../_risk-config'
-
-const PUBLIC_DIR = path.join(BOT_ROOT, 'dashboard', 'public')
+import { readBacktestResults, symbolsWithBacktest } from '../../_backtest-results'
 
 interface Preset {
   total_profit_pct: number
@@ -52,17 +48,13 @@ function sign(n: number): string {
 }
 
 function buildConnectionMessage(): string {
-  let files: string[]
-  try {
-    files = fs.readdirSync(PUBLIC_DIR).filter(f => f.startsWith('backtest_results_') && f.endsWith('.json'))
-  } catch {
-    return '🤖 <b>Binance Futures Bot</b>\n\n✅ Notifier connected — no backtest data yet.'
-  }
-
+  // The trading bot's market only (backtest results are keyed by mode).
+  const mode = botMode()
   const summaries: SymbolSummary[] = []
-  for (const file of files) {
+  for (const sym of symbolsWithBacktest(mode)) {
     try {
-      const data: BacktestFile = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, file), 'utf8'))
+      const data = readBacktestResults<BacktestFile>(sym, mode)
+      if (!data) continue
       const presets = Object.values(data.presets ?? {})
       if (presets.length === 0) continue
       const best = presets.reduce((a, b) => b.total_profit_pct > a.total_profit_pct ? b : a)

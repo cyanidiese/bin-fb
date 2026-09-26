@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import fs from 'fs'
 import path from 'path'
+import { botMode } from '../_risk-config'
+import { readBacktestResults, symbolsWithBacktest } from '../_backtest-results'
 
 const BOT_ROOT = path.resolve(process.cwd(), '..')
 const PUBLIC_DIR = path.join(BOT_ROOT, 'dashboard', 'public')
@@ -13,19 +15,19 @@ function readJsonSafe(p: string): unknown {
 /**
  * POST /api/refresh-scores
  *
- * Reads all backtest_results_*.json files, computes each symbol's best
- * total_profit_pct, and patches the matching performance_score fields in
- * risk_state.json so the Risk page B widget reflects the latest backtest
- * without waiting for the bot's 60-second cache TTL to expire.
+ * Computes each symbol's best total_profit_pct from the backtest of the market the
+ * TRADING bot runs, and patches the matching performance_score fields in its
+ * risk_state.json so the Risk page B widget reflects the latest backtest without
+ * waiting for the bot's 60-second cache TTL to expire.
+ *
+ * Only the bot mode's files: this used to read every backtest_results_* file, the
+ * mirror's _live ones included, and keep whichever it read last for each symbol.
  */
 export async function POST() {
-  const files = fs.readdirSync(PUBLIC_DIR).filter(
-    f => f.startsWith('backtest_results_') && f.endsWith('.json')
-  )
-
+  const mode = botMode()
   const scores: Record<string, number> = {}
-  for (const file of files) {
-    const data = readJsonSafe(path.join(PUBLIC_DIR, file)) as Record<string, unknown> | null
+  for (const sym of symbolsWithBacktest(mode)) {
+    const data = readBacktestResults(sym, mode) as Record<string, unknown> | null
     if (!data?.presets || typeof data.symbol !== 'string') continue
     const presets = Object.values(data.presets) as Array<{ total_profit_pct: number }>
     if (presets.length === 0) continue

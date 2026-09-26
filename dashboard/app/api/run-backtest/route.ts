@@ -2,26 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
+import { modeOr } from '../_risk-config'
 
 const BOT_ROOT = path.resolve(process.cwd(), '..')
-const MODE_PATH = path.join(BOT_ROOT, 'data', 'bot_mode.json')
 
 function getPython(): string {
   const venvPy = path.join(BOT_ROOT, '.venv', 'bin', 'python3')
   return fs.existsSync(venvPy) ? venvPy : 'python3'
 }
 
-function readCurrentMode(): string {
-  try {
-    return JSON.parse(fs.readFileSync(MODE_PATH, 'utf8')).mode ?? 'test'
-  } catch {
-    return 'test'
-  }
-}
-
+/** POST /api/run-backtest {klines_count?, symbol?, mode?} — backtest one market.
+ *  `mode` defaults to the bot's; results land in backtest_results_{SYM}_{mode}.json
+ *  (keyed by mode — spec 2026-09-26-mode-switch-restart-and-per-mode-backtests). */
 export async function POST(req: NextRequest) {
   let klinesCount = 1500
   let symbol = ''
+  let requestedMode: unknown = null
   try {
     const body = await req.json()
     if (typeof body.klines_count === 'number' && body.klines_count > 0) {
@@ -30,12 +26,13 @@ export async function POST(req: NextRequest) {
     if (typeof body.symbol === 'string' && body.symbol.trim()) {
       symbol = body.symbol.trim().toUpperCase()
     }
+    requestedMode = body.mode
   } catch {
     // use defaults
   }
 
   const python = getPython()
-  const mode = readCurrentMode()
+  const mode = modeOr(requestedMode)
   const args = [
     'backtest.py',
     '--klines-count', String(klinesCount),
@@ -52,7 +49,7 @@ export async function POST(req: NextRequest) {
     })
     child.on('spawn', () => {
       child.unref()
-      resolve(NextResponse.json({ ok: true, klines_count: klinesCount, symbol, pid: child.pid }))
+      resolve(NextResponse.json({ ok: true, klines_count: klinesCount, symbol, mode, pid: child.pid }))
     })
   })
 }

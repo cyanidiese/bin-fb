@@ -142,35 +142,41 @@ export async function POST(req: NextRequest) {
   // symbol straight away rather than the "no data yet" message.
   void writePlaceholderResults(symbol)
 
-  // Spawn backtest subprocess in the background — do NOT await it.
+  // Backtest BOTH markets, one after the other (1 CPU): results are keyed by mode, and
+  // each instance seeds leverage/allocation and presets from its own market's file. The
+  // bot's mode first, so the trading bot's results arrive soonest. Not awaited.
   const python = getPython()
-  const mode = readCurrentMode()
-  const child = spawn(
-    python,
-    ['backtest.py', '--symbols', symbol, '--klines-count', String(klinesCount), '--mode', mode],
-    { cwd: BOT_ROOT, detached: false, stdio: 'ignore' },
-  )
+  const first = readCurrentMode() === 'live' ? 'live' : 'test'
+  const modes = [first, first === 'test' ? 'live' : 'test']
+  let firstPid: number | null = null
 
-  // Store PID immediately so DELETE can kill the process if needed.
-  if (child.pid) {
-    const reg2 = readRoster()
-    if (reg2.symbols.includes(symbol)) {
-      reg2.status[symbol] = { backtest: 'running', pid: child.pid }
-      writeRoster(reg2)
+  const runMode = (i: number): void => {
+    const child = spawn(
+      python,
+      ['backtest.py', '--symbols', symbol, '--klines-count', String(klinesCount), '--mode', modes[i]],
+      { cwd: BOT_ROOT, detached: false, stdio: 'ignore' },
+    )
+    if (i === 0) firstPid = child.pid ?? null
+    // Store PID immediately so DELETE can kill the process if needed.
+    if (child.pid) {
+      const reg2 = readRoster()
+      if (reg2.symbols.includes(symbol)) {
+        reg2.status[symbol] = { backtest: 'running', pid: child.pid }
+        writeRoster(reg2)
+      }
     }
+    child.on('close', (code: number | null) => {
+      const current = readRoster()
+      if (!current.symbols.includes(symbol)) return // was removed while running
+      if (code === 0 && i + 1 < modes.length) { runMode(i + 1); return }
+      if (current.status[symbol]?.backtest === 'running') {
+        current.status[symbol] = { backtest: code === 0 ? 'complete' : 'error', pid: null }
+        writeRoster(current)
+      }
+    })
+    child.unref()
   }
+  runMode(0)
 
-  // Update status when the process finishes.
-  child.on('close', (code: number | null) => {
-    const current = readRoster()
-    if (!current.symbols.includes(symbol)) return // was removed while running
-    if (current.status[symbol]?.backtest === 'running') {
-      current.status[symbol] = { backtest: code === 0 ? 'complete' : 'error', pid: null }
-      writeRoster(current)
-    }
-  })
-
-  child.unref()
-
-  return NextResponse.json({ ok: true, symbol, status: 'running', pid: child.pid ?? null })
+  return NextResponse.json({ ok: true, symbol, status: 'running', modes, pid: firstPid })
 }

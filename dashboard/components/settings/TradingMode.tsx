@@ -58,17 +58,19 @@ export default function TradingMode({ mode, onModeChanged, botState, registry, o
     const target = mode === 'test' ? 'live' : 'test'
     const botRunning = botState?.running ?? false
     const symbolCount = registry?.symbols.length ?? 0
-    // This writes data/bot_mode.json and nothing else. The dialog used to promise that
-    // open orders would be closed at market and that real money would start trading
-    // immediately; neither happens. The running bot captures its mode once at startup
-    // (main.py) and nothing in this app writes a switch_mode command, so the change
-    // takes effect only on restart. Saying so is the whole point of the fix.
+    // Writes data/bot_mode.json. The trading bot sees it within ~30 s, stops opening
+    // real orders, confirms 30 s later, closes every open position at market, checks the
+    // exchange is flat, and restarts in the new mode; the shadow follows once it has.
+    // It refuses (and keeps trading) if the target mode's API keys are missing.
+    // Spec: docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md
     const msg = botRunning
-      ? `Save ${target.toUpperCase()} as the bot mode?\n\n`
-        + `The running bot is NOT switched by this — it keeps trading in `
-        + `${mode.toUpperCase()} with its open positions until it is restarted.\n\n`
-        + `Backtests for all ${symbolCount} symbols will re-run now to load `
-        + `${target}-mode klines.`
+      ? `Switch the trading bot to ${target.toUpperCase()}?\n\n`
+        + `Within about a minute it will stop opening new orders, CLOSE ALL OPEN `
+        + `POSITIONS AT MARKET in ${mode.toUpperCase()}, and restart in ${target.toUpperCase()}. `
+        + `The shadow instance follows automatically.\n\n`
+        + `If the ${target.toUpperCase()} API keys are missing from .env the bot refuses, `
+        + `closes nothing and keeps trading ${mode.toUpperCase()} (Telegram alert).\n\n`
+        + `${target.toUpperCase()} backtests for all ${symbolCount} symbols re-run now.`
       : `Switch to ${target.toUpperCase()} mode?\n\nThe bot is not running — the mode preference will be saved and used on next start.\n\nBacktests for all ${symbolCount} symbols will re-run automatically to load ${target}-mode kline data.`
     if (!confirm(msg)) return
     setSwitching(true)

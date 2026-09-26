@@ -22,6 +22,15 @@ export function sumMarginPct(orders: PnlOrder[]): number {
 
 /** Profit% for a preset, given its real orders and its CLOSED virtual orders.
  *  null when it has no trades at all — "no data", distinct from 0%. */
+/** One picker sort key, as /api/trades/symbol-scores returns it. */
+export interface SymbolScore {
+  pct: number | null
+  preset: string | null
+  /** Closed trades behind pct. Optional: entries cached before it existed lack it. */
+  n?: number
+  locked?: boolean
+}
+
 export function presetProfitPct(real: PnlOrder[], virt: PnlOrder[]): number | null {
   if (real.length + virt.length === 0) return null
   return sumMarginPct(real) + sumMarginPct(virt)

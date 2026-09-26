@@ -125,3 +125,28 @@ bumps FORMULA_VERSION, or whenever the picker should be fully sorted at once.
 **Real orders and Auto-disabled symbols widgets are collapsible**, state in localStorage
 (`trades-real-orders-all:open`, `trades-real-orders-all:expanded`,
 `trades-disabled-symbols:open`), like every CollapsibleSection on the page.
+
+## Amendment 2026-09-26 (b) — "top" means the table's top row by Profit%
+
+User clarification: the top preset is **the row at the top of the Preset Efficiency table
+when sorted by Profit% DESC** — the locked preset if any (the table pins it first),
+otherwise the preset with the highest Profit% *in that window*. Not Rank 1 by
+effectiveScore, which is what was implemented before (FORMULA_VERSION 3).
+
+- Candidates are exactly the table's rows: backtest preset names ∪ efficiency keys
+  (`app/api/trades/_preset-names.ts`, shared with /api/trades). Presets with no trades
+  (Profit% null) are never the top unless nothing traded.
+- Invalidation changes: the fingerprint is `lock | newest mtime across real_orders and
+  every virtual_orders_rank*` for the symbol. The earlier rule "recalculate only when
+  the top/locked preset's order closes" is kept for locked symbols in spirit, but for an
+  unlocked symbol any preset's close can make it overtake the top, so any close of the
+  symbol invalidates. Cost ~50 ms per stale symbol.
+- Entries now carry `n` (closed trades behind the number) and the API returns `locked`;
+  the picker tooltip shows both.
+- Verified against an independent Python recomputation on server data: 15/15 values
+  (SOL/JUP/APT/LINK/EGLD × 7d/30d/all) identical.
+
+Known caveat, accepted: for unlocked symbols this is a max over ~80 presets, so it is
+biased upward and small-sample winners can lead (e.g. LINKUSDT +40.5% over 6 trades).
+The tooltip's trade count is there so this is visible. It is also not necessarily the
+preset the bot trades — the bot uses the lock, else its own ranking.

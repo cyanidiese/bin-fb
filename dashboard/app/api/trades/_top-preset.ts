@@ -1,7 +1,7 @@
 // Preset ranking for one symbol, as the Trades page's Rank column shows it.
 //
-// Shared by /api/trades (the table) and /api/trades/symbol-scores (the picker sort), so
-// "the top preset" means the same thing in both places.
+// Not what the symbol picker sorts by: that is the table's top row by Profit%, computed
+// in /api/trades/symbol-scores.
 
 export interface PresetEfficiency {
   total_winning_usdt: number
@@ -63,11 +63,4 @@ export function rankPresets(
     sortedByEff.forEach(([name], idx) => { presetRanks[name] = idx + 1 })
   }
   return { bestPreset, presetRanks }
-}
-
-/** The Rank-1 preset — the row the picker sorts by. Rank 1 rather than bestPreset,
- *  because bestPreset is null when every score is <= 0 but the table still has a top row. */
-export function topPreset(presetRanks: Record<string, number>): string | null {
-  for (const [name, rank] of Object.entries(presetRanks)) if (rank === 1) return name
-  return null
 }

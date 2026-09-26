@@ -6,6 +6,7 @@ import { BOT_ROOT } from '../_utils'
 import { REGISTRY_PATH } from '../symbols/_registry'
 import { rankPresets, type PresetEfficiency } from './_top-preset'
 import { detectRankMax } from './_rank-files'
+import { currentMode, presetNamesFor } from './_preset-names'
 
 function readJson(filePath: string, fallback: unknown) {
   try {
@@ -13,11 +14,6 @@ function readJson(filePath: string, fallback: unknown) {
   } catch {
     return fallback
   }
-}
-
-function currentMode(): string {
-  const data = readJson(path.join(BOT_ROOT, 'data', 'bot_mode.json'), {}) as Record<string, string>
-  return data.mode ?? 'test'
 }
 
 export async function GET(req: NextRequest) {
@@ -28,27 +24,17 @@ export async function GET(req: NextRequest) {
   }
 
   const mode = searchParams.get('mode') ?? currentMode()
-  // Anything other than the bot's own mode is the shadow instance. Its backtest lives
-  // under a suffixed name so it cannot overwrite the numbers the trading bot sizes real
-  // orders from — see bot/instance_paths.py. Everything else in data/ is already
-  // mode-suffixed, so `mode` alone selects it.
-  const isShadow = mode !== currentMode()
-
   const realOrdersPath = path.join(BOT_ROOT, 'data', `real_orders_${symbol}_${mode}.json`)
   const efficiencyPath = path.join(BOT_ROOT, 'data', `preset_efficiency_${mode}.json`)
-  const backtestPath   = path.join(BOT_ROOT, 'dashboard', 'public',
-    isShadow ? `backtest_results_${symbol}_${mode}.json` : `backtest_results_${symbol}.json`)
 
   const realOrders = readJson(realOrdersPath, []) as unknown[]
   const efficiency = readJson(efficiencyPath, {}) as Record<string, Record<string, PresetEfficiency>>
-  const backtest   = readJson(backtestPath, null) as { presets?: Record<string, unknown> } | null
 
   const symbolEfficiency = efficiency[symbol] ?? {}
 
-  // All known preset names: backtest results union efficiency keys
-  const allPresetNames: string[] = backtest?.presets
-    ? Array.from(new Set([...Object.keys(backtest.presets), ...Object.keys(symbolEfficiency)]))
-    : Object.keys(symbolEfficiency)
+  // All known preset names: backtest results union efficiency keys. The shadow
+  // instance's backtest lives under a mode-suffixed name (see _preset-names).
+  const allPresetNames = presetNamesFor(symbol, mode, symbolEfficiency)
 
   // Check if this symbol has a manually locked preset
   const riskConfig = readJson(path.join(BOT_ROOT, 'risk_config.json'), {}) as Record<string, unknown>

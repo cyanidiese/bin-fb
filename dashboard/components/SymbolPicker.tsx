@@ -1,5 +1,7 @@
 'use client'
 
+import type { SymbolScore } from '@/lib/presetProfit'
+
 interface Props {
   symbols: string[]
   selected: string
@@ -14,9 +16,10 @@ interface Props {
   openVirtual?: Set<string>
   /** Names the instance being viewed, for the tooltips. */
   instanceLabel?: string
-  /** Top preset's Profit% per symbol — what the caller sorted `symbols` by. Tooltip only;
+  /** Profit% of each symbol's top row (locked preset, else best Profit%) — what the
+   *  caller sorted `symbols` by. Tooltip only;
    *  the order itself is the caller's. */
-  scores?: Record<string, { pct: number | null; preset: string | null }>
+  scores?: Record<string, SymbolScore>
   /** The shortcut the scores cover, e.g. "Last 7 days". */
   scoresLabel?: string
 }
@@ -55,8 +58,10 @@ export default function SymbolPicker({
         const score = scores?.[sym]
         const scoreText = !scores ? null
           : score === undefined ? 'Profit% not computed yet — click to compute'
-          : score.pct === null ? `no ${score.preset ?? 'top preset'} trades${scoresLabel ? ` in ${scoresLabel}` : ''}`
-          : `${score.preset}: ${score.pct >= 0 ? '+' : ''}${score.pct.toFixed(1)}%${scoresLabel ? ` (${scoresLabel})` : ''}`
+          : score.pct === null ? `no ${score.locked ? `${score.preset} (locked)` : 'preset'} trades${scoresLabel ? ` in ${scoresLabel}` : ''}`
+          : `${score.preset}${score.locked ? ' (locked)' : ''}: ${score.pct >= 0 ? '+' : ''}${score.pct.toFixed(1)}%`
+            + `${score.n != null ? ` over ${score.n} trade${score.n === 1 ? '' : 's'}` : ''}`
+            + `${scoresLabel ? ` (${scoresLabel})` : ''}`
 
         const title = [
           sym,

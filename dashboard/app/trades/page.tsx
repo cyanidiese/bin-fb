@@ -15,7 +15,7 @@ import {
   toDatetimeLocal, toEpochSeconds, dataBounds, defaultRange,
   filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
 } from '@/lib/tradesDateRange'
-import { presetProfitPct } from '@/lib/presetProfit'
+import { presetProfitPct, type SymbolScore } from '@/lib/presetProfit'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -278,7 +278,7 @@ export default function TradesPage() {
   const sortRangeKey = activeRangePreset ?? sortRange
   // Top-preset Profit% per symbol for (viewed instance, sortRangeKey), from
   // /api/trades/symbol-scores. A symbol absent here has not been computed yet.
-  const [sortScores, setSortScores] = useState<Record<string, { pct: number | null; preset: string | null }>>({})
+  const [sortScores, setSortScores] = useState<Record<string, SymbolScore>>({})
   // Ignores a response that arrives after a newer request (shortcut clicked twice fast).
   const scoresReq = useRef(0)
   // Signature of the (preset, symbol, bounds) the current override was derived from,
@@ -353,7 +353,8 @@ export default function TradesPage() {
     for (const s of [...(primaryOrders?.symbols ?? []), ...(viewedOrders?.symbols ?? [])]) {
       if (!seen.has(s)) { seen.add(s); out.push(s) }
     }
-    // DESC by the top preset's Profit%. Then computed-but-no-trades, then not computed
+    // DESC by the Profit% of the Preset Efficiency table's top row when sorted by
+    // Profit% — the locked preset, else the best one. Then no-trades, then not computed
     // yet. Array.sort is stable, so ties keep registry order.
     const bucket = (s: string) => {
       const e = sortScores[s]
@@ -702,8 +703,8 @@ export default function TradesPage() {
       })
       if (res.ok) {
         setLockedPreset(isAlreadyLocked ? null : presetName)
-        // New top preset: every shortcut's entry for this symbol is now stale. The
-        // server sees the preset changed and recomputes each one when it is requested.
+        // Lock changed: every shortcut's entry for this symbol is now stale. The
+        // server sees the lock in its fingerprint and recomputes each one on request.
         void loadSortScores(symbol)
       }
     } finally {

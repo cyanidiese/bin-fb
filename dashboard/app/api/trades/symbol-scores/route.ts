@@ -3,30 +3,34 @@ import fs from 'fs'
 import path from 'path'
 import { BOT_ROOT } from '../../_utils'
 import { lockedPresetsFor } from '../../_locked-presets'
-import { rankPresets, topPreset, type PresetEfficiency } from '../_top-preset'
 import { detectRankMax } from '../_rank-files'
+import { presetNamesFor } from '../_preset-names'
 import { presetProfitPct } from '@/lib/presetProfit'
 import { orderInRange, RANGE_PRESETS } from '@/lib/tradesDateRange'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Sort keys for the Trades page symbol picker: the Profit% of each symbol's top preset
- * (the Rank-1 row) per date shortcut. Spec: docs/specs/2026-09-24-trades-picker-profit-sort.md
+ * Sort keys for the Trades page symbol picker, per date shortcut: the Profit% of the
+ * row at the top of the Preset Efficiency table when it is sorted by Profit% DESC.
+ * That is the locked preset if there is one (the table pins it first), otherwise the
+ * preset with the highest Profit% in the window. Spec:
+ * docs/specs/2026-09-24-trades-picker-profit-sort.md
  *
  *   GET ?mode=test&range=7d&from=<epoch s | empty>&ensure=SOLUSDT
  *
- * Cached in data/symbol_sort_scores_{mode}.json, one entry per symbol × shortcut, because
- * computing one symbol reads ~88 rank files and doing all of them on every page load
- * would be ~150 MB of JSON. An entry is created only for `ensure` (the symbol just
- * clicked). Existing entries are recomputed when stale, so they keep their place:
+ * Cached in data/symbol_sort_scores_{mode}.json, one entry per symbol × shortcut. An
+ * entry is created only for `ensure` (the symbol just clicked, or the recalc script).
+ * Existing entries are recomputed when stale, so they keep their place:
  *
- *   - the top preset changed  (lock, unlock, or the unlocked rank-1 preset moved)
- *   - a top-preset order closed — detected by the mtimes of real_orders_{SYM} and
- *     virtual_orders_rank1_{SYM}. A real order is always the top preset's, rank 1 only
- *     ever holds the top preset, and both files are written only on close. Ranks >= 2
- *     never hold it, so their constant churn triggers nothing.
+ *   - the lock changed
+ *   - ANY order of the symbol closed. With an unlocked symbol any preset can overtake
+ *     the current top, so a close of the top preset alone is not enough. Detected by
+ *     the newest mtime across real_orders_{SYM} and every virtual_orders_rank*_{SYM}.
+ *     Recomputing one symbol is ~50 ms of file reads, so this stays cheap.
  *   - the window slid past the TTL (sliding shortcuts age without any close)
+ *   - "today" was computed for a different midnight
+ *   - FORMULA_VERSION changed
  *
  * `from` comes from the browser because "Today" is local midnight — the server must not
  * guess a timezone. Nothing here throws to the caller: on any failure the picker keeps
@@ -36,19 +40,22 @@ export const dynamic = 'force-dynamic'
 interface ScoreEntry {
   pct: number | null
   preset: string | null
+  /** Closed trades behind pct — a top row built on 2 trades is mostly luck. */
+  n: number
   fp: string
   at: number
   /** Window start the entry was computed for (epoch s, null = unbounded). */
-  from?: number | null
+  from: number | null
   /** FORMULA_VERSION it was computed with. */
-  v?: number
+  v: number
 }
 type ScoreCache = Record<string, Record<string, ScoreEntry>>
 
-/** Bump whenever computePct changes, so cached entries — "all" never expires — are
- *  recomputed instead of silently mixing two formulas in one sort.
- *  2: rank-1 virtual orders included. */
-const FORMULA_VERSION = 2
+/** Bump whenever the computation changes, so cached entries — "all" never expires —
+ *  are recomputed instead of silently mixing two formulas in one sort.
+ *  2: rank-1 virtual orders included.
+ *  3: top = the table's top row by Profit% (locked, else best Profit%), not Rank 1. */
+const FORMULA_VERSION = 3
 
 const TTL_MS: Record<string, number | null> = {
   today: 10 * 60_000,
@@ -68,12 +75,17 @@ function mtime(filePath: string): number {
   try { return fs.statSync(filePath).mtimeMs } catch { return 0 }
 }
 
-/** Changes exactly when an order of the top preset closes — see the header comment. */
-function fingerprint(symbol: string, mode: string): string {
-  return [
-    mtime(path.join(DATA_DIR, `real_orders_${symbol}_${mode}.json`)),
-    mtime(path.join(DATA_DIR, `virtual_orders_rank1_${symbol}_${mode}.json`)),
-  ].join('|')
+function orderFiles(symbol: string, mode: string, rankMax: number): string[] {
+  const files = [path.join(DATA_DIR, `real_orders_${symbol}_${mode}.json`)]
+  for (let rank = 1; rank <= rankMax; rank++) {
+    files.push(path.join(DATA_DIR, `virtual_orders_rank${rank}_${symbol}_${mode}.json`))
+  }
+  return files
+}
+
+/** Changes whenever any order of the symbol closes, or the lock changes. */
+function fingerprint(files: string[], lock: string | null): string {
+  return `${lock ?? ''}|${Math.max(0, ...files.map(mtime))}`
 }
 
 interface PnlRecord {
@@ -88,24 +100,45 @@ interface PnlRecord {
   pnl_usdt: number | null
 }
 
-/** Same inputs the page's Profit% column uses: real orders plus CLOSED virtual orders
- *  from ranks 1..max, filtered by order overlap. Rank 1 is the real slot's stand-in and
- *  holds the top preset's trades whenever no real order was running. */
-function computePct(
-  symbol: string, mode: string, preset: string, fromS: number | null, rankMax: number,
-): number | null {
-  const inWindow = (o: PnlRecord) => o.preset_name === preset && orderInRange(o, fromS, null)
-  const real = readJson<PnlRecord[]>(
-    path.join(DATA_DIR, `real_orders_${symbol}_${mode}.json`), []).filter(inWindow)
-  const virt: PnlRecord[] = []
-  for (let rank = 1; rank <= rankMax; rank++) {
-    const list = readJson<PnlRecord[]>(
-      path.join(DATA_DIR, `virtual_orders_rank${rank}_${symbol}_${mode}.json`), [])
-    for (const o of list) {
-      if (o.status === 'closed' && o.result != null && inWindow(o)) virt.push(o)
+/** The table's top row for one symbol and window. Same inputs as the page's Profit%
+ *  column (buildPresetRows): real orders plus CLOSED virtual orders from ranks 1..max,
+ *  filtered by order overlap, restricted to the presets the table lists. */
+function computeTop(
+  lock: string | null, fromS: number | null, files: string[], names: string[],
+): { preset: string | null; pct: number | null; n: number } {
+  const listed = new Set(names)
+  const real = new Map<string, PnlRecord[]>()
+  const virt = new Map<string, PnlRecord[]>()
+  const add = (m: Map<string, PnlRecord[]>, o: PnlRecord) => {
+    const k = o.preset_name ?? ''
+    if (!listed.has(k) || !orderInRange(o, fromS, null)) return
+    const list = m.get(k)
+    if (list) list.push(o)
+    else m.set(k, [o])
+  }
+  const [realFile, ...rankFiles] = files
+  for (const o of readJson<PnlRecord[]>(realFile, [])) add(real, o)
+  for (const f of rankFiles) {
+    for (const o of readJson<PnlRecord[]>(f, [])) {
+      if (o.status === 'closed' && o.result != null) add(virt, o)
     }
   }
-  return presetProfitPct(real, virt)
+  const rowFor = (name: string) => {
+    const r = real.get(name) ?? []
+    const v = virt.get(name) ?? []
+    return { preset: name, pct: presetProfitPct(r, v), n: r.length + v.length }
+  }
+
+  if (lock) return rowFor(lock)
+
+  // Highest Profit%; presets with no trades (null) sort last in the table, so they can
+  // only be the top when nothing traded. Ties keep table order (first listed wins).
+  let best: { preset: string | null; pct: number | null; n: number } = { preset: null, pct: null, n: 0 }
+  for (const name of names) {
+    const row = rowFor(name)
+    if (row.pct !== null && (best.pct === null || row.pct > best.pct)) best = row
+  }
+  return best
 }
 
 export async function GET(req: NextRequest) {
@@ -122,7 +155,7 @@ export async function GET(req: NextRequest) {
   const cachePath = path.join(DATA_DIR, `symbol_sort_scores_${mode}.json`)
   const cache = readJson<ScoreCache>(cachePath, {})
 
-  const efficiency = readJson<Record<string, Record<string, PresetEfficiency>>>(
+  const efficiency = readJson<Record<string, Record<string, unknown>>>(
     path.join(DATA_DIR, `preset_efficiency_${mode}.json`), {})
   const riskConfig = readJson<Record<string, unknown>>(path.join(BOT_ROOT, 'risk_config.json'), {})
   const locks = lockedPresetsFor(riskConfig, mode)
@@ -136,18 +169,20 @@ export async function GET(req: NextRequest) {
   let dirty = false
   for (const sym of candidates) {
     try {
-      const { presetRanks } = rankPresets(efficiency[sym] ?? {}, locks[sym] ?? null, riskConfig)
-      const top = topPreset(presetRanks)
-      const fp = fingerprint(sym, mode)
+      const lock = locks[sym] ?? null
+      const files = orderFiles(sym, mode, rankMax)
+      const fp = fingerprint(files, lock)
       const e = cache[sym]?.[range]
-      // "Today" is a fixed midnight, not a sliding window: past midnight, or computed
-      // for another timezone, the entry covers a different day whatever its age.
       const sameWindow = range !== 'today' || (e?.from ?? null) === fromS
-      const fresh = e && e.v === FORMULA_VERSION && e.preset === top && e.fp === fp && sameWindow
+      const fresh = e && e.v === FORMULA_VERSION && e.fp === fp && sameWindow
         && (ttl === null || now - e.at < ttl)
       if (fresh) continue
-      const pct = top ? computePct(sym, mode, top, fromS, rankMax) : null
-      cache[sym] = { ...(cache[sym] ?? {}), [range]: { pct, preset: top, fp, at: now, from: fromS, v: FORMULA_VERSION } }
+      const names = presetNamesFor(sym, mode, efficiency[sym] ?? {})
+      const top = computeTop(lock, fromS, files, names)
+      cache[sym] = {
+        ...(cache[sym] ?? {}),
+        [range]: { ...top, fp, at: now, from: fromS, v: FORMULA_VERSION },
+      }
       dirty = true
     } catch { /* one bad symbol must not cost the others their sort key */ }
   }
@@ -162,10 +197,10 @@ export async function GET(req: NextRequest) {
     } catch { /* read-only or full disk — still return what was computed */ }
   }
 
-  const scores: Record<string, { pct: number | null; preset: string | null }> = {}
+  const scores: Record<string, { pct: number | null; preset: string | null; n: number; locked: boolean }> = {}
   for (const [sym, byRange] of Object.entries(cache)) {
     const e = byRange?.[range]
-    if (e) scores[sym] = { pct: e.pct, preset: e.preset }
+    if (e) scores[sym] = { pct: e.pct, preset: e.preset, n: e.n ?? 0, locked: !!locks[sym] }
   }
   return NextResponse.json({ mode, range, scores })
 }

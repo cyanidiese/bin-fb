@@ -1,10 +1,10 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## ⟳ RESUME POINT — Session 72 (2026-09-26) — Per-mode risk config committed (awaiting deploy approval); preset profit & picker completed
+## ⟳ RESUME POINT — Session 72 (2026-09-26) — Per-mode risk config deployed; preset profit & picker completed
 
 **Branch**: feature/mean-reversion-overlay (commits up to 30aac92)
 
-**Status**: Per-mode risk config COMPLETED and COMMITTED. All code verified testnet 2026-09-26. **AWAITING USER APPROVAL** before prod deploy (run `python3 scripts/split_risk_config.py --apply` on host, then graceful Docker rebuild).
+**Status**: Per-mode risk config DEPLOYED 2026-09-26 19:33 UTC (split script run on host at 19:30 after graceful `docker stop -t 60`; test file identical to legacy apart from lock layout; bot → risk_config_test.json, mirror → risk_config_live.json; SOLUSDT real position restored). Legacy risk_config.json untouched = rollback path; nothing writes it now. `/bfb-config` edits must target risk_config_test.json (or _live), not risk_config.json.
 
 **Completed this session**:
 1. **Per-mode risk config** (commits fa27e6b spec, 416c266 bot config, 8c45c76 dashboard, 30aac92 test fix) — `risk_config_test.json` / `risk_config_live.json` at repo root (gitignored). Mode selection via `TRADING_MODE` env; bot pin verifies mode on startup. Config path routing: `config_path(mode)`, `load_risk_config(path=None, mode=None)`, `save_risk_config(cfg, path=None, mode=None)`. Live mode cascades: live keys → test keys → DEFAULTS; test mode = test file + DEFAULTS. Bot-wide keys (telegram, notify intervals) written to both files. Dashboard: merges fresh read on Save All (prevents lock reversion race), non-bot-wide edits update only selected mode. Docker: both files mounted rw in bot/dashboard, :ro in mirror. Verified: end-to-end on server copy (test INJ 10 → live 9, live-only lock stays, telegram writes both), Python reads identical, 1129 tests pass. Seeding via `scripts/split_risk_config.py --apply` (host only, never overwrites). One mode-switch TODO: symbol_registry.json still shared (should be per-mode for live trading).

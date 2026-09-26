@@ -4,15 +4,15 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
-## Session 72 (2026-09-26) — Per-mode risk config COMMITTED; preset profit store, picker circles & labels, risk audit
+## Session 72 (2026-09-26) — Per-mode risk config DEPLOYED; preset profit store, picker circles & labels, risk audit
 
-### Per-Mode Risk Config (committed, awaiting user deploy approval)
+### Per-Mode Risk Config (deployed 2026-09-26 19:33 UTC)
 
 - [x] **Feature complete: risk_config_test.json / risk_config_live.json** (commits fa27e6b spec, 416c266 bot config, 8c45c76 dashboard, 30aac92 test fix). Separate configs per trading mode; seeding via `scripts/split_risk_config.py --apply` (host one-time, never overwrites). Mode selected via `TRADING_MODE` env. Bot verifies mode on startup. Python: `config_path(mode)`, `load_risk_config(mode=)`, `save_risk_config(cfg, mode=)`. Dashboard merges fresh read on Save All (prevents lock race). Docker: mounted rw in bot/dashboard, :ro in mirror. Live cascades (live→test→DEFAULTS); test uses test file only. Bot-wide keys (telegram, intervals) in both; mode-scoped in one. Verified: end-to-end on server copy, Python reads identical, 1129 tests pass.
 
-- [ ] **Deploy on production** (awaiting user approval). Steps: (1) Host: `python3 scripts/split_risk_config.py --apply` (post-git-pull, pre-Docker-rebuild). (2) Graceful stop: `docker stop -t 60 bot bot_mirror` (after candle). (3) Rebuild: `docker compose up -d --build`. (4) Verify logs: "Risk config: risk_config_test.json (mode=test)" in bot.log, "risk_config_live.json (mode=live)" in bot_live.log. (5) Confirm positions restored, 22-symbol streams reconnected.
+- [x] **Deployed on production** 2026-09-26: split run at 19:30 UTC after graceful stop (test file identical to legacy apart from lock layout), rebuild 19:33; bot logs risk_config_test.json (mode=test), mirror risk_config_live.json (mode=live), SOL position restored, 22 streams. Steps used: (1) Host: `python3 scripts/split_risk_config.py --apply` (post-git-pull, pre-Docker-rebuild). (2) Graceful stop: `docker stop -t 60 bot bot_mirror` (after candle). (3) Rebuild: `docker compose up -d --build`. (4) Verify logs: "Risk config: risk_config_test.json (mode=test)" in bot.log, "risk_config_live.json (mode=live)" in bot_live.log. (5) Confirm positions restored, 22-symbol streams reconnected.
 
-- [ ] **Post-deploy verification checklist**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol_registry.json still shared — decide on per-mode split before real live trading.
+- [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol_registry.json still shared — decide on per-mode split before real live trading.
 
 ### Preset Profit Store & Picker (Session 72 continuation)
 

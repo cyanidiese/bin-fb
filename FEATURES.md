@@ -2309,81 +2309,25 @@ Spec: `docs/specs/2026-09-13-slippage-modelling.md`
 
 ---
 
-## Per-Mode Risk Configuration (Session 72 — committed, NOT deployed)
+## Per-Mode Risk Configuration (Session 72 — deployed 2026-09-26 19:33 UTC)
 
-Separate risk configurations per trading mode (test/live). Primary instance reads `risk_config_test.json` or `risk_config_live.json` based on its `TRADING_MODE` env var; mirror reads the opposite mode's file. Mode-switch atomically swaps which config is active on restart without changing code or restarting Docker containers.
+Test and live each have their own risk config: `risk_config_test.json` and `risk_config_live.json` in the repo root (gitignored, like the legacy `risk_config.json`). The mode is the *trading mode*, not the instance: the primary reads `risk_config_{bot_mode}` (from `data/bot_mode.json`, default test), the mirror reads the opposite. Switching `bot_mode` swaps configs on the next restart with nothing to migrate. Spec: `docs/specs/2026-09-26-per-mode-risk-config.md`.
 
-**Files**:
-- `data/risk_config_test.json` / `data/risk_config_live.json` (gitignored, mode-scoped)
-- `scripts/split_risk_config.py` (host script, seeding and migration)
-- `config/risk_config.py` (Python loaders, path routing, set/get_active_mode)
-- `main.py` (verifies bot mode matches active mode on startup)
-- `bot/mode_manager.py`, `bot/rebalancer.py`, `bot/risk_manager.py` (use config_path)
-- `dashboard/app/api/_risk-config.ts` (per-mode load/save, fallback cascades)
-- `docker-compose.yml` (both files mounted rw in bot/dashboard, :ro in mirror)
+**Files**: `config/risk_config.py`, `main.py`, `bot/risk_manager.py`, `bot/weight_rebalancer.py` (via main), `backtest.py`, `bot/symbol_discovery.py`, `scripts/split_risk_config.py`, `dashboard/app/api/_risk-config.ts`, `dashboard/app/api/risk/route.ts` (+ `lock-preset`, `symbols`, `symbols/[symbol]`, `telegram/test`, `trades`, `trades/symbol-scores`), `dashboard/app/risk/page.tsx`, `dashboard/app/trades/page.tsx`, `docker-compose.yml`, `tests/test_per_mode_risk_config.py`.
 
-**Key details**:
+**Behaviour**:
+- **Read**: test = `DEFAULTS ⊕ test file`; live = `DEFAULTS ⊕ test file ⊕ live file` — any key missing in live comes from test. Reading never creates a file.
+- **Locks** stay nested (`{"test": {...}}` / `{"live": {...}}`), each file holding only its own mode, so test locks can never reach live through the fallback.
+- **Bot-wide keys** (`telegram`, `telegram_notify_interval_s`, `emergency_repeat_interval_s`, `warning_repeat_interval_s`, `startup_backtest`, `backtest_klines`) are stored in both files; a dashboard save of only these keys writes both. Everything else is mode-scoped.
+- **Symbol add/remove** adds/removes the weight entry in both files (roster is shared).
+- **Python**: `set_active_mode(mode)`, `active_mode()` (fallback `TRADING_MODE` env, then test), `config_path(mode)`, `load_risk_config(path=None, mode=None)`, `save_risk_config(cfg, path=None, mode=None)`. `main.run()` pins the mode first (logs `Risk config: risk_config_<mode>.json (mode=<mode>)`) and raises if it disagrees with the resolved trading mode.
+- **Dashboard**: `GET /api/risk?mode=` → `{mode, file, config, state}`; `POST /api/risk?mode=` writes that mode's file, merged onto a fresh read, never taking `locked_presets`/`_reset_hard_stop` from the body. Risk page Instance switcher selects both the config being edited and the state shown; the note names the file Save All writes. Trades page allocation labels and locks follow the viewed mode.
+- **Docker**: both files bind-mounted rw in `bot` and `dashboard`, `:ro` in `bot_mirror` (mirror never writes config). A missing file at container start would make Docker create a *directory* — hence the split script runs first.
+- **Seeding**: `python3 scripts/split_risk_config.py` (dry run) / `--apply` on the host. Test ← legacy file; live ← test with live's legacy locks. Never overwrites an existing file. Legacy `risk_config.json` is left untouched as the rollback path; nothing writes it any more.
 
-**Seeding (one-time)**:
-- `scripts/split_risk_config.py --dry-run` (host, default) reads legacy `risk_config.json`, confirms split points, plans migration
-- `--apply` flag: creates `risk_config_test.json` from legacy file, `risk_config_live.json` from test (with live-only tweaks if any), ignores `legacy_entry` in both (pre-existing data is never overwritten)
-- `locked_presets` nested per mode: test locks never leak into live config; legacy entry for that mode preserved
-- Rollback: legacy `risk_config.json` untouched (nothing writes it after split)
+**Deployed** 2026-09-26: split at 19:30 UTC after bots stopped (46 keys; 11 test locks, 4 live locks; test file identical to legacy apart from lock layout), rebuild 19:33. `bot` logs `risk_config_test.json (mode=test)`, `bot_mirror` logs `risk_config_live.json (mode=live)`, SOLUSDT real position restored, 22-symbol streams.
 
-**Read cascading** (key-level fallback):
-- **Live mode**: `DEFAULTS ⊕ test file ⊕ live file` (missing live key read from test; missing test key read from DEFAULTS)
-- **Test mode**: `DEFAULTS ⊕ test file`
-- Locks nested by mode so per-mode restrictions cannot cross-contaminate
-
-**Bot-wide keys** (stored in both files, dashboard writes both when edited):
-- `telegram`, `telegram_notify_interval_s`, `emergency_repeat_interval_s`, `warning_repeat_interval_s`, `startup_backtest`, `backtest_klines`
-- Any other key is mode-scoped unless explicitly listed
-
-**Python layer**:
-- `config/risk_config.py::set_active_mode(mode)` pins the active mode (fallback: `TRADING_MODE` env, then `test`)
-- `active_mode()` returns current mode
-- `config_path(mode)` returns full path to the mode's config file
-- `load_risk_config(path=None, mode=None)` — explicit path or mode selection routes to the mode loader; None uses active mode
-- `save_risk_config(cfg, path=None, mode=None)` — writes to the mode's file with same fallback
-- `main.py::run()` pins the mode first, raises if it disagrees with ModeManager (instance identity check)
-- `RiskManager`, `Rebalancer` pass `config_path(current_mode)` to load/save
-
-**Docker deployment**:
-- Both files MUST exist on host before containers start (Docker does not auto-create them; missing files block startup)
-- Mounted rw in bot and dashboard, :ro (read-only) in bot_mirror — mirror cannot modify files
-- Each instance reads its own mode's file, can write bot-wide keys (dashboard patches both files atomically)
-- Deployment guard: `python3 scripts/split_risk_config.py --apply` (after `git pull`, before Docker rebuild)
-
-**Dashboard layer** (`app/api/_risk-config.ts`):
-- `GET /api/risk?mode=` — returns `{mode, file, config, state}` (state = risk_state file, rebalancer log mode); default bot mode
-- `POST /api/risk` — bot-wide patches write both files; mode-scoped patches write selected mode only
-- `Save All` (full config commit) merges onto fresh read, discards `locked_presets` from body (prevents race condition where dashboard-changed locks revert on save)
-- `/api/risk/reset-hard-stop` — new endpoint (Session 72 fix) replaces the old broken flag
-- Trades page allocation labels + BGF state follow the viewed mode (instance switcher persists to localStorage)
-- Instance switcher (InstanceToggle, `bfb-instance` localStorage key) shows live state (risk_state file, rebalancer log) but settings are shared
-
-**Verified**:
-- End-to-end on server copy: test INJ weight 10 → live stays 9, live-only lock persists, telegram interval writes both, non-bot-wide partial updates only bot mode, Save All preserves locks
-- Python reads identical values in both modes
-- 1129 tests pass
-- Server seed preview (at deploy time): 46 keys, 11 test locks, 4 live locks; ETHFI weight 7
-
-**Mode-switch readiness** (TODOs before live deployment):
-- [ ] Config, data files, preset_efficiency, profit store, locks follow the trading mode ✓ (done)
-- [ ] Instance-named files (results_*, backtest_results_*, risk_state, system_log, rate_limit_state, analysis.jsonl, logs) follow the instance ✓ (done)
-- [ ] Per-mode registry state — STILL SHARED: `symbol_registry.json` (disabled/paused lists, registry weights, leverage overrides) should be per-mode before real live trading
-- [ ] Live also needs LIVE API keys in .env (not set) and the go-live checklist (30-day testnet run, etc.)
-
-**Deploy plan** (awaiting user approval):
-1. On host: `python3 scripts/split_risk_config.py --apply` (after `git pull`, before rebuild)
-2. Check open positions reconcile
-3. Graceful stop: `docker stop -t 60 bot bot_mirror` right after a candle
-4. Rebuild: `docker compose up -d --build`
-5. Verify log line "Risk config: risk_config_test.json (mode=test)" in bot.log and "risk_config_live.json (mode=live)" in bot_live.log
-6. Confirm positions restored, 22-symbol streams reconnected
-
-Spec: `docs/specs/2026-09-26-per-mode-risk-config.md`
-Commits: fa27e6b (spec), 416c266 (bot/config), 8c45c76 (dashboard), 30aac92 (test fix)
+**Still shared before real live trading**: `symbol_registry.json` (disabled/paused lists, registry weights). Live also needs live API keys and the go-live checklist.
 
 ---
 

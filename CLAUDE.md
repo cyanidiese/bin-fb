@@ -113,7 +113,7 @@ Deploy on a Linux VPS (Ubuntu) via Docker. Use the **`/bfb-deploy`** skill for t
 
 Key invariants:
 - Python source is baked into the Docker image — `git pull` alone does NOT update the running bot, always rebuild with `--build`
-- `risk_config.json` is gitignored — update via SSH, never committed
+- `risk_config_test.json` / `risk_config_live.json` (per trading mode; legacy `risk_config.json` is unused) are gitignored — update via SSH (`/bfb-config`), never committed
 - Always stop the bot gracefully (SIGTERM → wait → stop container) before deploying
 - Never deploy without explicit user confirmation
 

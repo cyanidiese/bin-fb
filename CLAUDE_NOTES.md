@@ -1,17 +1,23 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## ⟳ RESUME POINT — Session 72 (continued, 2026-09-26) — Preset profit store deployed, instances audited, picker live circles & allocation labels
+## ⟳ RESUME POINT — Session 72 (2026-09-26) — Per-mode risk config committed (awaiting deploy approval); preset profit & picker completed
 
-**Branch**: feature/mean-reversion-overlay (commits up to c9f7f37)
+**Branch**: feature/mean-reversion-overlay (commits up to 30aac92)
 
-**Completed this session** (all deployed 2026-09-26: dashboard 16:44, bots 16:47 UTC, server at bc2f2cc):
-1. **Commit eff305a (dashboard)** — Live open-position circles (gold real / blue virtual) in trades picker; Real orders widget refreshes every 30s while visible, on tab focus, and after manual close. Picker items show `{weight} - {Alloc%}%` label (shared `dashboard/lib/allocation.ts`, used by Risk page too) with emerald color when weight>0 and enabled.
-2. **Commit 89c4f0d (docs)** — Spec document `docs/specs/2026-09-26-preset-profit-store.md`.
-3. **Commit 2da65a3 (dashboard)** — Preset profit% store: `data/preset_profit_{mode}.json` (~220 KB each, v:1 structure with formula:4). 30s worker per mode recomputes symbols when order mtimes change, "today" boundary crosses PROFIT_TZ, or ≥10 min old. `/api/trades/symbol-scores` reads locked preset (if set) else best Profit% in window. `GET /api/trades/preset-profit?mode[&symbol][&range]; POST {mode, force, symbols}`. `scripts/recalc_symbol_scores.sh` forces recompute via POSTs. Verified 15/15 vs independent Python. Only presets with ≥1 trade appear; presets sort by table order.
-4. **Commit 3ca3ecf (dashboard)** — Trading Orders Profit% column (pnl/margin\*100, "—" for open rows). **Picker bug FIXED**: symbol list checked obsolete `virtual_orders_{SYM}_{mode}.json` (never written), making symbols with only virtual history disappear (APTUSDT 12,936 virtual orders, now visible). Now reads `virtual_orders_rank*_{SYM}_{mode}.json` via readdir.
-5. **Commit c9f7f37 (dashboard+bot)** — Risk config audit: instance switcher (InstanceToggle, localStorage `bfb-instance` shared with Trades page) displays only live state (risk_state file, rebalancer log mode); settings shared between instances. Primary writes `risk_state.json`, mirror `risk_state_{mode}.json`. **BUGS FIXED**: (1) POST /api/risk full save used load-time snapshot, reverting locks changed on Trades page — now merges onto fresh read, never takes `locked_presets` from request body. (2) DrawdownGuard Reset POSTed `_reset_hard_stop` flag that did nothing — now uses `/api/risk/reset-hard-stop`. (3) main.py: only primary consumes `data/reset_hard_stop.signal` (mirror could consume first) — small bot-side change, next deploy.
+**Status**: Per-mode risk config COMPLETED and COMMITTED. All code verified testnet 2026-09-26. **AWAITING USER APPROVAL** before prod deploy (run `python3 scripts/split_risk_config.py --apply` on host, then graceful Docker rebuild).
 
-**Status** (server at bc2f2cc): everything deployed. Dashboard 16:44 UTC — preset Profit% store live (worker + forced rebuild: 7,060 test / 7,429 live numbers), obsolete symbol_sort_scores_*.json deleted. Bots 16:47 UTC via `docker stop -t 60` (no restart-policy bounce); open real SOLUSDT SELL 121.83 saved and restored with SL 125.16. Earlier: Bot deployed 3b70f27 11:22 UTC 2026-09-26 (graceful stop, 22-symbol stream, first real order SOLUSDT 11:30 with exchange SL).
+**Completed this session**:
+1. **Per-mode risk config** (commits fa27e6b spec, 416c266 bot config, 8c45c76 dashboard, 30aac92 test fix) — `risk_config_test.json` / `risk_config_live.json` at repo root (gitignored). Mode selection via `TRADING_MODE` env; bot pin verifies mode on startup. Config path routing: `config_path(mode)`, `load_risk_config(path=None, mode=None)`, `save_risk_config(cfg, path=None, mode=None)`. Live mode cascades: live keys → test keys → DEFAULTS; test mode = test file + DEFAULTS. Bot-wide keys (telegram, notify intervals) written to both files. Dashboard: merges fresh read on Save All (prevents lock reversion race), non-bot-wide edits update only selected mode. Docker: both files mounted rw in bot/dashboard, :ro in mirror. Verified: end-to-end on server copy (test INJ 10 → live 9, live-only lock stays, telegram writes both), Python reads identical, 1129 tests pass. Seeding via `scripts/split_risk_config.py --apply` (host only, never overwrites). One mode-switch TODO: symbol_registry.json still shared (should be per-mode for live trading).
+   
+2. **Preset profit% store** (commits 1dafddf–2da65a3, live 16:44 UTC) — `data/preset_profit_{mode}.json` (v:1, formula:4, ~220 KB). 30s worker per mode, invalidates on order mtime/timezone/TTL. `/api/trades/symbol-scores` reader. Verified 15/15 vs Python.
+
+3. **Picker circles & labels** (commit eff305a) — Gold/blue circles, `{weight} - {Alloc%}%` labels (emerald if enabled). Widget refreshes 30s/focus/manual-close.
+
+4. **Profit% column + picker bug** (commit 3ca3ecf) — Trading Orders column = pnl/margin×100. Fixed: picker now reads `virtual_orders_rank*` (APTUSDT 12,936 visible).
+
+5. **Risk config audit** (commit c9f7f37) — InstanceToggle shows live state; settings shared. Bugs: (1) POST /api/risk merges fresh read, (2) Reset uses `/api/risk/reset-hard-stop`, (3) Primary only consumes reset_hard_stop.signal (bot-side change pending).
+
+**Deployment history**: Bot 3b70f27 deployed 11:22 UTC (graceful stop, 22 symbols, first real SOLUSDT); dashboard + bot 16:44–16:47 UTC (c9f7f37) via `docker stop -t 60`. SOLUSDT SELL 121.83 open, restored with SL 125.16. Server: bc2f2cc.
 
 **APTUSDT investigation** (Session 72 finding): Test disabled 2026-06-11 (8% WR, 23 trades, −$49) + weight 0 → no real orders. Picker bug hid 12,936 virtual orders. Test L2 signal silence since 2026-09-24 12:45 UTC (1/210 candles with signals vs live 125/139) — testnet wicks differ (e.g. 09-23 low 0.7427 test vs 0.7247 live), test L2 marked 'descending' (BOS 0.781) while price 0.879 ~12% above — possible engine quirk worth separate investigation. JUP, LTC, BTC, LINK test also quiet since 09-24.
 

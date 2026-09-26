@@ -68,6 +68,7 @@ class TelegramMenu:
         self._get_active_symbols = get_active_symbols
         self._get_open_orders = get_open_orders
         self._rank_max = rank_max
+        self._last_conflict_log = float("-inf")
 
         self._viewers_path = project_root / "data" / "telegram_viewers.json"
         self._sessions: dict[int, str] = {}
@@ -89,7 +90,20 @@ class TelegramMenu:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(f"TelegramMenu poll error: {exc}")
+                # 409 = another process is polling this token; every update then goes to
+                # one of us at random. It repeats every few seconds for as long as the
+                # other poller lives (30k lines in 3 days), so say it once per 10 min.
+                if '409' in str(exc):
+                    now = time.monotonic()
+                    if now - self._last_conflict_log >= 600:
+                        self._last_conflict_log = now
+                        logger.warning(
+                            "TelegramMenu: 409 Conflict — another process is polling this "
+                            "bot token, so commands may not reach this bot. Rotate the "
+                            "token or stop the other poller. (repeats suppressed 10 min)"
+                        )
+                else:
+                    logger.warning(f"TelegramMenu poll error: {exc}")
                 await asyncio.sleep(5)
 
     def _fetch_updates(self, offset: int) -> list[dict]:

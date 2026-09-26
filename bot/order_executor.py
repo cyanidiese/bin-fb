@@ -126,6 +126,12 @@ class OrderExecutor:
         # still live — see _finalize_close.
         self._pending_close: dict[str, tuple[str, float]] = {}
         self._pending_close_logged: dict[str, str] = {}
+        # Exchange SL orders we tried to retire but could not (a -1003 ban, a network
+        # error). symbol -> [algoId, ...]. A leftover reduce-only STOP_MARKET would fire
+        # against the NEXT position on the symbol, so these are retried every candle and
+        # block new placement on that symbol until they clear. Persisted, because a
+        # restart must not forget an order that is still live on the exchange.
+        self._pending_sl_cancels: dict[str, list[str]] = self._load_pending_sl_cancels()
         self._placing_locks: dict[str, asyncio.Lock] = {}
         self._failure_counts: dict[str, int] = {}
         self._lot_cache: dict[str, dict] = {}  # {symbol: {step_size, min_qty, min_notional}}
@@ -189,6 +195,15 @@ class OrderExecutor:
     ) -> bool:
         lock = self._get_placing_lock(symbol)
         async with lock:
+            if self._pending_sl_cancels.get(symbol):
+                await self.retry_pending_sl_cancels(only_symbol=symbol)
+                if self._pending_sl_cancels.get(symbol):
+                    logger.warning(
+                        f"[{symbol}] Order skipped: previous SL algo order(s) "
+                        f"{self._pending_sl_cancels[symbol]} still live on the exchange — "
+                        f"it would fire against the new position"
+                    )
+                    return False
             self._states[symbol] = OrderState.PLACING
             try:
                 rounded_qty = await self.round_quantity(symbol, quantity)
@@ -500,6 +515,7 @@ class OrderExecutor:
         # Retry any exit whose exchange close failed earlier (e.g. during a ban)
         # before evaluating fresh triggers.
         closed = await self.retry_pending_closes()
+        await self.retry_pending_sl_cancels()
         for symbol, fake_order in list(self._fake_orders.items()):
             if symbol in self._pending_close:
                 continue  # already handled by the retry above
@@ -564,6 +580,7 @@ class OrderExecutor:
         # An exit we decided on earlier but could not execute (a ban, a transient
         # rejection) is retried here first — this is the live per-candle entry point.
         retried = await self.retry_pending_closes(only_symbol=symbol)
+        await self.retry_pending_sl_cancels(only_symbol=symbol)
         if retried:
             return retried
         if symbol in self._pending_close:
@@ -835,23 +852,97 @@ class OrderExecutor:
             logger.warning(f"[{symbol}] Failed to place SL algo order (no crash protection): {exc}")
             return None
 
-    async def _cancel_exchange_order(self, symbol: str, order_id: str | None) -> None:
-        """Cancel a SL algo order by algoId. No-op if order_id is None or not found."""
+    async def _cancel_exchange_order(self, symbol: str, order_id: str | None) -> bool:
+        """Cancel a SL algo order by algoId. Returns True once the order is gone.
+
+        -2011 "Unknown order" counts as gone: the SL already fired or was removed, which
+        is most of the historical failures and harmless. Anything else — a -1003 ban,
+        a timeout — leaves a live reduce-only stop on the exchange, so the id is queued
+        in _pending_sl_cancels and retried (see retry_pending_sl_cancels).
+        """
         if self._feed is None or not order_id:
-            return
+            return True
         client = self._feed.client
         if not hasattr(client, 'futures_cancel_algo_order'):
             logger.warning(f"[{symbol}] python-binance too old — futures_cancel_algo_order missing")
-            return
+            return True
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
         try:
             await asyncio.to_thread(
                 client.futures_cancel_algo_order,
                 symbol=symbol,
                 algoId=int(order_id),
             )
+            rl_guard.note_success(_key)
             logger.info(f"[{symbol}] SL algo order cancelled: algoId={order_id}")
         except Exception as exc:
-            logger.warning(f"[{symbol}] Failed to cancel algo order {order_id}: {exc}")
+            if getattr(exc, 'code', None) == -2011:
+                logger.info(f"[{symbol}] SL algo order {order_id} already gone (-2011) — nothing to cancel")
+            else:
+                rl_guard.note_exception(_key, exc)
+                queued = self._pending_sl_cancels.setdefault(symbol, [])
+                if order_id not in queued:
+                    queued.append(order_id)
+                    self._save_pending_sl_cancels()
+                logger.warning(
+                    f"[{symbol}] Failed to cancel algo order {order_id}: {exc} — "
+                    f"queued for retry; new orders on {symbol} wait until it clears"
+                )
+                return False
+        if order_id in self._pending_sl_cancels.get(symbol, []):
+            self._pending_sl_cancels[symbol].remove(order_id)
+            if not self._pending_sl_cancels[symbol]:
+                del self._pending_sl_cancels[symbol]
+            self._save_pending_sl_cancels()
+        return True
+
+    async def retry_pending_sl_cancels(self, only_symbol: str | None = None) -> None:
+        """Re-attempt SL cancels that failed earlier. Waits out an active ban rather
+        than knocking on it — each call while banned extends the ban."""
+        if not self._pending_sl_cancels or self._feed is None:
+            return
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        if rl_guard.blocked_for(_key) > 0:
+            return
+        for symbol, ids in list(self._pending_sl_cancels.items()):
+            if only_symbol is not None and symbol != only_symbol:
+                continue
+            for order_id in list(ids):
+                if await self._cancel_exchange_order(symbol, order_id):
+                    logger.info(f"[{symbol}] Pending SL cancel {order_id} cleared on retry")
+                else:
+                    return  # still failing — stop here, the next candle tries again
+
+    def _pending_sl_cancels_path(self) -> 'Path | None':
+        if self._project_root is None:
+            return None
+        return self._project_root / 'data' / f'pending_sl_cancels_{self._mode}.json'
+
+    def _load_pending_sl_cancels(self) -> dict[str, list[str]]:
+        path = self._pending_sl_cancels_path()
+        if path is None or not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text())
+            out = {str(k): [str(i) for i in v] for k, v in data.items() if v}
+            if out:
+                logger.warning(f"Restored pending SL cancels from disk: {out}")
+            return out
+        except Exception as exc:
+            logger.warning(f"Failed to load pending SL cancels from {path}: {exc}")
+            return {}
+
+    def _save_pending_sl_cancels(self) -> None:
+        path = self._pending_sl_cancels_path()
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(self._pending_sl_cancels))
+            tmp.replace(path)
+        except Exception as exc:
+            logger.warning(f"Failed to persist pending SL cancels: {exc}")
 
     async def _submit_to_exchange(self, symbol: str, side: str, quantity: float, leverage: int) -> str | None:
         if self._feed is None:
@@ -1201,6 +1292,7 @@ class OrderExecutor:
         """Call after close_all_orders_at_market() when switching modes."""
         self._mode = new_mode
         self._lot_cache.clear()  # re-fetch lot sizes for the new endpoint
+        self._pending_sl_cancels = self._load_pending_sl_cancels()  # per-mode file
         logger.info(f"OrderExecutor mode reset to {new_mode}")
 
     # TRADIFI_PERPETUAL = gold/silver (XAUUSDT, XAGUSD) — behave like regular perps

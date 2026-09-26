@@ -16,6 +16,7 @@ from config.presets import ALL_PRESETS, LOCKED_PRESETS, PRESETS
 from config.settings import (
     load_settings, Settings, max_profit_cap_applies, clamp_sl_to_max,
 )
+from bot.log_redact import RedactingFormatter
 from bot.rate_limit_guard import (
     guard as rl_guard, RateLimited, _SETTLE_S, unresolved_ban_endpoints,
 )
@@ -140,7 +141,7 @@ def _log_paths() -> tuple[Path, Path]:
 
 def setup_logging() -> None:
     Path('logs').mkdir(exist_ok=True)
-    fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    fmt = RedactingFormatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
     _bot_log, _trades_log = _log_paths()
 
     general = logging.handlers.RotatingFileHandler(
@@ -152,7 +153,7 @@ def setup_logging() -> None:
     root.setLevel(logging.INFO)
     root.addHandler(general)
 
-    trades_fmt = logging.Formatter('%(asctime)s %(message)s')
+    trades_fmt = RedactingFormatter('%(asctime)s %(message)s')
     trades_handler = logging.handlers.RotatingFileHandler(
         str(_trades_log), maxBytes=10 * 1024 * 1024, backupCount=5
     )

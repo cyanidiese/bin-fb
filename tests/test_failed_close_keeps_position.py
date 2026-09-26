@@ -38,6 +38,7 @@ def ex():
     e._closing = set()
     e._pending_close = {}
     e._pending_close_logged = {}
+    e._pending_sl_cancels = {}
     e._symbol_candle_index = {}
     e._notifier = MagicMock()
     e._record_real_order_close = MagicMock()

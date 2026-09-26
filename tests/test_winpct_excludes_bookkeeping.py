@@ -48,4 +48,5 @@ def test_no_division_by_zero():
 
 def test_the_trade_count_column_is_unchanged():
     """Only the rate is corrected; the count still shows every close, with the tooltip."""
-    assert 'const totalTrades  = realCount + virtualCount' in PAGE
+    # The count is rendered from the row, so the Trades column still includes every close.
+    assert 'const totalCount = row.realCount + row.virtualCount' in PAGE

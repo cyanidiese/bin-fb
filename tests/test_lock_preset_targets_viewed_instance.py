@@ -13,6 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE = (ROOT / 'dashboard/app/api/risk/lock-preset/route.ts').read_text()
 PAGE = (ROOT / 'dashboard/app/trades/page.tsx').read_text()
+# Mode validation and the bot-mode fallback live in the shared per-mode config helper
+# since the risk config split per mode (docs/specs/2026-09-26-per-mode-risk-config.md).
+HELPER = (ROOT / 'dashboard/app/api/_risk-config.ts').read_text()
 
 
 def test_the_route_accepts_a_mode_from_the_caller():
@@ -21,12 +24,13 @@ def test_the_route_accepts_a_mode_from_the_caller():
 
 def test_the_route_validates_the_mode():
     """An arbitrary string would create a junk key in locked_presets."""
-    assert "=== 'test'" in ROUTE and "=== 'live'" in ROUTE
+    assert 'modeOr(requestedMode)' in ROUTE
+    assert "m === 'test' || m === 'live'" in HELPER
 
 
 def test_the_route_falls_back_to_the_bot_mode():
     """Callers that do not specify an instance must keep working."""
-    assert 'currentMode()' in ROUTE
+    assert 'isMode(requested) ? requested : botMode()' in HELPER
 
 
 def test_the_page_sends_the_viewed_instance():

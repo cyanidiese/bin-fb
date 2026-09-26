@@ -1,26 +1,31 @@
 ---
 name: bfb-config
 description: >
-  Update risk_config_test.json / risk_config_live.json on the Binance Futures bot server. Trigger on: "update
+  Update risk_config_shared.json / risk_config_{test,live}.json or the per-mode symbol
+  registry on the Binance Futures bot server. Trigger on: "update
   risk config", "change config", "block a preset", "add to blocklist", "set global
   min rr", "disable symbol", "change weight", "update risk_config", "hot-reload",
   any request to change a runtime parameter without a full deploy.
 ---
 
-# BFB — Update the per-mode risk config
+# BFB — Update the risk config and symbol registry
 
-Since 2026-09-26 each trading mode has its own file (spec
-`docs/specs/2026-09-26-per-mode-risk-config.md`):
+Since 2026-09-26 (specs `docs/specs/2026-09-26-per-mode-risk-config.md`,
+`docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md`):
 
-| File | Read by (bot_mode = test) |
+| File | What it holds (bot_mode = test) |
 |---|---|
-| `/opt/bot/risk_config_test.json` | `bot` — the primary, **real orders** |
-| `/opt/bot/risk_config_live.json` | `bot_mirror` — virtual only; keys it lacks fall back to the test file |
-| `/opt/bot/risk_config.json` | **nobody** — legacy, kept only as the rollback path. Editing it does nothing. |
+| `/opt/bot/risk_config_shared.json` | **Both modes**: signal filters (`global_*`, `entry_zone_max_pct`, `per_symbol_settings`), preset ranking (`preset_blocklist`, `ranking_window_size`, `min_trades_for_ranking*`, `preset_hysteresis_pct`, `preset_cooldown_trades`), Telegram, backtest method, slippage/virtual accounting. Full list: `SHARED_KEYS` in `config/risk_config.py`. |
+| `/opt/bot/risk_config_test.json` | `bot` — the primary, **real orders**: weights, leverage, sizing, loss limits, real-order gates, locks |
+| `/opt/bot/risk_config_live.json` | `bot_mirror` — the same per-mode keys for live; keys it lacks fall back to the test file |
+| `/opt/bot/symbol_registry_shared.json` | the symbol list (both modes) |
+| `/opt/bot/symbol_registry_{test,live}.json` | per mode: `disabled`, `paused`, `disabled_ranks`, `weights`, `leverage_overrides` |
+| `/opt/bot/risk_config.json`, `/opt/bot/symbol_registry.json` | **nobody** — legacy, frozen rollback path. Editing them does nothing. |
 
-Decide which mode the change is for. For a change both instances should see, write it to
-both files. Bot-wide keys (`telegram`, `*_interval_s`, `startup_backtest`,
-`backtest_klines`) must always be written to both.
+**A shared key goes in `risk_config_shared.json` only** — a copy in a mode file is ignored
+(the shared file wins). A per-mode key: decide which mode; for a faithful live rehearsal,
+write it to both mode files. Disabling a symbol: edit `symbol_registry_{mode}.json`, or use
+the Settings page (Test / Live buttons per symbol).
 
 The files are **gitignored** — never committed to the repo.
 Changes take effect on the **next candle close** (hot-reload, no restart needed).
@@ -34,7 +39,7 @@ SSH alias: `ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no root@185.237.14
 ```bash
 ssh ... "python3 << 'PYEOF'
 import json
-for mode in ['test']:            # ['test', 'live'] for both instances
+for mode in ['test']:            # ['test', 'live'] for both; ['shared'] for a SHARED_KEYS key
     path = f'/opt/bot/risk_config_{mode}.json'
     with open(path, 'r') as f:
         cfg = json.load(f)

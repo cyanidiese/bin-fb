@@ -171,6 +171,16 @@ ssh ... "until grep -q 'Combined stream connected' /opt/bot/logs/bot.log; do sle
 
 ## Deploy wipes the symbol roster — restore it afterwards
 
+**Obsolete once `symbol_registry_shared.json` exists on the server** (spec
+`2026-09-26-shared-settings-and-per-mode-registry.md`). From then on the roster and the
+per-mode decisions live in gitignored files (`symbol_registry_shared.json`,
+`symbol_registry_{test,live}.json`, `risk_config_shared.json`); the tracked
+`symbol_registry.json` is a frozen rollback copy nothing reads, so a reset of it is
+harmless. The first deploy of that change must run
+`python3 scripts/split_shared_and_registry.py --apply` on the host **after the bots stop
+and before the rebuild** (single-file bind mounts: a missing file becomes a directory).
+Until then, the procedure below still applies.
+
 `symbol_registry.json` is **tracked by git**, so step 4's `git reset --hard HEAD` silently
 reverts it to the committed roster. Any symbol added or removed since that commit is lost.
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -117,27 +118,93 @@ DEFAULT_CONFIG: dict = {
     "tats_degradation_max_drop_pct": 50.0,
 }
 
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "risk_config.json"
+_ROOT = Path(__file__).resolve().parent.parent
+# The legacy single config. Nothing reads it for trading any more — it is the seed for
+# risk_config_test.json (scripts/split_risk_config.py) and the rollback path. Kept under
+# this name because tests and explicit-path callers import it.
+_CONFIG_PATH = _ROOT / "risk_config.json"
+
+MODES = ("test", "live")
+
+# Keys about the bot process rather than a trading mode. Stored in both mode files so each
+# is complete on its own; the dashboard writes them to both.
+BOT_WIDE_KEYS = (
+    "telegram", "telegram_notify_interval_s", "emergency_repeat_interval_s",
+    "warning_repeat_interval_s", "startup_backtest", "backtest_klines",
+)
+
+# The trading mode this process runs. main.py sets it first thing; backtest.py from
+# --mode. Unset → TRADING_MODE env → test.
+_active_mode: str | None = None
 
 
-def load_risk_config(path: Path = _CONFIG_PATH) -> dict:
-    """Read risk_config.json, creating it with defaults if missing or corrupt."""
+def set_active_mode(mode: str) -> None:
+    """Pin which risk_config_{mode}.json this process reads and writes by default."""
+    global _active_mode
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+    _active_mode = mode
+
+
+def active_mode() -> str:
+    if _active_mode is not None:
+        return _active_mode
+    env = os.getenv("TRADING_MODE", "").strip().lower()
+    return env if env in MODES else "test"
+
+
+def config_path(mode: str | None = None) -> Path:
+    """risk_config_{mode}.json — per trading mode, NOT per instance, so a bot_mode switch
+    brings each market's own settings with it. Spec: docs/specs/2026-09-26-per-mode-risk-config.md"""
+    return _ROOT / f"risk_config_{mode or active_mode()}.json"
+
+
+def _read(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_risk_config(path: Path | None = None, mode: str | None = None) -> dict:
+    """The risk config for a trading mode (default: this process's).
+
+    Live falls back key by key to the test file: a key live lacks — one added to test
+    later — reads test's value, which is the user's rule that missing live config comes
+    from test. locked_presets is nested per mode ({"test": {...}} in the test file), so
+    that fallback can never hand testnet's locks to live.
+
+    Never creates a file: the mirror mounts its config read-only. With an explicit `path`
+    the old single-file behaviour applies (tests, tools), including creating defaults.
+    """
+    if path is not None:
+        # An explicit per-mode path is still a per-mode read: same fallback, no create.
+        for m_ in MODES:
+            try:
+                if path.resolve() == config_path(m_).resolve():
+                    return load_risk_config(mode=m_)
+            except OSError:
+                pass
+        with _LOCK:
+            if not path.exists():
+                _atomic_write(path, DEFAULT_CONFIG)
+                return dict(DEFAULT_CONFIG)
+            try:
+                return {**DEFAULT_CONFIG, **json.loads(path.read_text())}
+            except Exception:
+                return dict(DEFAULT_CONFIG)
+    m = mode or active_mode()
     with _LOCK:
-        if not path.exists():
-            _atomic_write(path, DEFAULT_CONFIG)
-            return dict(DEFAULT_CONFIG)
-        try:
-            data = json.loads(path.read_text())
-            # Forward-compatible: new keys from DEFAULT_CONFIG appear automatically
-            return {**DEFAULT_CONFIG, **data}
-        except Exception:
-            return dict(DEFAULT_CONFIG)
+        base = _read(config_path("test")) if m == "live" else {}
+        own = _read(config_path(m))
+    return {**DEFAULT_CONFIG, **base, **own}
 
 
-def save_risk_config(config: dict, path: Path = _CONFIG_PATH) -> None:
-    """Persist config atomically (write tmp → rename)."""
+def save_risk_config(config: dict, path: Path | None = None, mode: str | None = None) -> None:
+    """Persist config to `path`, or to this mode's risk_config_{mode}.json."""
     with _LOCK:
-        _atomic_write(path, config)
+        _atomic_write(path if path is not None else config_path(mode), config)
 
 
 def _atomic_write(path: Path, data: dict) -> None:

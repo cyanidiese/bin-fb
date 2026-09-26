@@ -28,7 +28,7 @@ from bot.data_feed import DataFeed
 from bot.exporter import export, _results_path
 from bot.instance_paths import backtest_results_name
 from bot.recommendation_engine import RecommendationEngine
-from config.risk_config import load_risk_config, _CONFIG_PATH as RISK_CONFIG_PATH
+from config.risk_config import load_risk_config, config_path as risk_config_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,11 +129,13 @@ def run_for_symbol(symbol: str, args) -> None:
         logger.warning(f"[{symbol}] Failed to write strategy results: {_e}")
 
     all_presets = ALL_PRESETS
-    risk_cfg = load_risk_config(RISK_CONFIG_PATH)
+    # risk_config_{mode}.json for the mode this run trades: --mode sets TRADING_MODE,
+    # which config.risk_config.active_mode() falls back to (per-mode config spec).
+    risk_cfg = load_risk_config()
     backtester = Backtester(
         base_settings=settings,
         initial_balance=risk_cfg.get("backtest_initial_balance_usdt", 0.0),
-        risk_config_path=RISK_CONFIG_PATH,
+        risk_config_path=risk_config_path(),
     )
     results = backtester.run(klines, all_presets)
 

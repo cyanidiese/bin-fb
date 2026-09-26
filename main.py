@@ -39,7 +39,7 @@ from bot.risk_manager import RiskManager
 from bot.leverage_scenario import create_scenario
 from config.risk_config import (
     load_risk_config, save_risk_config, get_min_trades_for_ranking,
-    locked_presets_for,
+    locked_presets_for, set_active_mode, config_path as risk_config_path,
 )
 from bot.balance_history import last_known as bh_last_known, record as bh_record
 from bot.decision_log import record as dl_record
@@ -227,6 +227,14 @@ async def _mirror_watch(mode_manager: "ModeManager") -> None:
 async def run() -> None:
     logger = logging.getLogger('main')
     trades_logger = logging.getLogger('trades')
+    # Pin this process's risk config to the market it trades BEFORE the first read:
+    # risk_config_{mode}.json, per trading mode (spec 2026-09-26-per-mode-risk-config).
+    # Same inputs as _log_paths/_instance_mode below: the mirror trades the opposite of
+    # bot_mode. Checked against the resolved mode once ModeManager exists.
+    _cfg_mirror = os.getenv('VIRTUAL_ONLY', 'false').lower() in ('1', 'true', 'yes')
+    _cfg_mode = opposite_mode(read_mode_file()) if _cfg_mirror else read_mode_file()
+    set_active_mode(_cfg_mode)
+    logger.info(f"Risk config: {risk_config_path().name} (mode={_cfg_mode})")
     risk_cfg = load_risk_config()
     _get_min_trades = lambda sym: get_min_trades_for_ranking(risk_cfg, sym)
 
@@ -290,6 +298,11 @@ async def run() -> None:
             f"Mode resolution disagreement: notifier paths used {_instance_mode!r} but "
             f"ModeManager resolved {mode_manager.current_mode!r}"
         )
+    if current_mode != _cfg_mode:
+        # Same two inputs, so unreachable; if it ever happens, trading on the other
+        # market's risk settings is the one outcome that must not be silent.
+        raise RuntimeError(
+            f"Risk config mode {_cfg_mode!r} disagrees with resolved mode {current_mode!r}")
 
     risk_manager = RiskManager(
         mode=current_mode,
@@ -411,7 +424,7 @@ async def run() -> None:
         get_klines_fn=lambda sym: analyzers[sym].get_klines() if sym in analyzers else [],
         candle_duration_ms=_tf_to_ms(timeframe),
         mode=current_mode,
-        risk_config_path=Path("risk_config.json"),
+        risk_config_path=risk_config_path(current_mode),
         data_dir=Path("data"),
         cfg=_wr_cfg,
     )

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from bot.instance_paths import backtest_results_name
+from config.risk_config import config_path as _risk_config_path
 
 if TYPE_CHECKING:
     from bot.notifier import Notifier
@@ -33,7 +34,6 @@ _MIN_PRESET_TRADES = 4   # presets with fewer trades are excluded from scoring
 _DEFAULT_MAX_PEAK_JUMP_PCT = 20.0
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "risk_config.json"
 _DEFAULT_STATE_PATH = _PROJECT_ROOT / "dashboard" / "public" / "risk_state.json"
 _DEFAULT_RESULTS_DIR = _PROJECT_ROOT / "dashboard" / "public"
 
@@ -50,7 +50,7 @@ class RiskManager:
         self,
         mode: Literal["backtest", "test", "live"],
         initial_balance: float = 1000.0,
-        config_path: Path = _DEFAULT_CONFIG_PATH,
+        config_path: Path | None = None,
         state_path: Path = _DEFAULT_STATE_PATH,
         backtest_results_dir: Path = _DEFAULT_RESULTS_DIR,
         notifier: Notifier | None = None,
@@ -61,7 +61,10 @@ class RiskManager:
         # is unchanged; only the virtual-only mirror passes True, and only so it reads
         # its own backtest rather than the numbers the primary sizes real orders from.
         self._mirror = mirror
-        self._config_path = config_path
+        # risk_config_{mode}.json for a trading mode (per-mode config spec, 2026-09-26);
+        # a backtest RiskManager uses this process's active mode.
+        self._config_path = config_path if config_path is not None else (
+            _risk_config_path(mode) if mode in ("test", "live") else _risk_config_path())
         self._state_path = state_path
         self._results_dir = backtest_results_dir
         self._notifier = notifier
@@ -97,7 +100,7 @@ class RiskManager:
 
         logger.info(
             f"RiskManager({mode}) — balance={initial_balance:.2f} USDT "
-            f"config={config_path}"
+            f"config={self._config_path}"
         )
 
     # ------------------------------------------------------------------ #

@@ -16,7 +16,7 @@ from pathlib import Path
 import requests
 
 from config.settings import load_settings
-from config.risk_config import load_risk_config, _CONFIG_PATH as _RISK_CONFIG_PATH
+from config.risk_config import load_risk_config
 from bot.data_feed import DataFeed
 from bot.backtester import Backtester
 
@@ -175,7 +175,7 @@ class SymbolDiscovery:
         if not preset_subset:
             return None
 
-        risk_cfg = load_risk_config(_RISK_CONFIG_PATH)
+        risk_cfg = load_risk_config()   # this process's mode (TRADING_MODE)
         backtester = Backtester(
             base_settings=settings,
             initial_balance=risk_cfg.get("backtest_initial_balance_usdt", 0.0),

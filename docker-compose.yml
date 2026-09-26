@@ -8,6 +8,11 @@ services:
       - ./logs:/app/logs
       - ./dashboard/public:/app/dashboard/public
       - ./risk_config.json:/app/risk_config.json
+      # Per-mode risk config (docs/specs/2026-09-26-per-mode-risk-config.md). Both are
+      # mounted: which one this instance reads follows bot_mode. They must exist on the
+      # host first (scripts/split_risk_config.py), or Docker creates directories.
+      - ./risk_config_test.json:/app/risk_config_test.json
+      - ./risk_config_live.json:/app/risk_config_live.json
       - ./symbol_registry.json:/app/symbol_registry.json
     command: >
       sh -c 'cd /app && exec .venv/bin/python3 main.py >> /app/logs/bot.log 2>&1'
@@ -54,6 +59,8 @@ services:
       # :ro is the backstop if one is ever missed, and SymbolRegistry(read_only=True)
       # closes the one write reachable from its constructor.
       - ./risk_config.json:/app/risk_config.json:ro
+      - ./risk_config_test.json:/app/risk_config_test.json:ro
+      - ./risk_config_live.json:/app/risk_config_live.json:ro
       - ./symbol_registry.json:/app/symbol_registry.json:ro
     # Python's own handler writes logs/bot_{mode}.log; this redirect only catches
     # crashes that happen before logging initialises. Both need rotation.
@@ -73,6 +80,11 @@ services:
       - ./logs:/app/logs
       - ./dashboard/public:/app/dashboard/public
       - ./risk_config.json:/app/risk_config.json
+      # Per-mode risk config (docs/specs/2026-09-26-per-mode-risk-config.md). Both are
+      # mounted: which one this instance reads follows bot_mode. They must exist on the
+      # host first (scripts/split_risk_config.py), or Docker creates directories.
+      - ./risk_config_test.json:/app/risk_config_test.json
+      - ./risk_config_live.json:/app/risk_config_live.json
       - ./symbol_registry.json:/app/symbol_registry.json
     command: >
       sh -c 'cd /app/dashboard && node_modules/.bin/next start -p 3000'

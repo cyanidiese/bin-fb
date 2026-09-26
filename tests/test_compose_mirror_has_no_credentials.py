@@ -102,9 +102,14 @@ def test_mirror_does_not_pin_a_trading_mode(mirror):
 
 def test_mirror_config_is_read_only(mirror):
     ro = [v for v in mirror['volumes'] if v.endswith(':ro')]
-    assert len(ro) == 2, f'risk_config and symbol_registry must both be :ro, got {ro}'
-    assert any('risk_config.json' in v for v in ro)
-    assert any('symbol_registry.json' in v for v in ro)
+    # Legacy risk_config.json, both per-mode risk configs (which one the mirror reads
+    # follows bot_mode), and symbol_registry — the mirror may write none of them.
+    assert len(ro) == 4, f'every risk config and symbol_registry must be :ro, got {ro}'
+    for name in ('risk_config.json', 'risk_config_test.json', 'risk_config_live.json',
+                 'symbol_registry.json'):
+        assert any(name in v for v in ro), name
+    config_mounts = [v for v in mirror['volumes'] if 'risk_config' in v]
+    assert all(v.endswith(':ro') for v in config_mounts), config_mounts
 
 
 def test_mirror_restarts_so_a_mode_flip_takes_effect(mirror):

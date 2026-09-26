@@ -39,6 +39,8 @@ data/
 # Bot runtime
 /STOP
 risk_config.json
+risk_config_test.json
+risk_config_live.json
 
 # Runtime state files (generated at runtime, not committed)
 data/bot_pid.json

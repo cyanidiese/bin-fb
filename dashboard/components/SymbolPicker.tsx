@@ -1,6 +1,7 @@
 'use client'
 
 import type { SymbolScore } from '@/lib/presetProfit'
+import type { SymbolAlloc } from '@/lib/allocation'
 
 interface Props {
   symbols: string[]
@@ -20,6 +21,8 @@ interface Props {
    *  caller sorted `symbols` by. Tooltip only;
    *  the order itself is the caller's. */
   scores?: Record<string, SymbolScore>
+  /** Weight and Alloc% from the Risk module, shown top-left as "{weight} - {alloc}%". */
+  allocs?: Record<string, SymbolAlloc>
   /** The shortcut the scores cover, e.g. "Last 7 days". */
   scoresLabel?: string
 }
@@ -32,9 +35,14 @@ interface Props {
  * top-right. Every marker prop is optional, so callers that only need plain buttons
  * pass none.
  */
+/** 3 → "3", 2.5 → "2.5", 0.3333 → "0.33". */
+function fmtWeight(w: number): string {
+  return String(Math.round(w * 100) / 100)
+}
+
 export default function SymbolPicker({
   symbols, selected, onSelect,
-  disabled, dimmed, openReal, openVirtual, instanceLabel, scores, scoresLabel,
+  disabled, dimmed, openReal, openVirtual, instanceLabel, scores, scoresLabel, allocs,
 }: Props) {
   if (symbols.length === 0) return null
   const where = instanceLabel ? ` on ${instanceLabel}` : ''
@@ -63,8 +71,17 @@ export default function SymbolPicker({
             + `${score.n != null ? ` over ${score.n} trade${score.n === 1 ? '' : 's'}` : ''}`
             + `${scoresLabel ? ` (${scoresLabel})` : ''}`
 
+        const alloc = allocs?.[sym]
+        const allocText = alloc
+          ? `${fmtWeight(alloc.weight)} - ${alloc.allocPct === null ? '—' : alloc.allocPct.toFixed(1)}%`
+          : null
+        // A weight above 0 on an enabled symbol is what lets it place real orders, so
+        // those read brighter; zero-weight labels stay quiet.
+        const funded = !!alloc && alloc.weight > 0 && !isDisabled
+
         const title = [
           sym,
+          allocText ? `weight ${fmtWeight(alloc!.weight)}, allocation ${alloc!.allocPct === null ? 'none' : `${alloc!.allocPct.toFixed(1)}%`} (Risk page)` : null,
           scoreText,
           isDisabled ? 'disabled in the registry' : null,
           openKind === 'real' ? `real position open${where}` : null,
@@ -77,12 +94,22 @@ export default function SymbolPicker({
             key={sym}
             onClick={() => onSelect(sym)}
             title={title}
-            className={`relative px-3 py-1 rounded text-xs font-semibold transition-colors ${
+            className={`relative px-3 ${allocs ? 'pt-3 pb-1' : 'py-1'} rounded text-xs font-semibold transition-colors ${
               sym === selected
                 ? 'bg-indigo-600 text-white'
                 : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
             } ${isDimmed && sym !== selected ? 'opacity-60' : ''}`}
           >
+            {/* Top-left: weight and allocation share, as the Risk page shows them. */}
+            {allocText && (
+              <span
+                className={`absolute top-0.5 left-1.5 text-[9px] leading-none font-normal ${
+                  sym === selected ? 'text-indigo-200' : funded ? 'text-emerald-300' : 'text-gray-500'
+                }`}
+              >
+                {allocText}
+              </span>
+            )}
             {sym}
 
             {/* Top-right: a position is open right now in the viewed instance.

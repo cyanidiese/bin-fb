@@ -47,10 +47,13 @@ export default function RealOrdersWidget({
   mode,
   onSelectSymbol,
   selectedSymbol,
+  refreshKey = 0,
 }: {
   mode: string
   onSelectSymbol?: (symbol: string) => void
   selectedSymbol?: string
+  /** Change it to re-read — the page bumps it after a close and on its 30 s refresh. */
+  refreshKey?: number
 }) {
   const [data, setData] = useState<Payload | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,12 +65,13 @@ export default function RealOrdersWidget({
     let alive = true
     fetch(`/api/trades/real?mode=${mode}&limit=100`)
       .then(r => (r.ok ? r.json() : Promise.reject(r.statusText)))
-      .then((d: Payload) => { if (alive) setData(d) })
+      .then((d: Payload) => { if (alive) { setData(d); setError(null) } })
       .catch(e => { if (alive) setError(String(e)) })
     return () => { alive = false }
-  }, [mode])
+  }, [mode, refreshKey])
 
-  if (error) {
+  // A failed background refresh keeps the last good table; only a first load shows it.
+  if (error && !data) {
     return (
       <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-3 text-xs text-red-400">
         Real orders unavailable: {error}

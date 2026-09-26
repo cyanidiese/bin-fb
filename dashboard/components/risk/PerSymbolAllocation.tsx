@@ -6,6 +6,7 @@ import { reweightAfterDrag } from './reweight'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { RiskConfig, RiskState } from '@/lib/risk-types'
+import { symbolAllocations } from '@/lib/allocation'
 import { INPUT_CLS, SECTION_CLS, SECTION_HEADER_CLS, SECTION_BODY_CLS } from '@/lib/risk-styles'
 
 type SortCol = 'symbol' | 'score' | 'alloc' | 'usdt' | 'leverage'
@@ -50,6 +51,8 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
   }
 
   const totalWeight = Object.values(config.symbol_weights).reduce((a, b) => a + b, 0) || 1
+  // Alloc% cells come from the shared helper the Trades page picker also uses.
+  const allocs = symbolAllocations(config, state, availableSymbols, !!bgfMode)
 
   // BGF: compute deployable pool from the configured balance and current config values
   // so that editing Balance Tiers, min_balance_pct, or backtest_initial_balance_usdt
@@ -303,7 +306,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     const rawScore = live?.performance_score ?? null  // null = no backtest yet
                     const effScore = effectiveScoreOf(sym)
                     const share = (isActive && totalScore > 0) ? effScore / totalScore : 0
-                    const allocPct = (share * 100).toFixed(1)
+                    const allocPct = (allocs[sym]?.allocPct ?? share * 100).toFixed(1)
                     const allocUSDT = deployable * share
                     const rowCls = isActive
                       ? 'border-b border-gray-900 hover:bg-gray-900/40'
@@ -375,7 +378,7 @@ export default function PerSymbolAllocation({ config, state, availableSymbols, p
                     )
                   }
                   const w = config.symbol_weights[sym] ?? 1
-                  const allocPct = (w / totalWeight * 100).toFixed(1)
+                  const allocPct = (allocs[sym]?.allocPct ?? w / totalWeight * 100).toFixed(1)
                   const allocUsdt = (w / totalWeight) * deployable
                   const lev = config.symbol_leverage?.[sym] ?? computeLeverage(sym)
                   return (

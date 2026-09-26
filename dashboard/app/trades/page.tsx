@@ -16,6 +16,8 @@ import {
   filterTradesData, filterKlines, RANGE_PRESETS, presetRange,
 } from '@/lib/tradesDateRange'
 import { presetProfitPct, type SymbolScore } from '@/lib/presetProfit'
+import { isBgf, symbolAllocations } from '@/lib/allocation'
+import type { RiskConfig, RiskState } from '@/lib/risk-types'
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -244,7 +246,7 @@ function SortTh({
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function TradesPage() {
-  const { symbol, setSymbol } = useSymbolContext()
+  const { symbol, setSymbol, availableSymbols } = useSymbolContext()
   const [data, setData] = useState<TradesData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [klines, setKlines] = useState<Kline[]>([])
@@ -274,6 +276,12 @@ export default function TradesPage() {
   // range would mean computing a score for every date combination. 30d matches the
   // default ~1-month range.
   const [sortRange, setSortRange] = useLocalStorage<string>('trades-picker-sort-range', '30d')
+  const listsReq = useRef(0)
+  // Risk module inputs for the picker's "{weight} - {Alloc%}%" labels.
+  const [riskConfig, setRiskConfig] = useState<RiskConfig | null>(null)
+  const [riskState, setRiskState] = useState<RiskState | null>(null)
+  // Bumped to make the Real orders widget re-read; see refreshOpenPositions.
+  const [positionsTick, setPositionsTick] = useState(0)
   const [disabledOpen, setDisabledOpen] = useLocalStorage<boolean>('trades-disabled-symbols:open', true)
   const sortRangeKey = activeRangePreset ?? sortRange
   // Top-preset Profit% per symbol for (viewed instance, sortRangeKey), from
@@ -382,7 +390,13 @@ export default function TradesPage() {
   const disabledSymbolSet = useMemo(
     () => new Set(Object.keys(disabledSymbols)), [disabledSymbols])
 
+  const allocs = useMemo(
+    () => riskConfig ? symbolAllocations(riskConfig, riskState, availableSymbols, isBgf(riskConfig)) : undefined,
+    [riskConfig, riskState, availableSymbols],
+  )
+
   const pickerProps = {
+    allocs,
     symbols: symbolsWithOrders,
     selected: symbol,
     onSelect: setSymbol,
@@ -449,26 +463,69 @@ export default function TradesPage() {
       .catch(() => setKlines([]))
   }, [symbol, resultsFile])
 
-  useEffect(() => {
-    let cancelled = false
-    Promise.all((['test', 'live'] as const).map(m =>
+  /** Re-read which symbols have orders and which hold an open position (the picker's
+   *  gold/blue circles). A failed instance keeps its previous entry rather than
+   *  blanking the picker. */
+  function loadSymbolLists() {
+    const req = ++listsReq.current
+    return Promise.all((['test', 'live'] as const).map(m =>
       fetch(`/api/trades/symbols?mode=${m}`)
         .then(r => r.ok ? r.json() : null)
         .then(d => [m, d] as const)
         .catch(() => [m, null] as const)
     )).then(pairs => {
-      if (cancelled) return
-      const next: Record<string, { symbols: string[]; openReal: string[]; openVirtual: string[] }> = {}
-      for (const [m, d] of pairs) {
-        if (d) next[m] = {
-          symbols: d.symbols ?? [],
-          openReal: d.open_real ?? [],
-          openVirtual: d.open_virtual ?? [],
+      if (req !== listsReq.current) return   // a newer refresh already landed
+      setOrdersByMode(prev => {
+        const next = { ...prev }
+        for (const [m, d] of pairs) {
+          if (d) next[m] = {
+            symbols: d.symbols ?? [],
+            openReal: d.open_real ?? [],
+            openVirtual: d.open_virtual ?? [],
+          }
         }
-      }
-      setOrdersByMode(next)
+        return next
+      })
     })
-    return () => { cancelled = true }
+  }
+
+  /** Open positions change without this page doing anything — the bot opens, and TP/SL
+   *  closes, on its own. Without a refresh the picker's gold circle outlived the position
+   *  until a reload. Every 30 s while the tab is visible, and on returning to it; the
+   *  request is a stat per symbol, and a hidden tab costs nothing. */
+  function refreshOpenPositions() {
+    void loadSymbolLists()
+    setPositionsTick(t => t + 1)
+    void loadRisk()
+  }
+
+  /** Weights change under the page too — the rebalancer, a Risk page edit — so this rides
+   *  the same 30 s refresh. A failed read keeps the last labels. */
+  function loadRisk() {
+    return fetch('/api/risk')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const cfg = d?.config as RiskConfig | undefined
+        if (!cfg) return
+        setRiskConfig(cfg)
+        // Only Best Gets First needs backtest scores; weight scenarios do not.
+        if (!isBgf(cfg)) return
+        return fetch('/api/public-file?f=risk_state.json')
+          .then(r => r.ok ? r.json() : null)
+          .then(s => { if (s) setRiskState(s) })
+      })
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    void loadSymbolLists()
+    void loadRisk()
+    const tick = () => { if (document.visibilityState === 'visible') refreshOpenPositions() }
+    const id = setInterval(tick, 30_000)
+    document.addEventListener('visibilitychange', tick)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick) }
+    // mount-only: both helpers read nothing from render scope but refs and setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -679,8 +736,11 @@ export default function TradesPage() {
     } finally {
       setCloseBusy(false)
       // Re-read either way: on a timeout the position may well have closed, and on
-      // success the snapshot is the authority on what is still open.
+      // success the snapshot is the authority on what is still open. The bot rewrites
+      // that snapshot before it confirms, so the picker's circle and the Real orders
+      // widget update now rather than at the next 30 s refresh.
       if (symbol) void loadTrades(symbol, dataMode)
+      refreshOpenPositions()
       // A closed top-preset order changes this symbol's sort key. The bot closes on its
       // next poll, so this may be early — the file fingerprint catches it next refresh.
       void loadSortScores(symbol || null)
@@ -818,6 +878,7 @@ export default function TradesPage() {
         mode={dataMode}
         selectedSymbol={symbol}
         onSelectSymbol={setSymbol}
+        refreshKey={positionsTick}
       />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-white">{symbol} — Trades</h1>

@@ -4,7 +4,7 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ---
 
-## Session 72 (2026-09-26) — Preset profit store, picker circles & labels, risk audit — committed, dashboard deploy pending approval
+## Session 72 (2026-09-26) — Preset profit store, picker circles & labels, risk audit — deployed 2026-09-26 16:44 (dashboard) / 16:47 UTC (bots)
 
 - [x] **Trades page Profit% now includes CLOSED rank-1 virtual orders** (commit 1dafddf).
       Verified: 0 of 27 rank-1 orders double-count. Resolves Session 71 scope question.
@@ -20,11 +20,11 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] **Risk config instance audit** (commit c9f7f37). InstanceToggle; settings shared, live state per instance.
       Bugs: (1) POST /api/risk merges fresh read, never takes locked_presets from body. (2) Reset uses `/api/risk/reset-hard-stop`. (3) Only primary consumes reset_hard_stop.signal (bot change).
 
-- [ ] **Deploy dashboard (eff305a..c9f7f37)** — awaiting user approval. Then run `scripts/recalc_symbol_scores.sh` and delete obsolete `data/symbol_sort_scores_{test,live}.json`.
+- [x] **Deploy dashboard (eff305a..c9f7f37)** — deployed 2026-09-26 16:44 UTC (server at bc2f2cc). Worker built both stores on start; forced rebuild stored 7,060 (test) + 7,429 (live) preset numbers; obsolete symbol_sort_scores_*.json deleted.
 
 - [x] **Deploy bot (3b70f27)** — deployed 2026-09-26 11:22 UTC. Graceful stop, 22-symbol stream, first real SOLUSDT 11:30.
 
-- [ ] **Bot deploy for reset-signal guard** (main.py: only primary consumes signal). Small 1-line change, can ride next deploy.
+- [x] **Bot deploy for reset-signal guard** — deployed 2026-09-26 16:47 UTC via `docker stop -t 60` (open real SOLUSDT SELL saved and restored with its exchange SL).
 
 - [ ] **Rotate Telegram token + scrub old logs** (~30k token in exception URLs). Also kills unknown 409 poller.
 

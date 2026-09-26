@@ -84,6 +84,16 @@ git push origin feature/mean-reversion-overlay
 
 ### Step 3 — Graceful stop (SIGTERM)
 
+**Preferred (2026-09-26): `docker stop -t 60 bot bot_mirror`.** It sends the same SIGTERM
+to PID 1 (`main.py`), waits for the graceful handler, and — unlike killing the process from
+inside — does not trigger the `restart: unless-stopped` policy. The in-container kill below
+made Docker restart `bot` on the OLD image for ~30 s before `docker stop` (seen 2026-09-26
+11:19). With `close_positions_on_stop=false`, open real positions are saved to
+`data/restart_positions_{mode}.json` and restored on start; their exchange SL stays live.
+Stop right AFTER a candle has been processed (e.g. :46, :01), never across :00/:15/:30/:45.
+
+Legacy method, kept for reference:
+
 Both bot containers run `main.py` and answer to the same pattern (verified 2026-09-07).
 Run it for **each** container you are about to recreate — swap `bot` for `bot_mirror`:
 

@@ -12,7 +12,15 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [x] **Deployed on production** 2026-09-26: split run at 19:30 UTC after graceful stop (test file identical to legacy apart from lock layout), rebuild 19:33; bot logs risk_config_test.json (mode=test), mirror risk_config_live.json (mode=live), SOL position restored, 22 streams. Steps used: (1) Host: `python3 scripts/split_risk_config.py --apply` (post-git-pull, pre-Docker-rebuild). (2) Graceful stop: `docker stop -t 60 bot bot_mirror` (after candle). (3) Rebuild: `docker compose up -d --build`. (4) Verify logs: "Risk config: risk_config_test.json (mode=test)" in bot.log, "risk_config_live.json (mode=live)" in bot_live.log. (5) Confirm positions restored, 22-symbol streams reconnected.
 
-- [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol_registry.json still shared — decide on per-mode split before real live trading.
+- [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol registry per-mode split: committed (see below).
+
+### Shared Settings & Per-Mode Symbol Registry (committed, awaiting deploy approval)
+
+- [x] **Spec** `docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md` (1713a94). User decisions: one shared symbol list; strategy rules shared; disable/weights/leverage per mode.
+- [x] **Implementation** (14533d1 bot/config, 3cfdbe5 dashboard, 6418996 skills). 1148 tests pass; tsc + next build clean; verified end-to-end on a copy of server state.
+- [ ] **Deploy** (needs approval, graceful restart of both bots): push → pull → check open positions → `docker stop -t 60 bot bot_mirror` after a candle → on host `python3 scripts/split_shared_and_registry.py --apply` → `docker compose up -d --build` → verify `SymbolRegistry: 22 symbol(s) from symbol_registry_shared.json, test state from symbol_registry_test.json, 6 disabled` (bot) / `live state from symbol_registry_live.json` (mirror), positions restored, 22 streams.
+- [ ] **Decide**: re-enable symbols on live only first (e.g. ETHFI/TIA/REZ) to get rank-1 data on real charts without real test orders.
+- [ ] **Decide**: fix "disabled + locked preset is never simulated" (virtual_order_simulator.py:208/249) — changes virtual data, needs approval.
 
 ### Preset Profit Store & Picker (Session 72 continuation)
 

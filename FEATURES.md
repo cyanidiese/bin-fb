@@ -2318,7 +2318,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 **Behaviour**:
 - **Read**: test = `DEFAULTS ⊕ test file`; live = `DEFAULTS ⊕ test file ⊕ live file` — any key missing in live comes from test. Reading never creates a file.
 - **Locks** stay nested (`{"test": {...}}` / `{"live": {...}}`), each file holding only its own mode, so test locks can never reach live through the fallback.
-- **Bot-wide keys** (`telegram`, `telegram_notify_interval_s`, `emergency_repeat_interval_s`, `warning_repeat_interval_s`, `startup_backtest`, `backtest_klines`) are stored in both files; a dashboard save of only these keys writes both. Everything else is mode-scoped.
+- **Shared keys**: superseded by `risk_config_shared.json` (next section, committed, not deployed). Until that ships, bot-wide keys (`telegram`, `*_interval_s`, `startup_backtest`, `backtest_klines`) are stored in both files and a dashboard save of only these keys writes both.
 - **Symbol add/remove** adds/removes the weight entry in both files (roster is shared).
 - **Python**: `set_active_mode(mode)`, `active_mode()` (fallback `TRADING_MODE` env, then test), `config_path(mode)`, `load_risk_config(path=None, mode=None)`, `save_risk_config(cfg, path=None, mode=None)`. `main.run()` pins the mode first (logs `Risk config: risk_config_<mode>.json (mode=<mode>)`) and raises if it disagrees with the resolved trading mode.
 - **Dashboard**: `GET /api/risk?mode=` → `{mode, file, config, state}`; `POST /api/risk?mode=` writes that mode's file, merged onto a fresh read, never taking `locked_presets`/`_reset_hard_stop` from the body. Risk page Instance switcher selects both the config being edited and the state shown; the note names the file Save All writes. Trades page allocation labels and locks follow the viewed mode.
@@ -2327,7 +2327,32 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 **Deployed** 2026-09-26: split at 19:30 UTC after bots stopped (46 keys; 11 test locks, 4 live locks; test file identical to legacy apart from lock layout), rebuild 19:33. `bot` logs `risk_config_test.json (mode=test)`, `bot_mirror` logs `risk_config_live.json (mode=live)`, SOLUSDT real position restored, 22-symbol streams.
 
-**Still shared before real live trading**: `symbol_registry.json` (disabled/paused lists, registry weights). Live also needs live API keys and the go-live checklist.
+**Still shared before real live trading**: `symbol_registry.json` — per-mode split committed (next section), not deployed. Live also needs live API keys and the go-live checklist.
+
+---
+
+## Shared Settings File & Per-Mode Symbol Registry (Session 72 — committed, NOT deployed)
+
+The symbol list is shared by both modes; what is decided about a symbol is per mode. Settings that define the strategy are shared; settings that decide real orders and money are per mode. Spec: `docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md`.
+
+**Files** (repo root, gitignored, bind-mounted rw in `bot`/`dashboard`, `:ro` in `bot_mirror`):
+- `risk_config_shared.json` — `SHARED_KEYS` (`config/risk_config.py`, same list in `dashboard/app/api/_risk-config.ts`, parity checked by `tests/test_shared_settings.py`): process (`telegram`, `*_interval_s`, `analysis_log_*`), backtest method (`startup_backtest`, `backtest_klines`, `backtest_initial_balance_usdt`, `backtest_seed_leverage_factor`, `backtest_entry_slippage_pct`), virtual accounting (`virtual_max_age_candles`, `slippage_*`), signal filters (`global_*`, `entry_zone_max_pct`, `per_symbol_settings`), preset ranking (`preset_blocklist`, `ranking_window_size`, `min_trades_for_ranking*`, `preset_hysteresis_pct`, `preset_cooldown_trades`).
+- `symbol_registry_shared.json` — `symbols` (roster), `status` (backtest runs, dashboard-owned).
+- `symbol_registry_test.json` / `symbol_registry_live.json` — `disabled`, `paused`, `disabled_ranks`, `weights`, `leverage_overrides`.
+- Legacy `symbol_registry.json` (tracked) and `risk_config.json` stay frozen as the rollback path.
+
+**Behaviour**:
+- **Config read**: `DEFAULTS ⊕ (test file if live) ⊕ own mode file ⊕ SHARED_KEYS from the shared file`. The shared file wins over any mode-file copy; if it is missing, the mode files' copies apply.
+- **Config write (dashboard)**: `saveRiskPatch(mode, patch)` — shared keys → shared file, also mirrored into both mode files (rollback snapshot); other keys → that mode's file. The Risk page's Save All sends only the fields that changed since load, so it cannot revert edits made elsewhere; shows "No changes" when nothing changed. Preset Ranking is labelled "shared by both modes".
+- **Registry (bot)**: `SymbolRegistry(seed, mode=..., read_only=...)` (`bot/symbol_registry.py`); `main.py` passes the instance's `_cfg_mode`. Load: roster ← shared file ← legacy ← `.env`; state ← own mode file ← (live) test file ← legacy. Decisions write only the mode state file — never the roster (fixes the old race that rewrote dashboard `status`). An unreadable file is never overwritten at startup. `registry_path=` keeps the legacy single-file layout (tools/tests).
+- **Registry (dashboard)**: `app/api/symbols/_registry.ts` — `readRoster`/`writeRoster`, `readSymbolState(mode)`/`updateSymbolState(mode, fn)` (live seeds from test, test from legacy, in memory). `GET /api/symbols?mode=` → roster ⊕ that mode's state + `modes: {test, live}`. `enable`, `disable`, `rank-disable`, `enable-all` take `?mode=` (default bot mode). Add/remove edits the roster (both modes).
+- **UI**: Settings → Symbol Registry shows Test and Live Enable/Disable buttons per symbol (row dimmed only when off in both). Trades page disabled banner ("Disabled symbols — {mode}"), enable buttons and rank toggles act on the viewed instance's mode.
+- **Roster readers**: `config/settings.py::load_symbols`, `discover.py`, `sweep_range_position.py` (disabled from the test state), dashboard clear-history read the shared file with legacy fallback.
+- **Seeding**: `python3 scripts/split_shared_and_registry.py` (dry run) / `--apply` on the host after the bots stop, before rebuild; never overwrites. Shared file ← test file's shared keys (reports live differences); registry state for live = copy of test.
+
+**Verified** (server copy, 2026-09-26): 21 shared keys, 22 symbols, 6 disabled in both modes; effective config identical with and without the shared file for both modes; registry state identical to legacy; dashboard: test weight edit leaves live, shared key saved from live reaches both, Telegram token kept, locks untouched (11/4), live-only enable of ETHFI leaves test disabled, Python reads the dashboard's writes. 1148 tests pass; `tsc` and `next build` clean.
+
+**Side finding (not fixed, separate decision)**: a disabled symbol with a locked preset never simulates that preset — the lock is dropped from the virtual pool (`virtual_order_simulator.py:208`) and rank 1 is skipped (`:249`). Last virtual orders: AVAX lock Sep 11, ETHFI Sep 13, ETHFI live lock Sep 10.
 
 ---
 

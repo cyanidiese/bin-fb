@@ -2330,6 +2330,17 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ---
 
+## Kline Feed Fixes (2026-09-27 — committed dd69a9f, NOT deployed)
+
+- **Live stream URL**: `_WS_LIVE = wss://fstream.binance.com/market/ws` (`bot/data_feed.py`); combined stream `/market/stream?streams=…`. The root `/stream` path connects and answers pings but pushes no kline data — verified from the server 2026-09-27 (0 messages in 15 s vs 53 on `/market/`; 22-symbol combined URL 224 messages, all 22 symbols). Testnet unchanged (`wss://stream.binancefuture.com/stream`, 21 messages). Since its first day (Sep 7) the live mirror ran on the REST watchdog: 47–68 candle batches/day instead of 96, ~90% late (median ~7.5 min), ~40% of candles never processed (the watchdog takes only the newest closed candle after 22.5 min of silence). **All live virtual statistics before this fix come from that gappy, delayed feed.** A live primary would have inherited it.
+- **Kline cache integrity**: writes are atomic (`_write_cache`: tmp + `os.replace`; `data/` is a directory mount), read-modify-write is serialised per file (`_cache_lock`), and `_read_cache` raises `CacheUnreadable` for an existing unparseable file instead of returning `[]` — callers skip rather than write over it. Before, a torn read let a refresh replace the whole history with the 100 candles it had fetched (live caches of 12 enabled symbols sat at ~100 candles).
+- **Backfill**: `load_klines` fetches the full window once when the cache is shorter than requested (the update path only fetches forward, so short caches stayed short).
+- **Disabled-symbol charts**: the disabled branch of `on_candle_close` now exports `results_{SYM}.json` every candle; it returned before the export, so those charts froze at the last restart (all 6 disabled symbols at the 2026-09-26 20:45 UTC candle). Bug dated from f0323a1 (2026-06-14), hidden by frequent restarts.
+- **Trades page orders table**: includes `rank1_orders`, as Preset Efficiency counts them (`app/trades/page.tsx`). 494 live / 390 test closed rank-1 orders were hidden (INJUSDT live `oscillating_zone`: table 4 vs 74 counted). Data was never lost — verified independently.
+- Tests: `tests/test_kline_feed_fixes_2026_09_27.py`.
+
+---
+
 ## Coordinated Mode Switch (Session 72 — committed, NOT deployed)
 
 Pressing Settings → Trading Mode writes `data/bot_mode.json`. The primary then switches by **closing everything and restarting** (user decision 2026-09-26: close at market, then restart). Spec: `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md`.

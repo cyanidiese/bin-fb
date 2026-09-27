@@ -14,6 +14,13 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol registry per-mode split: committed (see below).
 
+### Kline feed fixes (committed dd69a9f, awaiting deploy approval)
+
+- [ ] **Deploy** (bot restart for stream/cache/export fixes + dashboard for the orders table). After: mirror log `Combined stream connected` with the /market URL, per-candle lag ~seconds (analysis_live.jsonl), live caches backfilled to ~1500 candles, disabled-symbol charts advancing.
+- [ ] **Decide**: how to treat live virtual stats from Sep 7 → deploy (gappy, late feed) — keep but flag, or start a clean live window from the deploy date for go-live decisions.
+- [ ] **Decide**: kill the stray host loop from 2026-06-13 (PID 2496649) that would start an unmanaged bot outside Docker if no main.py were running (inert today only because its own cmdline matches its pgrep).
+- [ ] **Investigate** (verifier finding): rank-1 virtual balance drifts from the sum of its orders' PnL (live −30.65, test −274.90 unexplained).
+
 ### Coordinated Mode Switch & Per-Mode Backtests (committed, awaiting deploy approval)
 
 - [x] **Spec** `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md` (d4cf154). User decision: on a mode flip, close all positions at market, then restart.

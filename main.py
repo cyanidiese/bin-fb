@@ -1656,6 +1656,21 @@ async def run() -> None:
                 await asyncio.to_thread(feed.append_kline, symbol, timeframe, kline)
             except Exception as _cache_exc:
                 logger.debug(f"[{symbol}] WS kline cache append failed: {_cache_exc}")
+            # Export the chart too. This branch returned before the export at the end of
+            # on_candle_close, so a disabled symbol's Trades-page chart only refreshed
+            # at startup — it froze at the last restart (2026-09-26 20:45 UTC candle
+            # for all 6 disabled symbols, found 2026-09-27). Display only; no decision
+            # depends on it.
+            try:
+                export(
+                    symbol, timeframe, mode_manager.current_mode,
+                    analyzer.get_current_price(), analyzer.get_trend(),
+                    analyzer.get_klines(), recs, analyzer.get_all_points(),
+                    analyzer.get_best_recommendation(),
+                    mirror=_virtual_only,
+                )
+            except Exception as _exp_exc:
+                logger.warning(f"[{symbol}] Chart export failed (disabled symbol): {_exp_exc}")
             return
 
         incoming_open_ms = int(kline[0])

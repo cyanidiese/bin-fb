@@ -803,8 +803,14 @@ export default function TradesPage() {
     </div>
   )
 
-  // Flatten rank orders for the selected preset (or all) for the orders table and chart
-  const allRankOrdersFlat: RankOrder[] = Object.values(fdata.rank_orders).flat() as RankOrder[]
+  // Flatten rank orders for the selected preset (or all) for the orders table and chart.
+  // Rank 1 included, exactly as buildPresetRows counts it: without it a locked preset
+  // (which trades at rank 1 whenever the real slot is free) showed e.g. 74 trades in
+  // Preset Efficiency but only its 4 rank-18 orders here (INJUSDT live, 2026-09-27).
+  const allRankOrdersFlat: RankOrder[] = [
+    ...(fdata.rank1_orders ?? []),
+    ...(Object.values(fdata.rank_orders).flat() as RankOrder[]),
+  ]
   const filteredRankOrders: RankOrder[] = selectedPreset
     ? allRankOrdersFlat.filter(o => o.preset_name === selectedPreset)
     : allRankOrdersFlat

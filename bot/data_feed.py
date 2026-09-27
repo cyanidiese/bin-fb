@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import os
+import threading
 import time
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -11,6 +13,24 @@ from binance.client import Client
 from config.settings import Settings
 
 from bot.rate_limit_guard import guard as rl_guard, RateLimited
+
+# One lock per cache file. append_kline (every candle) and refresh_klines (background
+# gap/periodic refresh) run in different worker threads on the same file; without this
+# the later writer silently dropped the earlier one's candles.
+_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_LOCKS_GUARD = threading.Lock()
+
+
+def _cache_lock(path: Path) -> threading.Lock:
+    with _CACHE_LOCKS_GUARD:
+        return _CACHE_LOCKS.setdefault(str(path), threading.Lock())
+
+
+class CacheUnreadable(Exception):
+    """A kline cache exists but cannot be parsed. Never treat it as empty and write
+    over it: the mirror's live caches were cut to ~100 candles that way (2026-09-27) —
+    a refresh read a file another thread was halfway through writing, got [] and
+    replaced the whole history with the 100 candles it had just fetched."""
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +44,12 @@ _FUTURES_REST_LIVE = 'https://fapi.binance.com/fapi'
 _KLINE_FIELDS = 12
 
 _WS_TESTNET = 'wss://stream.binancefuture.com/ws'
-_WS_LIVE = 'wss://fstream.binance.com/ws'
+# Production market data (klines) is served under /market/. The old root path still
+# accepts the connection and answers pings but pushes NO kline data — verified from the
+# server 2026-09-27: /stream 0 messages in 15s, /market/stream 53. The live mirror had
+# run on the REST watchdog since its first day (Sep 7): ~40% of candles never processed,
+# the rest ~7 min late. Testnet still uses the root path (21 messages in 15s).
+_WS_LIVE = 'wss://fstream.binance.com/market/ws'
 
 
 # Binance charges kline weight on the `limit` parameter, not on rows returned, and
@@ -159,7 +184,30 @@ class DataFeed:
         """
         cache_path = self._cache_path(symbol, timeframe)
         self._migrate_old_cache(symbol, timeframe, cache_path)
-        cached = self._read_cache(cache_path)
+        with _cache_lock(cache_path):
+            return self._load_klines_locked(symbol, timeframe, limit, cache_path)
+
+    def _load_klines_locked(self, symbol: str, timeframe: str, limit: int, cache_path: Path) -> list:
+        try:
+            cached = self._read_cache(cache_path)
+        except CacheUnreadable as exc:
+            # Startup: the file is genuinely corrupt (writes are atomic now), so rebuild it.
+            logger.warning(f"[{symbol}] {exc} — rebuilding from a full fetch")
+            cached = []
+
+        # Short history: the update path below only fetches FORWARD from the newest
+        # cached candle, so a cache that is short stays short for good — the live
+        # mirror's caches sat at ~100 candles (2026-09-27) and its analyzers were built
+        # from one day instead of ~15. One full-window fetch, merged, fixes it.
+        want = min(limit, self._settings.kline_cache_limit)
+        if cached and len(cached) < want - _KLINE_GAP_MARGIN:
+            try:
+                older = self._fetch(symbol, timeframe, limit=limit)
+                before = len(cached)
+                cached = self._merge(cached, older, timeframe, self._settings.kline_cache_limit)
+                logger.info(f"[{symbol}] Kline history backfilled: {before} -> {len(cached)} candles")
+            except Exception as e:
+                logger.warning(f"[{symbol}] Kline backfill failed (keeping {len(cached)}): {e}")
 
         if cached and cache_is_current(int(cached[-1][6]),
                                        self._timeframe_to_ms(timeframe)):
@@ -202,10 +250,15 @@ class DataFeed:
     def append_kline(self, symbol: str, timeframe: str, kline: list) -> None:
         """Appends a single closed candle to the cache file."""
         cache_path = self._cache_path(symbol, timeframe)  # already migrated on load_klines
-        klines = self._read_cache(cache_path)
-        if not klines or klines[-1][0] != kline[0]:
-            klines.append(kline)
-            self._write_cache(cache_path, klines[-self._settings.kline_cache_limit:])
+        with _cache_lock(cache_path):
+            try:
+                klines = self._read_cache(cache_path)
+            except CacheUnreadable as exc:
+                logger.warning(f"[{symbol}] {exc} — candle not appended, file left as is")
+                return
+            if not klines or int(klines[-1][0]) < int(kline[0]):
+                klines.append(kline)
+                self._write_cache(cache_path, klines[-self._settings.kline_cache_limit:])
 
     def refresh_klines(self, symbol: str, timeframe: str, fetch_count: int = 10) -> list:
         """
@@ -217,26 +270,37 @@ class DataFeed:
         Returns the updated kline list.
         """
         cache_path = self._cache_path(symbol, timeframe)
-        cached = self._read_cache(cache_path)
-
+        # Fetch outside the lock (network), merge and write inside it.
         fresh = self._fetch(symbol, timeframe, limit=fetch_count)
+        with _cache_lock(cache_path):
+            try:
+                cached = self._read_cache(cache_path)
+            except CacheUnreadable as exc:
+                logger.warning(f"[{symbol}] {exc} — refresh skipped, file left as is")
+                return []
+            return self._refresh_merge_locked(symbol, timeframe, fetch_count, cache_path, cached, fresh)
 
+    def _refresh_merge_locked(self, symbol: str, timeframe: str, fetch_count: int,
+                              cache_path: Path, cached: list, fresh: list) -> list:
         if cached and fresh and fetch_count < 1500:
             candle_ms = self._timeframe_to_ms(timeframe)
             if int(fresh[0][0]) > int(cached[-1][6]) + candle_ms:
-                logger.warning("Gap detected in kline cache — re-fetching 1500 klines")
+                logger.warning(f"[{symbol}] Gap detected in kline cache — re-fetching 1500 klines")
                 fresh = self._fetch(symbol, timeframe, limit=1500)
 
         merged = self._merge(cached, fresh, timeframe, self._settings.kline_cache_limit)
         self._write_cache(cache_path, merged)
-        logger.info(f"Kline cache refreshed: {len(merged)} candles")
+        logger.info(f"[{symbol}] Kline cache refreshed: {len(merged)} candles")
         return merged
 
     def has_gap(self, symbol: str, timeframe: str, incoming_open_ms: int) -> bool:
         """Return True if incoming_open_ms is more than one candle-interval after the
         last cached candle's close time. Returns False if cache is missing or unreadable."""
         cache_path = self._cache_path(symbol, timeframe)
-        cached = self._read_cache(cache_path)
+        try:
+            cached = self._read_cache(cache_path)
+        except CacheUnreadable:
+            return False
         if not cached:
             return False
         last_close_ms = int(cached[-1][6])
@@ -544,13 +608,15 @@ class DataFeed:
 
     @staticmethod
     def _read_cache(path: Path) -> list:
-        if path.exists():
-            try:
-                with open(path) as f:
-                    return DataFeed._normalise_rows(json.load(f))
-            except Exception:
-                return []
-        return []
+        """The cached rows; [] only when there is no file. Raises CacheUnreadable when
+        the file exists but cannot be parsed — callers must not write over it."""
+        if not path.exists():
+            return []
+        try:
+            with open(path) as f:
+                return DataFeed._normalise_rows(json.load(f))
+        except Exception as exc:
+            raise CacheUnreadable(f"kline cache {path.name} unreadable ({exc})") from exc
 
     @staticmethod
     def _normalise_rows(rows: list) -> list:
@@ -574,9 +640,19 @@ class DataFeed:
 
     @staticmethod
     def _write_cache(path: Path, klines: list) -> None:
+        """Atomic: temp file + rename, so a reader never sees a half-written cache.
+        data/ is a directory mount, where rename works (unlike single-file mounts)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w') as f:
-            json.dump(klines, f)
+        tmp = path.with_name(f'.{path.name}.{os.getpid()}.{threading.get_ident()}.tmp')
+        try:
+            with open(tmp, 'w') as f:
+                json.dump(klines, f)
+            os.replace(tmp, path)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _merge(self, cached: list, fresh: list, timeframe: str, cache_limit: int) -> list:
         if not fresh:

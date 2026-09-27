@@ -817,6 +817,19 @@ async def run() -> None:
     _zone_sl_level: dict[str, float] = {}    # "symbol:preset:side" → SL price of current sequence
     _zone_sl_block: dict[str, int] = {}      # "symbol:preset:side" → candle_ts until zone block expires
 
+    def _record_virtual_summary(sym: str, candle_ts: int) -> None:
+        """One analysis-log line per symbol per candle: how every rank ended — opened, no
+        signal, slot held, duplicate skip, SL too tight, ... Without it a symbol with
+        signals but no practice orders (ARBUSDT/JUPUSDT, 2026-09-27) could only be
+        diagnosed by replaying the simulator offline. Logging only."""
+        try:
+            summary = virtual_order_simulator.last_candle_summary.get(sym)
+            if summary:
+                analysis_log.record('virtual_summary', symbol=sym, candle_ts=candle_ts,
+                                    outcomes=dict(summary))
+        except Exception as exc:
+            logger.debug(f"[{sym}] virtual summary log failed: {exc}")
+
     async def _get_fresh_balance() -> float:
         """TTL-cached wallet balance for sizing/risk. May return a stale value.
 
@@ -1647,6 +1660,7 @@ async def run() -> None:
                 locked_preset=_locked_preset,
                 virtual_only=True,
             )
+            _record_virtual_summary(symbol, int(kline[0]))
             # Persist the candle for disabled symbols too. This branch used to return
             # before the append below, so their caches never advanced from the stream and
             # every restart re-fetched all of them: measured 2026-09-08, 65 load_klines
@@ -2081,6 +2095,7 @@ async def run() -> None:
             real_slot_busy=_real_slot_busy,
             real_preset=_real_preset,
         )
+        _record_virtual_summary(symbol, candle_ts)
 
         # save_risk_config() every candle. A virtual-only instance must never retune
         # the trading bot's real symbol allocation from its own virtual results.

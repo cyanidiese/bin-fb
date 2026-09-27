@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
 import json
 import logging
@@ -89,6 +90,9 @@ class VirtualOrderSimulator:
         self._initial_balance = initial_balance
         # symbol -> (monotonic_ts, pct); see _slippage_pct
         self._slippage_cache: dict[str, tuple[float, float]] = {}
+        # symbol -> Counter of rank outcomes on its latest candle ('opened', 'no_signal',
+        # 'slot_held', 'duplicate_skip', ...). Read by main.py for the analysis log.
+        self.last_candle_summary: dict[str, collections.Counter] = {}
         # Candle-level allocation context — set by main.py before each on_candle_close call
         self._uses_weight_alloc: bool = True
         self._bgf_fractions: dict[str, float] = {}
@@ -235,6 +239,9 @@ class VirtualOrderSimulator:
         else:
             self._real_preset.pop(symbol, None)
 
+        # Per-candle outcome of every rank for this symbol, for the analysis log.
+        _summary: collections.Counter = collections.Counter()
+        self.last_candle_summary[symbol] = _summary
         for rank in range(1, self._rank_max + 1):
             if rank == 1:
                 # The real-order slot. Only ever holds a virtual position when the slot
@@ -276,10 +283,10 @@ class VirtualOrderSimulator:
                 if _elsewhere:
                     await self._evict(symbol, _elsewhere, current_price, 'promoted_to_real')
                 if symbol not in self._rank_open[1]:
-                    await self._try_open(
+                    _summary['r1:' + await self._try_open(
                         symbol, 1, _r1_name, self._all_presets[_r1_name],
                         base_settings, lev, min_notional, analyzer,
-                    )
+                    )] += 1
                 continue
 
             # Skip this rank if it has been disabled for this symbol
@@ -308,14 +315,17 @@ class VirtualOrderSimulator:
             # the then-correct preset once it frees.
             existing = self._rank_open[rank].get(symbol)
             if existing and existing['preset_name'] != preset_name:
+                _summary['slot_held_by_other_preset'] += 1
                 continue
 
             # Open if slot is empty. _try_open enforces one position per preset.
             if symbol not in self._rank_open[rank]:
-                await self._try_open(
+                _summary[await self._try_open(
                     symbol, rank, preset_name, overrides,
                     base_settings, lev, min_notional, analyzer,
-                )
+                )] += 1
+            else:
+                _summary['slot_held'] += 1
 
     def _max_age_minutes(self) -> float:
         """Maximum practice-position age, from risk_config, in minutes."""
@@ -395,7 +405,10 @@ class VirtualOrderSimulator:
         lev: int,
         min_notional: float,
         analyzer: 'Analyzer',
-    ) -> None:
+    ) -> str:
+        """Try to open a practice position. Returns 'opened', or the reason it did not
+        (see last_candle_summary) — the reasons are what made a signal-rich symbol with
+        no orders diagnosable (ARBUSDT/JUPUSDT, 2026-09-27)."""
         # One open position per preset per symbol. Eviction used to guarantee this for
         # free — every slot always held the currently-correct preset — but positions now
         # survive a reshuffle, so a preset can be stale in one slot while being assigned
@@ -408,7 +421,7 @@ class VirtualOrderSimulator:
                 f"[{symbol}] Rank-{rank} not opened: {preset_name} already open "
                 f"at rank {_held}"
             )
-            return
+            return 'preset_open_elsewhere'
         # And never alongside a REAL position on the same preset. Observed on the server:
         # SOLUSDT held a real l2_trend_buy at 102.97 and a virtual l2_trend_buy at 103.63
         # at once -- two correlated samples of one move, on a trade that could never have
@@ -417,7 +430,7 @@ class VirtualOrderSimulator:
             logger.debug(
                 f"[{symbol}] Rank-{rank} not opened: {preset_name} has an open real order"
             )
-            return
+            return 'preset_has_real_order'
         # Load config before any filter — global_min_sl_pct and per-trade caps must be
         # available during signal evaluation, not only during sizing (original position was line ~361).
         _risk_cfg = load_risk_config()
@@ -435,41 +448,41 @@ class VirtualOrderSimulator:
             rec = engine.generate(analyzer.get_trend(), analyzer.get_current_price())
         except Exception as exc:
             logger.debug(f"[{symbol}][{preset_name}] Rank-{rank} rec error: {exc}")
-            return
+            return 'rec_error'
 
         if rec is None:
-            return
+            return 'no_signal'
 
         entry = rec.getEntryPrice()
         raw_tp = rec.getTarget()
         sl_raw = rec.getStop() or 0.0
         if entry <= 0 or raw_tp <= 0 or sl_raw <= 0:
-            return
+            return 'bad_prices'
 
         side = rec.getSide()
 
         # Apply tp_multiplier and compute filter metrics (mirrors backtester + _try_place_order)
         if side == 'BUY':
             if raw_tp <= entry or sl_raw >= entry:
-                return
+                return 'tp_sl_wrong_side'
             tp = entry + (raw_tp - entry) * preset_settings.tp_multiplier
             sl = sl_raw
             sl_dist_pct = (entry - sl) / entry * 100
             profit_dist_pct = (tp - entry) / entry * 100
         else:
             if raw_tp >= entry or sl_raw <= entry:
-                return
+                return 'tp_sl_wrong_side'
             tp = entry - (entry - raw_tp) * preset_settings.tp_multiplier
             sl = sl_raw
             sl_dist_pct = (sl - entry) / entry * 100 * 1.5  # SELL SL spikes harsher
             profit_dist_pct = (entry - tp) / entry * 100
 
         if abs(sl - entry) < entry * 0.0001:
-            return
+            return 'sl_too_tight'
 
         if (max_profit_cap_applies(preset_settings, rec.getLevel())
                 and profit_dist_pct > preset_settings.max_profit_pct):
-            return
+            return 'max_profit_cap'
         # SL floor: widen to the higher of the preset's own floor and the global floor
         # (mirrors _try_place_order so virtual and real orders evaluate the same signals).
         _global_min_sl_pct = float(_risk_cfg.get("global_min_sl_pct", 0.0))
@@ -488,7 +501,7 @@ class VirtualOrderSimulator:
         # there was no evidence either way for two months.
         if not preset_settings.sl_clamp_enabled:
             if preset_settings.max_sl_pct > 0 and sl_dist_pct > preset_settings.max_sl_pct:
-                return
+                return 'sl_too_wide'
         else:
             sl, sl_dist_pct, _ = clamp_sl_to_max(
                 entry, sl, sl_dist_pct, side, preset_settings.max_sl_pct)
@@ -499,12 +512,12 @@ class VirtualOrderSimulator:
                 _tail = _klines[-preset_settings.atr_lookback:]
                 _avg_range = sum(float(k[2]) - float(k[3]) for k in _tail) / len(_tail)
                 if _avg_range > 0 and abs(sl - entry) < preset_settings.min_sl_atr_mult * _avg_range:
-                    return
+                    return 'sl_below_atr'
 
         _profit_dist = abs(tp - entry)
         _loss_dist = abs(sl - entry)
         if _loss_dist == 0:
-            return
+            return 'zero_loss'
 
         if _profit_dist / _loss_dist < preset_settings.min_profit_loss_ratio:
             if preset_settings.sl_adjust_to_rr and _profit_dist > 0:
@@ -515,9 +528,9 @@ class VirtualOrderSimulator:
                     sl = entry + _req_loss
                 _new_sl_pct = _req_loss / entry * 100 * (1.5 if side == 'SELL' else 1.0)
                 if _effective_min_sl > 0 and _new_sl_pct < _effective_min_sl:
-                    return
+                    return 'rr_adjust_below_min_sl'
             else:
-                return
+                return 'rr_below_min'
 
         # Duplicate-signal skip
         if preset_settings.duplicate_skip_candles > 0:
@@ -537,7 +550,7 @@ class VirtualOrderSimulator:
                                 f"[{symbol}] Rank-{rank} duplicate skip: "
                                 f"similar to SL-hit signal {_candles_since} candle(s) ago"
                             )
-                            return
+                            return 'duplicate_skip'
 
         # Size from the rank pool balance using the same allocation formula as real orders,
         # substituting the rank pool's own balance instead of the real account balance.
@@ -589,7 +602,7 @@ class VirtualOrderSimulator:
             logger.debug(f"[{symbol}] Virtual qty {quantity:.0f} capped to exchange maxQty {_max_qty:.0f}")
             quantity = _max_qty
         if quantity <= 0:
-            return
+            return 'zero_qty'
 
         partial_pct = float(getattr(preset_settings, 'partial_take_pct', 0.0))
         trail_pct = float(getattr(preset_settings, 'trailing_stop_pct', 0.0))
@@ -669,6 +682,7 @@ class VirtualOrderSimulator:
             f"[{symbol}] Rank-{rank} opened: {preset_name} {side} @ {entry} "
             f"bal={self._rank_balance[rank]:.2f}"
         )
+        return 'opened'
 
     # ------------------------------------------------------------------ #
     # Price tick — check TP/SL                                            #

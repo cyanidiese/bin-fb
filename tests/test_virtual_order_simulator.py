@@ -497,3 +497,26 @@ async def test_close_all_open_writes_closed_early_to_file(tmp_path):
     assert rank_file.exists()
     records = json.loads(rank_file.read_text())
     assert any(r.get('result') == 'closed_early' for r in records)
+
+
+# ── per-candle outcome summary (diagnostics, 2026-09-27) ───────────────────
+
+@pytest.mark.asyncio
+async def test_candle_summary_reports_why_ranks_did_not_open(tmp_path):
+    """A symbol with signals but no practice orders was only diagnosable by replaying the
+    simulator offline. Each candle now records how every rank ended."""
+    sim = make_simulator(tmp_path, rank_max=4)
+    with patch('bot.virtual_order_simulator.RecommendationEngine') as MockEng, \
+         patch('bot.virtual_order_simulator.dataclasses') as mock_dc:
+        mock_dc.replace.return_value = make_preset_settings()
+        MockEng.return_value.generate.return_value = None
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+        first = dict(sim.last_candle_summary['BTCUSDT'])
+        MockEng.return_value.generate.return_value = make_rec()
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+        second = dict(sim.last_candle_summary['BTCUSDT'])
+        await sim.on_candle_close('BTCUSDT', make_analyzer(), 'preset_a', MagicMock())
+        third = dict(sim.last_candle_summary['BTCUSDT'])
+    assert first.get('no_signal', 0) >= 2 and 'opened' not in first
+    assert second.get('opened', 0) >= 2
+    assert third.get('slot_held', 0) >= 2 and 'opened' not in third

@@ -1681,23 +1681,20 @@ the Telegram menu, and shared-config writes.
 
 | control | where | effect |
 |---|---|---|
-| **Bot mode** | Settings → Trading Mode | decides who trades; the primary closes out and restarts into it (see below — committed, not deployed) |
+| **Bot mode** | Settings → Trading Mode | decides who trades; the primary closes out and restarts into it (see Coordinated Mode Switch) |
 | **Data view** | Trades page → Instance | decides whose files the dashboard reads; **instant** |
 
 The data-view toggle never writes `bot_mode.json` or `bot_command.json`. Defaults to
 `primary`, so the page behaves exactly as before.
 
-`POST /api/mode` writes `bot_mode.json` directly. **Until the coordinated-switch change
-deploys** the primary only picks it up on a manual restart (and the mirror switches
-early — see "Coordinated Mode Switch" below). After it deploys, the primary closes out and
-restarts by itself; the in-place `on_switch_mode()` / `ModeManager.switch_mode()` are
-removed.
+`POST /api/mode` writes `bot_mode.json` directly; the primary closes out and restarts by
+itself (see "Coordinated Mode Switch"). The in-place `on_switch_mode()` /
+`ModeManager.switch_mode()` are removed.
 
 ### How the mirror follows a mode change
 
 The opposite of the primary's **running** mode (`data/primary_mode.json`, written by the
-primary at startup; `bot_mode.json` only before any primary has written it — committed,
-not deployed), then `_mirror_watch()` polls every 30s and **exits 0** when it changes; `restart: unless-stopped` brings it back as
+primary at startup; `bot_mode.json` only before any primary has written it), then `_mirror_watch()` polls every 30s and **exits 0** when it changes; `restart: unless-stopped` brings it back as
 the new opposite. Requires two consecutive confirmations, and treats an absent, torn or
 out-of-vocabulary file as "no change" — the mirror acts by exiting, and a restart loop
 has no way out.
@@ -1720,7 +1717,7 @@ Covers `bot.log`, `trades.log`, `analysis.jsonl`, `data/system_log.json`,
 `alert_state.json`, `risk_state.json` and `results_{symbol}.json` — display and
 diagnostics. Everything else in `data/` is `_{mode}` suffixed. `symbols.json` stays shared.
 
-**Backtest results moved to mode keying** (committed, not deployed):
+**Backtest results moved to mode keying** (deployed 2026-09-26):
 `backtest_results_{symbol}_{mode}.json` — `RiskManager` derives real-order **leverage** and
 **cross-symbol allocation** from it, so after a mode switch the primary must read the new
 market's copy, not "the primary's". See "Per-Mode Backtest Results" below.
@@ -2317,7 +2314,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 **Behaviour**:
 - **Read**: test = `DEFAULTS ⊕ test file`; live = `DEFAULTS ⊕ test file ⊕ live file` — any key missing in live comes from test. Reading never creates a file.
 - **Locks** stay nested (`{"test": {...}}` / `{"live": {...}}`), each file holding only its own mode, so test locks can never reach live through the fallback.
-- **Shared keys**: superseded by `risk_config_shared.json` (next section, committed, not deployed). Until that ships, bot-wide keys (`telegram`, `*_interval_s`, `startup_backtest`, `backtest_klines`) are stored in both files and a dashboard save of only these keys writes both.
+- **Shared keys**: superseded by `risk_config_shared.json` (deployed 2026-09-26). Before that, bot-wide keys (`telegram`, `*_interval_s`, `startup_backtest`, `backtest_klines`) are stored in both files and a dashboard save of only these keys writes both.
 - **Symbol add/remove** adds/removes the weight entry in both files (roster is shared).
 - **Python**: `set_active_mode(mode)`, `active_mode()` (fallback `TRADING_MODE` env, then test), `config_path(mode)`, `load_risk_config(path=None, mode=None)`, `save_risk_config(cfg, path=None, mode=None)`. `main.run()` pins the mode first (logs `Risk config: risk_config_<mode>.json (mode=<mode>)`) and raises if it disagrees with the resolved trading mode.
 - **Dashboard**: `GET /api/risk?mode=` → `{mode, file, config, state}`; `POST /api/risk?mode=` writes that mode's file, merged onto a fresh read, never taking `locked_presets`/`_reset_hard_stop` from the body. Risk page Instance switcher selects both the config being edited and the state shown; the note names the file Save All writes. Trades page allocation labels and locks follow the viewed mode.
@@ -2326,7 +2323,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 **Deployed** 2026-09-26: split at 19:30 UTC after bots stopped (46 keys; 11 test locks, 4 live locks; test file identical to legacy apart from lock layout), rebuild 19:33. `bot` logs `risk_config_test.json (mode=test)`, `bot_mirror` logs `risk_config_live.json (mode=live)`, SOLUSDT real position restored, 22-symbol streams.
 
-**Still shared before real live trading**: `symbol_registry.json` — per-mode split committed (next section), not deployed. Live also needs live API keys and the go-live checklist.
+**Still shared before real live trading**: `symbol_registry.json` — split per mode (deployed 2026-09-26). Live also needs live API keys and the go-live checklist.
 
 ---
 
@@ -2341,7 +2338,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ---
 
-## Coordinated Mode Switch (Session 72 — committed, NOT deployed)
+## Coordinated Mode Switch (Session 72 — deployed 2026-09-26 21:02 UTC)
 
 Pressing Settings → Trading Mode writes `data/bot_mode.json`. The primary then switches by **closing everything and restarting** (user decision 2026-09-26: close at market, then restart). Spec: `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md`.
 
@@ -2360,7 +2357,7 @@ Withdrawing the request (setting the mode back) before step 2 resumes real order
 
 **Why**: the old flow left the primary on the old mode until a manual restart while the mirror restarted within a minute as the opposite of the *new* mode — i.e. the same mode as the primary — both writing the same `_test` files; and the in-place `on_switch_mode` (unreachable) would have kept the old risk config, registry and locks.
 
-## Per-Mode Backtest Results (Session 72 — committed, NOT deployed)
+## Per-Mode Backtest Results (Session 72 — deployed 2026-09-26 21:02 UTC)
 
 Backtest results belong to a market: `dashboard/public/backtest_results_{SYM}_{mode}.json`, written by every backtest run for that mode, from any instance or the dashboard.
 
@@ -2381,7 +2378,7 @@ Backtest results belong to a market: `dashboard/public/backtest_results_{SYM}_{m
 
 ---
 
-## Shared Settings File & Per-Mode Symbol Registry (Session 72 — committed, NOT deployed)
+## Shared Settings File & Per-Mode Symbol Registry (Session 72 — deployed 2026-09-26 21:02 UTC)
 
 The symbol list is shared by both modes; what is decided about a symbol is per mode. Settings that define the strategy are shared; settings that decide real orders and money are per mode. Spec: `docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md`.
 

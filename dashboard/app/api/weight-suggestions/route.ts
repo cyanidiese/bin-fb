@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { modeOr, readRiskConfig } from '../_risk-config'
 import { buildSnapshot, evaluateShadow } from '../trades/_weight-shadow'
+import { readSymbolState } from '../symbols/_registry'
 
 /** GET /api/weight-suggestions?mode=test|live — current weights with what each policy
  *  would set right now, plus the policies' track record so far. Nothing is applied here.
@@ -14,6 +15,7 @@ export async function GET(req: NextRequest) {
     day: snap?.day ?? null,
     tats_min_weight: Number(cfg.tats_min_weight ?? 0),
     symbols: snap?.symbols ?? {},
+    disabled: Object.keys(readSymbolState(mode).disabled ?? {}),
     track: evaluateShadow(mode),
     history: evaluateShadow(mode, 7, 'history'),
   })

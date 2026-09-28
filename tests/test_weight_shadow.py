@@ -62,10 +62,17 @@ def test_apply_merges_onto_a_fresh_read_of_that_mode_only():
     assert 'symbol_weights: w' in APPLY
 
 
-def test_apply_never_turns_a_symbol_on_or_off():
-    """0 is the real-order on/off switch; suggestions only rescale existing weights."""
-    assert 'w <= 0' in APPLY
+def test_apply_allows_on_off_but_only_for_known_symbols():
+    """Every symbol can be (re)weighted from the panel, including 0 <-> >0, which switches
+    real orders on/off — the confirmation must say so. Negative weights are rejected."""
+    assert 'w < 0' in APPLY
     assert "has no weight entry in this mode" in APPLY
+    assert 'turns REAL orders ON' in PANEL and 'turns REAL orders OFF' in PANEL
+
+
+def test_panel_lists_every_symbol_not_only_funded_ones():
+    assert 'filter(([, r]) => r.w > 0).sort' not in PANEL
+    assert 'isCandidate' in PANEL and 'disabled.has(sym)' in PANEL
 
 
 def test_panel_asks_before_applying_and_warns_on_tats_threshold():

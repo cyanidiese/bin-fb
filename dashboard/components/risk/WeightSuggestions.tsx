@@ -15,6 +15,8 @@ interface Data {
   day: string | null
   tats_min_weight: number
   symbols: Record<string, Row>
+  /** Disabled in this mode's registry: no real orders whatever the weight. */
+  disabled: string[]
   track: Track
   /** Reconstructed from order history (scripts/backfill_weight_shadow.py). */
   history: Track
@@ -44,6 +46,9 @@ interface Props {
 
 const fmtPct = (t: Top) => t[0] === null ? '—' : `${t[0] > 0 ? '+' : ''}${t[0].toFixed(1)}% (${t[1]})`
 const fmtW = (w: number) => Number.isInteger(w) ? String(w) : w.toFixed(2)
+/** Mirror of the brake: strong, sustained 14-day evidence (≥ 30 trades, ≥ +30 %). Shown only;
+ *  Profit% did not predict the next days on testnet, so this is a prompt to look, not a rule. */
+const isCandidate = (r: Row) => r.w === 0 && r.p14[0] !== null && r.p14[1] >= 30 && r.p14[0] >= 30
 
 export default function WeightSuggestions({ mode, onApplied }: Props) {
   const [data, setData] = useState<Data | null>(null)
@@ -62,11 +67,15 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
 
   async function apply(changes: Record<string, number>) {
     if (!data || Object.keys(changes).length === 0) return
+    const disabled = new Set(data.disabled ?? [])
     const tmw = data.tats_min_weight
     const lines = Object.entries(changes).map(([s, w]) => {
       const old = data.symbols[s]?.w ?? 0
-      const crosses = tmw > 0 && ((old >= tmw) !== (w >= tmw))
-      return `${s}: ${fmtW(old)} → ${fmtW(w)}${crosses ? `  ⚠ crosses tats_min_weight ${tmw} (changes how a lone signal is sized)` : ''}`
+      const crosses = tmw > 0 && old > 0 && w > 0 && ((old >= tmw) !== (w >= tmw))
+      const onOff = old === 0 && w > 0 ? '  ⚠ turns REAL orders ON for this symbol'
+        : old > 0 && w === 0 ? '  ⚠ turns REAL orders OFF for this symbol' : ''
+      const dis = disabled.has(s) && w > 0 ? '  (disabled in this mode — no real orders until enabled in Settings)' : ''
+      return `${s}: ${fmtW(old)} → ${fmtW(w)}${onOff}${crosses ? `  ⚠ crosses tats_min_weight ${tmw} (changes how a lone signal is sized)` : ''}${dis}`
     })
     if (!window.confirm(`Apply these ${mode.toUpperCase()} weights?\n\n${lines.join('\n')}\n\nThe bot uses them from the next candle. Every change is logged.`)) return
     setBusy(true); setMsg(null)
@@ -84,9 +93,13 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
   }
 
   if (!data) return null
-  const rows = Object.entries(data.symbols).filter(([, r]) => r.w > 0).sort((a, b) => b[1].w - a[1].w)
+  const disabled = new Set(data.disabled ?? [])
+  const p14 = (r: Row) => r.p14[0] ?? -Infinity
+  // Funded first (by weight), then weight 0 by 14-day Profit% — every symbol is checked.
+  const rows = Object.entries(data.symbols).sort((a, b) =>
+    (b[1].w > 0 ? 1 : 0) - (a[1].w > 0 ? 1 : 0) || b[1].w - a[1].w || p14(b[1]) - p14(a[1]))
   const pending = (pol: 'tilt' | 'brake') =>
-    Object.fromEntries(rows.filter(([, r]) => r.policies[pol] !== r.w).map(([s, r]) => [s, r.policies[pol]]))
+    Object.fromEntries(rows.filter(([, r]) => r.w > 0 && r.policies[pol] !== r.w).map(([s, r]) => [s, r.policies[pol]]))
   const tiltAll = pending('tilt'), brakeAll = pending('brake')
   const t = data.track
 
@@ -132,6 +145,7 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
             {rows.map(([sym, r]) => {
               const cell = (pol: 'tilt' | 'brake') => {
                 const v = r.policies[pol]
+                if (r.w === 0) return <span className="text-gray-700" title="Tilt and brake scale an existing weight; 0 stays 0. Type a weight to fund it.">n/a</span>
                 if (v === r.w) return <span className="text-gray-600">=</span>
                 return (
                   <button disabled={busy} onClick={() => apply({ [sym]: v })}
@@ -142,9 +156,15 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
                 )
               }
               return (
-                <tr key={sym} className="border-b border-gray-900">
-                  <td className="py-1 text-indigo-300">{sym}{r.lock && <span className="ml-1 text-[9px] text-gray-500" title={`locked: ${r.lock}`}>🔒</span>}</td>
-                  <td className="py-1 text-right text-gray-200">{fmtW(r.w)}</td>
+                <tr key={sym} className={`border-b border-gray-900 ${r.w === 0 ? 'opacity-80' : ''}`}>
+                  <td className="py-1 text-indigo-300">
+                    {sym}
+                    {r.lock && <span className="ml-1 text-[9px] text-gray-500" title={`locked: ${r.lock}`}>🔒</span>}
+                    {disabled.has(sym) && <span className="ml-1.5 text-[9px] text-red-400 uppercase" title="Disabled in this mode: no real orders whatever the weight (virtual orders continue)">off</span>}
+                    {isCandidate(r) && <span className="ml-1.5 text-[9px] px-1 rounded border border-emerald-900/60 text-emerald-400"
+                      title="Weight 0, but ≥ +30 % over 14 days with ≥ 30 trades. Profit% did not predict the next days on testnet — a prompt to look, not a rule.">candidate</span>}
+                  </td>
+                  <td className={`py-1 text-right ${r.w > 0 ? 'text-gray-200' : 'text-gray-600'}`}>{fmtW(r.w)}</td>
                   <td className="py-1 text-right text-gray-400">{fmtPct(r.p7)}</td>
                   <td className="py-1 text-right text-gray-300">{fmtPct(r.p14)}</td>
                   <td className="py-1 text-right">{cell('tilt')}</td>
@@ -172,7 +192,7 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
           </button>
           {msg && <span className="text-xs font-mono text-gray-400">{msg}</span>}
           <span className="ml-auto text-[10px] text-gray-600">
-            symbols with weight 0 are off for real orders and not shown · data as of {data.day ?? '—'}
+            weight 0 = no real orders (virtual orders continue) · data as of {data.day ?? '—'}
           </span>
         </div>
       </div>

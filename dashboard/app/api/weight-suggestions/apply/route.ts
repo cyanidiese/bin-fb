@@ -4,8 +4,8 @@ import { isMode, updateRiskConfig } from '../../_risk-config'
 /** POST /api/weight-suggestions/apply {mode, changes: {SYMBOL: weight}} — set those
  *  symbols' weights in that mode's risk config, merged onto a FRESH read so nothing else
  *  changes. The bot picks it up within one candle and audits it in
- *  data/weight_changes_{mode}.json. Only existing symbols; weights must be > 0 (0 is the
- *  on/off switch for real orders and stays a deliberate edit on the allocation table). */
+ *  data/weight_changes_{mode}.json. Only symbols that have a weight entry; 0 turns real
+ *  orders OFF for a symbol and 0 -> >0 turns them ON — the panel's confirmation says so. */
 export async function POST(req: NextRequest) {
   let body: { mode?: unknown; changes?: Record<string, unknown> }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
   const clean: Record<string, number> = {}
   for (const [sym, v] of Object.entries(changes)) {
     const w = Math.round(Number(v) * 100) / 100
-    if (!/^[A-Z0-9]{2,20}$/.test(sym) || !Number.isFinite(w) || w <= 0 || w > 1000) {
+    if (!/^[A-Z0-9]{2,20}$/.test(sym) || !Number.isFinite(w) || w < 0 || w > 1000) {
       return NextResponse.json({ error: `invalid weight for ${sym}: ${String(v)}` }, { status: 400 })
     }
     clean[sym] = w

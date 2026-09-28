@@ -80,3 +80,83 @@ export function recordShadow(mode: Mode): string | null {
   fs.appendFileSync(file, JSON.stringify({ day: snap.day, mode, at: Date.now(), symbols: snap.symbols }) + '\n')
   return snap.day
 }
+
+// ── Track record: how each policy did vs the current weights ─────────────────
+// Same method as scripts/eval_weight_shadow.py: for each snapshot day with a complete
+// forward window, weight-normalised forward Profit% of the would-be-real trades
+// (real orders + rank-1 virtual orders).
+
+export const POLICIES = ['static', 'tilt', 'brake'] as const
+export type Policy = typeof POLICIES[number]
+
+export interface PolicyScore { mean: number; vsStatic: number; betterDays: number }
+export interface TrackRecord { snapshots: number; evaluated: number; days: number; scores: Record<Policy, PolicyScore> | null }
+
+const EXCLUDED = new Set(['promoted_to_real', 'max_age', 'closed_early'])
+
+function wouldBeRealTrades(mode: Mode): Record<string, [number, number][]> {
+  const dir = path.join(BOT_ROOT, 'data')
+  const out: Record<string, [number, number][]> = {}
+  let files: string[] = []
+  try { files = fs.readdirSync(dir) } catch { return out }
+  for (const f of files) {
+    const v = f.match(new RegExp(`^virtual_orders_rank1_([A-Z0-9]+)_${mode}\\.json$`))
+    const r = f.match(new RegExp(`^real_orders_([A-Z0-9]+)_${mode}\\.json$`))
+    const sym = (v ?? r)?.[1]
+    if (!sym) continue
+    let rows: Record<string, unknown>[] = []
+    try { rows = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) } catch { continue }
+    if (!Array.isArray(rows)) continue
+    for (const o of rows) {
+      const res = o.result as string | undefined
+      if (!res || EXCLUDED.has(res) || !o.open_time) continue
+      const t = Date.parse(String(o.open_time)) / 1000
+      const lev = Number(o.leverage) || 1
+      const margin = (Number(o.entry_price) * Number(o.quantity)) / lev
+      if (!(margin > 0) || !Number.isFinite(t)) continue
+      ;(out[sym] ??= []).push([t, (Number(o.pnl_usdt) || 0) / margin * 100])
+    }
+  }
+  return out
+}
+
+/** Midnight of `day` (YYYY-MM-DD) in Europe/Kyiv, epoch seconds. */
+function kyivMidnight(day: string): number {
+  const utcMidnight = Date.parse(`${day}T00:00:00Z`)
+  const probe = new Date(utcMidnight)
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Kyiv', hour: '2-digit', hourCycle: 'h23' }).format(probe)
+  return utcMidnight / 1000 - Number(parts) * 3600
+}
+
+export function evaluateShadow(mode: Mode, days = 7): TrackRecord {
+  let lines: string[] = []
+  try { lines = fs.readFileSync(shadowPath(mode), 'utf8').split('\n').filter(Boolean) } catch { /* none yet */ }
+  const snaps = lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) as
+    { day: string; symbols: Record<string, ShadowSymbol> }[]
+  const now = Date.now() / 1000
+  const trades = snaps.length ? wouldBeRealTrades(mode) : {}
+  const per: Record<Policy, number[]> = { static: [], tilt: [], brake: [] }
+  for (const snap of snaps) {
+    const start = kyivMidnight(snap.day)
+    const end = start + days * 86400
+    if (end > now) continue
+    const fwd: Record<string, number> = {}
+    for (const sym of Object.keys(snap.symbols)) {
+      fwd[sym] = (trades[sym] ?? []).filter(([t]) => t >= start && t < end).reduce((s, [, p]) => s + p, 0)
+    }
+    for (const pol of POLICIES) {
+      const ws = Object.entries(snap.symbols).map(([s, v]) => [s, Number(v.policies[pol]) || 0] as const)
+      const tot = ws.reduce((s, [, w]) => s + (w > 0 ? w : 0), 0)
+      per[pol].push(tot > 0 ? ws.reduce((s, [sym, w]) => s + (w > 0 ? (w / tot) * fwd[sym] : 0), 0) : 0)
+    }
+  }
+  const n = per.static.length
+  if (!n) return { snapshots: snaps.length, evaluated: 0, days, scores: null }
+  const mean = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length
+  const scores = {} as Record<Policy, PolicyScore>
+  for (const pol of POLICIES) {
+    const diff = per[pol].map((v, i) => v - per.static[i])
+    scores[pol] = { mean: round(mean(per[pol]), 2), vsStatic: round(mean(diff), 2), betterDays: diff.filter(d => d > 0).length }
+  }
+  return { snapshots: snaps.length, evaluated: n, days, scores }
+}

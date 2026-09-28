@@ -14,6 +14,7 @@ import LiveRiskState from '@/components/risk/LiveRiskState'
 import InstanceToggle, { oppositeMode, type Instance } from '@/components/InstanceToggle'
 import PresetRankingSection from '@/components/risk/PresetRankingSection'
 import MaxLossSection from '@/components/risk/MaxLossSection'
+import WeightSuggestions from '@/components/risk/WeightSuggestions'
 
 const POLL_MS = 5000
 
@@ -77,6 +78,7 @@ export default function RiskPage() {
   // reverts a field someone changed elsewhere (Settings, the other mode) since the load.
   const [loaded, setLoaded] = useState<RiskConfig | null>(null)
   const [noChanges, setNoChanges] = useState(false)
+  const [configReload, setConfigReload] = useState(0)
   useEffect(() => {
     if (!modeReady) return
     let alive = true
@@ -91,7 +93,7 @@ export default function RiskPage() {
       })
       .catch(() => {})
     return () => { alive = false }
-  }, [dataMode, modeReady])
+  }, [dataMode, modeReady, configReload])
   const stateFile = instance === 'primary' ? 'risk_state.json' : `risk_state_${dataMode}.json`
 
   const pollState = useCallback(() => {
@@ -201,6 +203,10 @@ export default function RiskPage() {
         patchConfig={patchConfig}
         bgfMode={scenario === 'best_gets_first'}
       />
+
+      {/* Applying writes the mode's weights server-side; reload so Save All's
+          change detection starts from what is now on disk. */}
+      <WeightSuggestions key={configMode ?? dataMode} mode={configMode ?? dataMode} onApplied={() => setConfigReload(n => n + 1)} />
 
       <LeverageControls config={config} patchConfig={patchConfig} scenario={scenario} />
 

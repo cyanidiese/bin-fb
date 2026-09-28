@@ -49,3 +49,30 @@ def test_eval_scores_policies_against_forward_results(tmp_path, monkeypatch, cap
     static = float(re.search(r'static\s+mean\s+([+-][\d.]+)', out).group(1))
     tilt = float(re.search(r'tilt\s+mean\s+([+-][\d.]+)', out).group(1))
     assert static == 0.0 and tilt == 15.0      # (1.3*50 - 0.7*50) / 2.0
+
+
+# ── Weight suggestions panel: see and approve ────────────────────────────────
+
+APPLY = (ROOT / 'dashboard/app/api/weight-suggestions/apply/route.ts').read_text()
+PANEL = (ROOT / 'dashboard/components/risk/WeightSuggestions.tsx').read_text()
+
+
+def test_apply_merges_onto_a_fresh_read_of_that_mode_only():
+    assert 'updateRiskConfig(body.mode' in APPLY
+    assert 'symbol_weights: w' in APPLY
+
+
+def test_apply_never_turns_a_symbol_on_or_off():
+    """0 is the real-order on/off switch; suggestions only rescale existing weights."""
+    assert 'w <= 0' in APPLY
+    assert "has no weight entry in this mode" in APPLY
+
+
+def test_panel_asks_before_applying_and_warns_on_tats_threshold():
+    assert 'window.confirm(' in PANEL
+    assert 'crosses tats_min_weight' in PANEL
+
+
+def test_panel_is_on_the_risk_page_per_mode():
+    page = (ROOT / 'dashboard/app/risk/page.tsx').read_text()
+    assert '<WeightSuggestions key={configMode ?? dataMode} mode={configMode ?? dataMode}' in page

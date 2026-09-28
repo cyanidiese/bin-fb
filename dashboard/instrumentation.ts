@@ -9,6 +9,7 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
   const { refresh, MODES } = await import('./app/api/trades/_preset-profit-store')
+  const { recordShadow } = await import('./app/api/trades/_weight-shadow')
 
   let running = false
   const tick = async () => {
@@ -19,6 +20,14 @@ export async function register() {
         const r = await refresh(mode)
         if (r.recomputed.length > 0) {
           console.log(`[preset-profit] ${mode}: ${r.recomputed.length} symbol(s) in ${r.ms} ms`)
+        }
+        // Once per store-day: what Profit%-driven weight policies would set (never
+        // applied). Spec: docs/specs/2026-09-28-weight-shadow-calculator.md
+        try {
+          const day = recordShadow(mode)
+          if (day) console.log(`[weight-shadow] ${mode}: snapshot for ${day}`)
+        } catch (err) {
+          console.error('[weight-shadow] failed:', err)
         }
       }
     } catch (err) {

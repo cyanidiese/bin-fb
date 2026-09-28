@@ -9,6 +9,7 @@ import { BOT_ROOT } from '../_utils'
 import { readRiskConfig } from '../_risk-config'
 import { lockedPresetsFor } from '../_locked-presets'
 import { loadStore, topRow, type Mode, type RangeStats } from './_preset-profit-store'
+import { readSymbolState } from '../symbols/_registry'
 
 const shadowPath = (mode: Mode) => path.join(BOT_ROOT, 'data', `weight_shadow_${mode}.jsonl`)
 
@@ -20,18 +21,74 @@ export interface ShadowSymbol {
   lock: string | null
   p7: Top
   p14: Top
+  /** [presets with Profit% > 0, presets with trades] in the window. */
+  c7?: [number, number]
+  c14?: [number, number]
   policies: { static: number; tilt: number; brake: number }
 }
 
 const round = (x: number, d = 4) => Math.round(x * 10 ** d) / 10 ** d
 const fmtNum = (x: number) => Number.isInteger(x) ? String(x) : x.toFixed(2)
 
-/** Bounded momentum: at most ±30 %, only with ≥ 20 trades in 14 days. */
-export function tiltWeight(w: number, p14: Top): number {
-  const [pct, n] = p14
-  if (pct === null || n < 20) return w
-  const f = Math.min(1.3, Math.max(0.7, 1 + 0.3 * Math.tanh(pct / 50)))
-  return round(w * f)
+// ── Score allocation (the "Tilt" column) ─────────────────────────────────────
+// Profit% of each window shrunk by its sample (few trades count for little), blended
+// 50/50 so the recent week weighs as much as the fortnight. The weight budget (the
+// mode's current total weight) is shared among the top N positive-score, enabled
+// symbols in proportion to score, at most CAP of it each; every other symbol gets 0.
+// Computed from evidence, not from the current weight — applying it twice cannot
+// compound. Spec: docs/specs/2026-09-28-weight-shadow-calculator.md (score allocation)
+
+export const SHRINK_7D = 10
+export const SHRINK_14D = 20
+export const SCORE_CAP = 0.30
+
+export function symbolScore(r: { p7: Top; p14: Top }): { score: number; s7: number; s14: number } {
+  const [p7, n7] = r.p7, [p14, n14] = r.p14
+  const s7 = (p7 ?? 0) * n7 / (n7 + SHRINK_7D)
+  const s14 = (p14 ?? 0) * n14 / (n14 + SHRINK_14D)
+  return { score: round(0.5 * s7 + 0.5 * s14, 3), s7: round(s7, 2), s14: round(s14, 2) }
+}
+
+export interface AllocationRow {
+  score: number; s7: number; s14: number
+  /** 1-based rank among eligible (enabled, score > 0) symbols; null when not eligible. */
+  rank: number | null
+  inTopN: boolean
+  value: number
+}
+
+export function scoreAllocation(
+  symbols: Record<string, { p7: Top; p14: Top }>,
+  opts: { disabled: Set<string>; n: number; budget: number; cap?: number },
+): Record<string, AllocationRow> {
+  const out: Record<string, AllocationRow> = {}
+  const scored = Object.entries(symbols).map(([sym, r]) => [sym, symbolScore(r)] as const)
+  const eligible = scored.filter(([sym, sc]) => !opts.disabled.has(sym) && sc.score > 0)
+    .sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]))
+  const n = Math.max(0, Math.min(Math.floor(opts.n), eligible.length))
+  const chosen = eligible.slice(0, n)
+  const rankOf = new Map(eligible.map(([sym], i) => [sym, i + 1]))
+  const alloc: Record<string, number> = {}
+  const total = chosen.reduce((a, [, sc]) => a + sc.score, 0)
+  if (total > 0 && opts.budget > 0) {
+    // cap each at CAP of the budget, but never below an equal share (N < 1/CAP)
+    const cap = Math.max(opts.cap ?? SCORE_CAP, 1 / chosen.length) * opts.budget
+    for (const [sym, sc] of chosen) alloc[sym] = opts.budget * sc.score / total
+    for (let i = 0; i < 20; i++) {
+      const over = Object.entries(alloc).filter(([, v]) => v > cap + 1e-9)
+      if (!over.length) break
+      const excess = over.reduce((a, [, v]) => a + (v - cap), 0)
+      for (const [sym] of over) alloc[sym] = cap
+      const free = Object.entries(alloc).filter(([, v]) => v < cap - 1e-9)
+      const fs = free.reduce((a, [, v]) => a + v, 0)
+      if (fs <= 0) break
+      for (const [sym, v] of free) alloc[sym] = v + excess * v / fs
+    }
+  }
+  for (const [sym, sc] of scored) {
+    out[sym] = { ...sc, rank: rankOf.get(sym) ?? null, inTopN: sym in alloc, value: round(alloc[sym] ?? 0, 2) }
+  }
+  return out
 }
 
 /** Asymmetric brake: halve only on a sustained, sizeable loss (≥ 30 trades, ≤ −30 %). */
@@ -43,6 +100,12 @@ export function brakeWeight(w: number, p14: Top): number {
 function top(stats: RangeStats | undefined, lock: string | null): Top {
   const t = topRow(stats, lock)
   return [t.pct === null ? null : round(t.pct, 2), t.n, t.preset]
+}
+
+/** [presets with Profit% > 0, presets with any trade] in a window. */
+function counts(stats: RangeStats | undefined): [number, number] {
+  const vals = Object.values(stats?.presets ?? {})
+  return [vals.filter(([pct]) => pct > 0).length, vals.length]
 }
 
 export function buildSnapshot(mode: Mode): { day: string; symbols: Record<string, ShadowSymbol> } | null {
@@ -59,8 +122,15 @@ export function buildSnapshot(mode: Mode): { day: string; symbols: Record<string
     const lock = locks[sym] ?? null
     const p7 = top(s.ranges['7d'], lock)
     const p14 = top(s.ranges['14d'], lock)
-    symbols[sym] = { w, lock, p7, p14, policies: { static: w, tilt: tiltWeight(w, p14), brake: brakeWeight(w, p14) } }
+    symbols[sym] = { w, lock, p7, p14, c7: counts(s.ranges['7d']), c14: counts(s.ranges['14d']),
+                     policies: { static: w, tilt: w, brake: brakeWeight(w, p14) } }
   }
+  // tracked tilt = the score allocation over every eligible symbol (the widget lets the
+  // user narrow N; the daily record keeps one comparable definition)
+  const disabled = new Set(Object.keys(readSymbolState(mode).disabled ?? {}))
+  const budget = Object.values(symbols).reduce((a, r) => a + r.w, 0)
+  const alloc = scoreAllocation(symbols, { disabled, n: Infinity, budget })
+  for (const [sym, r] of Object.entries(symbols)) r.policies.tilt = alloc[sym].value
   return { day, symbols }
 }
 
@@ -225,47 +295,55 @@ export function anchors(mode: Mode, currentWeights: Record<string, number>, days
   return out
 }
 
+/** This formula's reconstructed history for each N (scripts/backfill_weight_shadow.py
+ *  --write): forward results of the top-N score allocation vs equal weights and vs the
+ *  current weights, over the next 7 days. */
+export interface ScoreHistEntry { days: number; mean: number; vs_equal: number; vs_current: number; better_equal: number }
+export type ScoreHistory = Record<string, { top?: ScoreHistEntry; r1?: ScoreHistEntry }>
+
+export function readScoreHistory(mode: Mode): ScoreHistory | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(BOT_ROOT, 'data', `weight_shadow_${mode}_score_history.json`), 'utf8'))
+  } catch { return null }
+}
+
+const TILT_THIN_7D = 5
+
 export function panelSuggestions(
   row: ShadowSymbol,
-  opts: { disabled: boolean; baseWeight: number; history?: TrackRecord; anchor?: Anchor },
+  opts: {
+    disabled: boolean; alloc: AllocationRow; n: number; eligible: number; budget: number
+    history?: TrackRecord; scoreHist?: { top?: ScoreHistEntry; r1?: ScoreHistEntry }; anchor?: Anchor
+  },
 ): PanelSuggestions {
   const [pct, n] = row.p14
-  // Compute from the pre-suggestion weight, so applying again does not compound
-  // (3 -> brake 1.5 -> brake 0.75 ...). The current weight stays what "=" compares to.
-  const anchor = opts.anchor
-  const baseW = anchor ? anchor.base : row.w
-  const anchorNote = anchor
-    ? `computed from ${fmtNum(anchor.base)} — the weight before ${anchor.policy} was applied on ${new Date(anchor.since).toISOString().slice(0, 10)} — so applying again does not compound`
-    : undefined
   const common: string[] = []
   if (opts.disabled) common.push('disabled in this mode — the weight has no effect until the symbol is enabled in Settings')
   if (row.lock && n === 0) common.push(`the locked preset ${row.lock} has no trades in 14 days`)
 
-  // Tilt
+  // Tilt = score allocation (independent of the current weight: cannot compound)
+  const a = opts.alloc
+  const tilt = a.value
   const tf: string[] = [...common]
-  let tilt: number
-  if (pct === null) {
-    tilt = row.w
-    tf.push('no trades in the last 14 days — nothing to tilt on')
-  } else {
-    const factor = Math.min(1.3, Math.max(0.7, 1 + 0.3 * Math.tanh(pct / 50)))
-    if (baseW > 0) {
-      tilt = round(baseW * factor)
-    } else if (pct > 0) {
-      tilt = round(opts.baseWeight * factor)
-      tf.push(`weight is 0: starts from ${opts.baseWeight} (tats_min_weight) and turns REAL orders ON`)
-    } else {
-      tilt = 0
-      tf.push('weight is 0 and 14-day Profit% is not positive — no reason to fund it')
-    }
-    if (n < TILT_MIN_TRADES) tf.push(`only ${n} trade(s) in 14 days — needs ≥ ${TILT_MIN_TRADES} to be meaningful`)
+  const why =
+    opts.disabled ? 'disabled' :
+    a.score <= 0 ? `score ${a.score.toFixed(1)} is not positive` :
+    !a.inTopN ? `rank ${a.rank} of ${opts.eligible} — outside the top ${opts.n}` : ''
+  if (tilt > 0 && row.w === 0) tf.push('turns REAL orders ON for this symbol')
+  if (tilt === 0 && row.w > 0) tf.push(`turns REAL orders OFF for this symbol (${why})`)
+  if (tilt > 0 && row.p7[1] < TILT_THIN_7D && row.p14[1] < TILT_MIN_TRADES) {
+    tf.push(`only ${row.p7[1]} / ${row.p14[1]} trades in 7 / 14 days — the score is mostly shrinkage`)
   }
-  const ht = opts.history?.scores?.tilt
-  if (ht && opts.history!.evaluated >= 20 && ht.vsStatic <= 0.1) {
-    tf.push(`history: tilt added ${ht.vsStatic >= 0 ? '+' : ''}${ht.vsStatic.toFixed(2)} %/week over ${opts.history!.evaluated} days — no real edge`)
+  const h = opts.scoreHist?.top
+  if (tilt !== row.w && h && h.days >= 20 && h.vs_equal <= 0) {
+    tf.push(`history: this allocation (top ${opts.n}) made ${h.vs_equal >= 0 ? '+' : ''}${h.vs_equal.toFixed(2)} %/week vs equal weights over ${h.days} days — it lost to simply equal-weighting`)
   }
+  const tnote = `score ${a.score.toFixed(1)} = ½ × 7d ${a.s7 >= 0 ? '+' : ''}${a.s7.toFixed(1)} + ½ × 14d ${a.s14 >= 0 ? '+' : ''}${a.s14.toFixed(1)} (Profit% shrunk by trade count)` +
+    (a.inTopN ? ` · rank ${a.rank} of ${opts.eligible} → ${fmtNum(tilt)} of budget ${fmtNum(opts.budget)}` : why ? ` · ${why} → 0` : '')
 
-  // Brake
+  // Brake: halves; anchored so applying again does not compound (3 -> 1.5 -> 0.75 ...)
+  const anchor = opts.anchor?.policy === 'brake' ? opts.anchor : undefined
+  const baseW = anchor ? anchor.base : row.w
   const bf: string[] = [...common]
   let brake = row.w
   let bnote: string | undefined
@@ -283,13 +361,12 @@ export function panelSuggestions(
   if (brake !== row.w && hb && opts.history!.evaluated >= 20 && hb.vsStatic <= 0.1) {
     bf.push(`history: brake added ${hb.vsStatic >= 0 ? '+' : ''}${hb.vsStatic.toFixed(2)} %/week over ${opts.history!.evaluated} days — no real edge`)
   }
-  // a symbol-level doubt (e.g. disabled) only matters when the brake would change something
   if (anchor && brake === row.w && pct !== null && pct <= BRAKE_LOSS_PCT) {
     bnote = `already braked on ${new Date(anchor.since).toISOString().slice(0, 10)} (${fmtNum(anchor.base)} → ${fmtNum(row.w)}); it will not halve again while the same loss window is in force`
   }
-  const tnote = anchorNote
+  // doubts only matter when the value would change something; otherwise the note explains
   return {
-    tilt: { value: tilt, flags: tf, note: tnote },
-    brake: { value: brake, flags: brake !== row.w ? bf : [], note: [bnote, anchorNote].filter(Boolean).join(' · ') || undefined },
+    tilt: { value: tilt, flags: tilt !== row.w ? tf : [], note: tnote },
+    brake: { value: brake, flags: brake !== row.w ? bf : [], note: bnote },
   }
 }

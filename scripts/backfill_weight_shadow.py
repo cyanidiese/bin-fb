@@ -110,6 +110,44 @@ def top_row(presets: dict[str, Series], lock: str | None, a: float, b: float):
     return best
 
 
+SHRINK_7D, SHRINK_14D, SCORE_CAP = 10, 20, 0.30      # = dashboard _weight-shadow.ts
+
+
+def symbol_score(p7, p14):
+    """Same as symbolScore() in the dashboard: Profit% shrunk by trade count, 50/50."""
+    s7 = (p7[0] or 0) * p7[1] / (p7[1] + SHRINK_7D)
+    s14 = (p14[0] or 0) * p14[1] / (p14[1] + SHRINK_14D)
+    return 0.5 * s7 + 0.5 * s14
+
+
+def score_allocation(rows: dict, n: int, budget: float, disabled=frozenset()) -> dict:
+    """Same as scoreAllocation(): top-n positive-score symbols share `budget` in proportion
+    to score, each at most max(CAP, 1/n) of it; everyone else 0."""
+    sc = {s: symbol_score(v["p7"], v["p14"]) for s, v in rows.items() if s not in disabled}
+    elig = sorted(((s, x) for s, x in sc.items() if x > 0), key=lambda kv: (-kv[1], kv[0]))[:n]
+    tot = sum(x for _, x in elig)
+    out = {s: 0.0 for s in rows}
+    if tot <= 0 or budget <= 0:
+        return out
+    cap = max(SCORE_CAP, 1 / len(elig)) * budget
+    w = {s: budget * x / tot for s, x in elig}
+    for _ in range(20):
+        over = {s: v for s, v in w.items() if v > cap + 1e-9}
+        if not over:
+            break
+        ex = sum(v - cap for v in over.values())
+        for s in over:
+            w[s] = cap
+        free = {s: v for s, v in w.items() if v < cap - 1e-9}
+        fs = sum(free.values())
+        if fs <= 0:
+            break
+        for s in free:
+            w[s] += ex * free[s] / fs
+    out.update(w)
+    return out
+
+
 def tilt(w, p14):
     pct, n, _ = p14
     if pct is None or n < 20:
@@ -153,6 +191,14 @@ def main() -> int:
                           "equal": {"static": 1.0, "tilt": round(tilt(1.0, p14), 4), "brake": round(brake(1.0, p14), 4)}}
         snaps.append({"day": day.isoformat(), "mode": mode, "backfill": True, "symbols": symbols})
         day += dt.timedelta(days=1)
+
+    # tracked tilt = the score allocation over every eligible symbol (as the dashboard)
+    for snap in snaps:
+        rows = snap["symbols"]
+        budget = sum(v["w"] for v in rows.values())
+        alloc = score_allocation(rows, len(rows), budget)
+        for s, v in rows.items():
+            v["policies"]["tilt"] = round(alloc[s], 4)
 
     if write:
         out = DATA / f"weight_shadow_{mode}_history.jsonl"
@@ -199,6 +245,60 @@ def main() -> int:
                        f"better {sum(1 for d in diff if d > 0)}/{n}, changes/day {changed[pol] / n:.1f}")
         out.append(f"static mean {statistics.mean(per['static']):+6.2f}%/wk")
         return " | ".join(out)
+
+    # ── Score allocation history for every N (what the panel shows for the chosen N) ──
+    rank1_start = dt.datetime(2026, 9, 7, tzinfo=dt.timezone.utc).timestamp()
+
+    def fwd_of(snap, d0, d1, measure):
+        out = {}
+        for s, v in snap["symbols"].items():
+            if measure == "r1":
+                ser = r1.get(s)
+            else:
+                pr = v["p14"][2] or v["p7"][2]
+                ser = per_sym[s].get(pr) if pr else None
+            out[s] = ser.window(d0, d1)[0] if ser else 0.0
+        return out
+
+    score_hist: dict[str, dict] = {}
+    for n in range(1, len(syms) + 1):
+        entry = {}
+        for measure in ("top", "r1"):
+            val, eq, cur = [], [], []
+            for snap in snaps:
+                d0 = dt.datetime.fromisoformat(snap["day"]).replace(tzinfo=TZ).timestamp()
+                d1 = d0 + 7 * DAY
+                if d1 > now or (measure == "r1" and d0 < rank1_start):
+                    continue
+                rows = snap["symbols"]
+                F = fwd_of(snap, d0, d1, measure)
+                budget = sum(v["w"] for v in rows.values())
+                books = {
+                    "score": score_allocation(rows, n, budget),
+                    "equal": {s: 1.0 for s in rows},
+                    "current": {s: v["w"] for s, v in rows.items() if v["w"] > 0},
+                }
+                res = {}
+                for k, w in books.items():
+                    t = sum(w.values())
+                    res[k] = sum(x / t * F[s] for s, x in w.items()) if t else 0.0
+                val.append(res["score"]); eq.append(res["equal"]); cur.append(res["current"])
+            if val:
+                entry[measure] = {
+                    "days": len(val),
+                    "mean": round(statistics.mean(val), 2),
+                    "vs_equal": round(statistics.mean(a - b for a, b in zip(val, eq)), 2),
+                    "vs_current": round(statistics.mean(a - b for a, b in zip(val, cur)), 2),
+                    "better_equal": sum(1 for a, b in zip(val, eq) if a > b),
+                }
+        score_hist[str(n)] = entry
+    if write:
+        out2 = DATA / f"weight_shadow_{mode}_score_history.json"
+        out2.write_text(json.dumps(score_hist, indent=1))
+        print(f"wrote score-allocation history for N=1..{len(syms)} to {out2.name}")
+    print("score allocation, top measure (N: vs equal %/wk, better days):",
+          ", ".join(f"{n}: {v['top']['vs_equal']:+.2f} ({v['top']['better_equal']}/{v['top']['days']})"
+                    for n, v in score_hist.items() if "top" in v))
 
     print(f"mode={mode} reconstructed days {first}..{last} ({len(snaps)}), symbols {len(syms)}, "
           f"funded now: {', '.join(f'{s}={w}' for s, w in weights.items() if float(w) > 0)}")

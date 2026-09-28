@@ -128,9 +128,16 @@ function kyivMidnight(day: string): number {
   return utcMidnight / 1000 - Number(parts) * 3600
 }
 
-export function evaluateShadow(mode: Mode, days = 7): TrackRecord {
+/** Reconstructed past snapshots (scripts/backfill_weight_shadow.py --write): same shape,
+ *  built from order history with today's weights and locks. */
+const historyPath = (mode: Mode) => path.join(BOT_ROOT, 'data', `weight_shadow_${mode}_history.jsonl`)
+
+export function evaluateShadow(mode: Mode, days = 7, source: 'live' | 'history' = 'live'): TrackRecord {
   let lines: string[] = []
-  try { lines = fs.readFileSync(shadowPath(mode), 'utf8').split('\n').filter(Boolean) } catch { /* none yet */ }
+  try {
+    lines = fs.readFileSync(source === 'live' ? shadowPath(mode) : historyPath(mode), 'utf8')
+      .split('\n').filter(Boolean)
+  } catch { /* none yet */ }
   const snaps = lines.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) as
     { day: string; symbols: Record<string, ShadowSymbol> }[]
   const now = Date.now() / 1000
@@ -145,7 +152,9 @@ export function evaluateShadow(mode: Mode, days = 7): TrackRecord {
       fwd[sym] = (trades[sym] ?? []).filter(([t]) => t >= start && t < end).reduce((s, [, p]) => s + p, 0)
     }
     for (const pol of POLICIES) {
-      const ws = Object.entries(snap.symbols).map(([s, v]) => [s, Number(v.policies[pol]) || 0] as const)
+      const ws = Object.entries(snap.symbols)
+        .filter(([, v]) => Number(v.w) > 0)          // the funded book, as traded
+        .map(([s, v]) => [s, Number(v.policies[pol]) || 0] as const)
       const tot = ws.reduce((s, [, w]) => s + (w > 0 ? w : 0), 0)
       per[pol].push(tot > 0 ? ws.reduce((s, [sym, w]) => s + (w > 0 ? (w / tot) * fwd[sym] : 0), 0) : 0)
     }

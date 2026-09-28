@@ -15,7 +15,25 @@ interface Data {
   day: string | null
   tats_min_weight: number
   symbols: Record<string, Row>
-  track: { snapshots: number; evaluated: number; days: number; scores: Record<'static' | 'tilt' | 'brake', Score> | null }
+  track: Track
+  /** Reconstructed from order history (scripts/backfill_weight_shadow.py). */
+  history: Track
+}
+interface Track { snapshots: number; evaluated: number; days: number; scores: Record<'static' | 'tilt' | 'brake', Score> | null }
+
+function TrackLine({ label, t }: { label: string; t: Track }) {
+  if (!t.scores) return <div className="text-gray-500">{label}: {t.snapshots} snapshot(s) — scored once a snapshot is {t.days} days old.</div>
+  return (
+    <div className="flex flex-wrap gap-x-6 gap-y-1">
+      <span className="text-gray-500">{label} ({t.evaluated} day(s), next {t.days} days, would-be-real trades):</span>
+      {(['tilt', 'brake'] as const).map(p => (
+        <span key={p} className={t.scores![p].vsStatic > 0 ? 'text-emerald-400' : 'text-gray-400'}>
+          {p}: {t.scores![p].vsStatic > 0 ? '+' : ''}{t.scores![p].vsStatic.toFixed(2)}% vs current, better on {t.scores![p].betterDays}/{t.evaluated} days
+        </span>
+      ))}
+      <span className="text-gray-500">current weights: {t.scores.static.mean > 0 ? '+' : ''}{t.scores.static.mean.toFixed(2)}%</span>
+    </div>
+  )
 }
 
 interface Props {
@@ -93,22 +111,9 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
           </p>
         </div>
 
-        <div className="rounded border border-gray-800 px-3 py-2 text-[11px] font-mono">
-          {t.scores ? (
-            <div className="flex flex-wrap gap-x-6 gap-y-1">
-              <span className="text-gray-500">Track record ({t.evaluated} day(s), next {t.days} days):</span>
-              {(['tilt', 'brake'] as const).map(p => (
-                <span key={p} className={t.scores![p].vsStatic > 0 ? 'text-emerald-400' : 'text-gray-400'}>
-                  {p}: {t.scores![p].vsStatic > 0 ? '+' : ''}{t.scores![p].vsStatic.toFixed(2)}% vs current,
-                  better on {t.scores![p].betterDays}/{t.evaluated} days
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="text-gray-500">
-              Track record: {t.snapshots} daily snapshot(s) recorded — the first score appears once a snapshot is {t.days} days old.
-            </span>
-          )}
+        <div className="rounded border border-gray-800 px-3 py-2 text-[11px] font-mono space-y-1">
+          <TrackLine label="History (reconstructed)" t={data.history} />
+          <TrackLine label="Live since deploy" t={t} />
         </div>
 
         <table className="w-full text-xs font-mono">

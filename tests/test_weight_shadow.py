@@ -76,3 +76,35 @@ def test_panel_asks_before_applying_and_warns_on_tats_threshold():
 def test_panel_is_on_the_risk_page_per_mode():
     page = (ROOT / 'dashboard/app/risk/page.tsx').read_text()
     assert '<WeightSuggestions key={configMode ?? dataMode} mode={configMode ?? dataMode}' in page
+
+
+# ── Backfill: reconstruct past snapshots from order history ─────────────────
+
+def _bws():
+    spec = importlib.util.spec_from_file_location('bws', ROOT / 'scripts/backfill_weight_shadow.py')
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    return m
+
+
+def test_backfill_policies_match_the_dashboard_formulas():
+    m = _bws()
+    assert m.tilt(10, (100.0, 25, 'p')) == 10 * min(1.3, 1 + 0.3 * __import__('math').tanh(2))
+    assert m.tilt(10, (100.0, 19, 'p')) == 10          # < 20 trades: unchanged
+    assert m.brake(10, (-30.0, 30, 'p')) == 5          # sustained loss: halved
+    assert m.brake(10, (-29.9, 30, 'p')) == 10
+    assert m.brake(10, (-80.0, 29, 'p')) == 10         # < 30 trades: unchanged
+
+
+def test_backfill_uses_only_trades_before_the_day():
+    m = _bws()
+    s = m.Series([(100.0, 5.0), (200.0, -2.0), (300.0, 7.0)])
+    assert s.window(0, 300) == (3.0, 2)                # the 300 trade is not "before"
+    top = m.top_row({'a': s, 'b': m.Series([(150.0, 1.0)])}, None, 0, 250)
+    assert top[2] == 'a' and top[1] == 2
+    assert m.top_row({'a': s}, 'locked', 0, 250) == (None, 0, 'locked')
+
+
+def test_panel_shows_the_reconstructed_history():
+    route = (ROOT / 'dashboard/app/api/weight-suggestions/route.ts').read_text()
+    assert "evaluateShadow(mode, 7, 'history')" in route
+    assert 'History (reconstructed)' in PANEL

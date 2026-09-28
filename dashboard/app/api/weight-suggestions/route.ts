@@ -15,5 +15,6 @@ export async function GET(req: NextRequest) {
     tats_min_weight: Number(cfg.tats_min_weight ?? 0),
     symbols: snap?.symbols ?? {},
     track: evaluateShadow(mode),
+    history: evaluateShadow(mode, 7, 'history'),
   })
 }

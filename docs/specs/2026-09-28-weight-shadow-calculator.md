@@ -76,3 +76,19 @@ this decides whether any policy goes live (a separate, approved change).
 
 None on trading: nothing reads the shadow file except the evaluation script. One small
 append per mode per day.
+
+## Addendum (2026-09-28): backfill from existing data
+
+`scripts/backfill_weight_shadow.py <mode> [--write]` reconstructs a snapshot for every past
+day from order history (only trades opened before that day; today's weights and locks),
+writes `data/weight_shadow_{mode}_history.jsonl`, and prints the scores. The Risk-page
+panel shows this "History (reconstructed)" record next to the live one
+(`evaluateShadow(mode, 7, 'history')`), so a verdict exists without waiting weeks.
+
+First result, testnet, 112 days (105 scored), funded book, would-be-real trades: tilt
++0.08 %/week vs current weights (±0.05 se), better on 49/105 days, ~2 weight changes a day;
+brake +0.00 % (±0.01), better on 8/105. Equal-weight book of all 22 symbols: tilt +0.05 %
+(±0.02) on would-be-real, −0.06 % (±0.05) on top-preset trades. Neither is worth
+switching on. The same run showed the funded symbols' top preset earning +5.4 %/week on
+its own virtual trades while the would-be-real trades lost −0.55 %/week — the gap between
+signal and execution is where the money is.

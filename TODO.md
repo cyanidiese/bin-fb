@@ -14,19 +14,20 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol registry per-mode split: committed (see below).
 
-### Profit%-driven weights — measure first (2026-09-28)
+### Profit%-driven weights — Tilt deployed 2026-09-28 with breadth penalty + momentum bonus; measure edge over 1–4 weeks
 
-- [x] Score-allocation Tilt (top N, lock toggle, preset counts, recalculate) — deployed 2026-09-28 18:21 UTC (43d9309); history files written for test and live. Testnet history: −1.71 … −5.85 %/week vs equal weights at every N. Live history has 1 day — re-run `scripts/backfill_weight_shadow.py live --write` weekly.
+- [x] **Tilt (score allocation) refined (a411e3e, deployed 19:22 UTC)**: whole-number weights via largest-remainder (sum to budget, default 33). Breadth penalty: <10% profitable presets in 7d → score ×(share/0.10). Momentum bonus: 7d>0 and 7d>14d/2 → score ×1.25. Applied testnet 2026-09-28 19:45, N=5: EGLDUSDT 10, ENAUSDT 7, ARBUSDT 6, LTCUSDT 5, REZUSDT 5, WLDUSDT 0. History vs equal weights at N=5: top-preset −1.75 %/wk, rank-1 (14d) +1.26 %/wk — mixed, a trial. Live untouched.
 
-- [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
 - [x] Shadow calculator + evaluator + Risk-page "Weight suggestions" panel (deployed 2026-09-28 13:02 UTC; first snapshots written for both modes).
-- [x] Reconstructed track record from existing data (deployed 14:05 UTC): tilt +0.08 %/wk, brake +0.00 % over 105 testnet days — nothing to apply.
-- [x] Gap investigated: real orders were judged against the pre-entry candle (46/48 sub-minute exits, −186.66 USDT/30d) — FIXED, deployed 2026-09-28 16:00 UTC.
-- [ ] Re-measure the virtual-vs-real gap in ~1 week (remaining suspects: max_losing_pct 55 on r5_arm25, early-loss cap computed from signal not fill price, slippage/fees, real-only gates).
+- [x] Reconstructed track record from existing data (deployed 14:05 UTC): old proportional tilt +0.08 %/wk, brake +0.00 % over 105 testnet days.
+- [x] **Real orders judged against pre-entry candle fixed (f0ea213, deployed 16:00 UTC)**: 46/48 sub-minute closes, −186.66 USDT/30d were from checking against a candle that ended before entry. Fix: `check_symbol_candle(candle_close_ms=)` skips positions opened at/after close.
+- [x] **Risk config inode stability fixed (~19:34 UTC)**: atomic rename via `os.replace()` broke bind-mounted files (host new inode, containers old). Fix: in-place copy + restart. Rule: edit via API or direct SSH, never atomic rename.
+- [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting.
+- [ ] **Re-measure Tilt edge in ~1 week** (testnet and live virtual stats); decide N and whether to apply.
 - [ ] After 3–4 weeks: read the panel's live track record (or `python3 scripts/eval_weight_shadow.py`) and decide whether any policy is applied.
 - [ ] Consider equal-risk sizing (per-trade risk persists, +0.25) — needs its own A/B.
 - [x] Trend history depth made explicit and consistent (deployed 13:15 UTC; all 22 live caches backfilled 1569/3291 → 5000).
-- [x] Verified 2026-09-28: every symbol (disabled / weight 0 / funded, both modes) is run through the virtual simulator every candle; zero-open symbols show only `no_signal` (signal drought, not a gate).
+- [x] Verified 2026-09-28: every symbol (disabled / weight 0 / funded, both modes) is run through the virtual simulator every candle; zero-open symbols show only `no_signal`.
 
 ### Signal drought on oscillating symbols (investigated 2026-09-27)
 

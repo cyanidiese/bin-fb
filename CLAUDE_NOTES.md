@@ -1,12 +1,41 @@
 # CLAUDE_NOTES.md — Binance Futures Bot Session Log
 
-## ⟳ RESUME POINT — Session 72 (2026-09-26) — Per-mode risk config deployed; preset profit & picker completed
+## ⟳ RESUME POINT — Session 72b (2026-09-28) — Weight Tilt refined with breadth penalty & momentum bonus; inode bug fixed; pre-entry candle check fixed
+
+**Branch**: feature/mean-reversion-overlay (commit a411e3e)
+
+**Status — Tilt (score allocation) deployed 2026-09-28 13:02 UTC, refined 19:22 UTC (a411e3e)**:
+- **Whole-number weights** via largest-remainder rounding, sum to `weight_budget` (per mode, default 33). Previous decimal apply had shrunk the sum to 1.26.
+- **Score formula**: ½·7d Profit%·n/(n+10) + ½·14d Profit%·n/(n+20) (Preset Efficiency top row; locked preset if any).
+- **Breadth penalty**: <10% profitable presets in 7d → score ×(share/0.10). Example: 2/81 presets → ×0.25 (panel flags "bad sign").
+- **Momentum bonus**: 7d Profit% > 0 AND 7d > 14d/2 → score ×1.25 (14-day trend leads).
+- **Applied testnet** 2026-09-28 19:45, N=5 (top 5 symbols): EGLDUSDT 10, ENAUSDT 7, ARBUSDT 6, LTCUSDT 5, REZUSDT 5, WLDUSDT 0. History (new formula, testnet, vs equal weights): top-preset measure −1.75 %/week at N=5 (loses at every N, −1.6…−1.9); rank-1 measure over 14 days +1.26 %/week at N=5 (N=3–6 win, better on 9–11/14 days). Mixed evidence — treat as a trial. **Live weights untouched.**
+- **Measurement**: planned weekly backfill + evaluation; re-check in ~1 week.
+
+**Status — Risk config inode bug fixed 2026-09-28 ~19:34 UTC**:
+- **Root cause**: atomic file edits via `os.replace()` on bind-mounted config files created a hidden divergence. Host gets new inode, containers kept old inode → files diverged within minutes.
+- **Evidence**: 2026-09-28 test config edit; inodes: host 12345678, containers 87654321 (read-only, lagged 3 candles behind).
+- **Fix**: copy content in place to preserve inode, restart all three containers. Rule: edit these files via API or direct SSH command, never with atomic rename on bind mounts.
+- **Verified**: post-restart inodes matched.
+
+**Status — Real orders vs pre-entry candle fixed 2026-09-28 16:00 UTC (f0ea213)**:
+- **Root cause**: real orders placed in `on_candle_close`, then the same handler ran `check_symbol_candle()` with the just-closed candle → every new order checked against a candle that ended before it existed.
+- **Evidence**: 46/48 real orders closed sub-minute in 30 days (30 "losses", 16 "trail" exits), −186.66 USDT plus fees, at prices never revisited.
+- **Fix**: `check_symbol_candle(candle_close_ms=)` skips positions opened at/after that close time; ticks guard from first second.
+
+**Next session checklist**:
+- [ ] Re-measure weight Tilt edge in ~1 week (testnet and live virtual stats; decide N and whether to apply)
+- [ ] Deploy kline feed fixes (committed 2026-09-27 dd69a9f, fixes live stream + cache integrity)
+- [ ] Decide stale L2/L3 trend fix (`trend_bos_check_on_close`, needs backtest A/B)
+- [ ] Telegram token rotation + server log scrub
+
+---
+
+## Session 72 (2026-09-26) — Per-mode risk config deployed; preset profit & picker completed
 
 **Branch**: feature/mean-reversion-overlay (commits up to 30aac92)
 
 **Status**: Per-mode risk config DEPLOYED 2026-09-26 19:33 UTC (split script run on host at 19:30 after graceful `docker stop -t 60`; test file identical to legacy apart from lock layout; bot → risk_config_test.json, mirror → risk_config_live.json; SOLUSDT real position restored). Legacy risk_config.json untouched = rollback path; nothing writes it now. `/bfb-config` edits must target risk_config_test.json (or _live), not risk_config.json.
-
-**2026-09-28 BUG FIXED — real orders judged against the pre-entry candle (deployed 16:00 UTC, f0ea213)**: real orders are placed inside the candle-close handler, which then ran check_symbol_candle() with that just-closed candle, so every new order was checked against the high/low of a candle that ended before it existed. 46 of 48 real orders closed within a minute in 30 days (30 "losses", 16 "trail" exits) were exactly that: −186.66 USDT plus fees, at prices never revisited. Fix: check_symbol_candle(candle_close_ms=) skips positions opened at/after the candle close; ticks guard from the first second. Found by splitting the "top preset +5.4 %/wk virtual vs −0.55 %/wk would-be-real" gap. Also: tests/conftest.py stops Client.ping() network calls (the intermittent suite hangs). Lesson: never chain a commit after `pytest | grep | tail` — tail masks the exit code (a failing run was pushed once, then fixed).
 
 **2026-09-27 signal drought (ARB/LTC/APT/BTC on testnet since Sep 24)**: not code/config breakage — trend structure: L2 needs 3 highs+3 lows to project (no_projection 64% of ARB candles), L2 gains points only on L1 reversal, stale L2 past BOS (APT 331/365). 85/87 presets see nothing; l2_bos_* see signals (3/3 wins). Residual unexplained: replay of the real simulator from the last restart opens l2_bos_* on 88/88 candles, live bot opened 0 → instrumented (virtual_summary, 66919fe). Replay scripts in session scratchpad (replay_gates/levels/tryopen/fullsim) — run in bot container read-only.
 

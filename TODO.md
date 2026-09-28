@@ -14,6 +14,14 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [ ] **Open follow-up**: Check open positions reconcile; verify mode files exist and readable; test that weight changes in one mode don't affect other; confirm risk_state path routing works (one file per instance). Symbol registry per-mode split: committed (see below).
 
+### Profit%-driven weights — measure first (2026-09-28)
+
+- [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
+- [x] Shadow calculator + evaluator (4c0ffc5, not deployed; dashboard-only deploy).
+- [ ] Deploy dashboard; after 3–4 weeks run `python3 scripts/eval_weight_shadow.py` and decide.
+- [ ] Consider equal-risk sizing (per-trade risk persists, +0.25) — needs its own A/B.
+- [x] Trend history depth made explicit and consistent (00cb830, not deployed; mirror restart only).
+
 ### Signal drought on oscillating symbols (investigated 2026-09-27)
 
 - [x] **Diagnosis** (testnet since 2026-09-24): ARB/LTC — trend engine produced no usable candidate on ~90% of candles: L2 lacks 3 highs + 3 lows for projection (`min_swing_points_projection=3`) after a structure change, and L2 only gains points when L1 reverses; L3 never formed. APT — L2 "price past BOS" on 331/365 candles (stale-L2). BTC — L2 no projection + L3 past BOS. JUP/LINK — candidates exist but TP-wrong-side/regime/RR filters. Only 7 presets relax projection (oscillating_zone, l2_bos_*, l2_trend_*, l2_regime_aware*); l2_bos_entry/l2_bos_trend were 3/3 wins on ARB Sep 25–26. ENA was never silent (446 test orders since Sep 24).
@@ -21,7 +29,7 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [ ] **After deploy**: read `virtual_summary` for ARB/JUP for a few hours; fix what it shows.
 - [ ] **Decide (strategy change, needs A/B)**: stale-L2 fix (`trend_bos_check_on_close`) and/or relaxed projection for more presets; real orders for ARB/LTC require a non-zero weight (currently 0).
 
-### Kline feed fixes (committed dd69a9f, awaiting deploy approval)
+### Kline feed fixes (deployed 2026-09-27 19:47 UTC)
 
 - [ ] **Deploy** (bot restart for stream/cache/export fixes + dashboard for the orders table). After: mirror log `Combined stream connected` with the /market URL, per-candle lag ~seconds (analysis_live.jsonl), live caches backfilled to ~1500 candles, disabled-symbol charts advancing.
 - [ ] **Decide**: how to treat live virtual stats from Sep 7 → deploy (gappy, late feed) — keep but flag, or start a clean live window from the deploy date for go-live decisions.

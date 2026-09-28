@@ -2327,7 +2327,23 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ---
 
-## Kline Feed Fixes (2026-09-27 — committed dd69a9f, NOT deployed)
+## Weight Shadow Calculator (2026-09-28 — committed 4c0ffc5, NOT deployed)
+
+Measures whether Profit%-driven weighting would earn more **before** any money follows it. Spec: `docs/specs/2026-09-28-weight-shadow-calculator.md`.
+
+- **Why not apply it**: on testnet history (205,130 trades, 103 days) trailing Profit% had no predictive value — picker number 7d→1/3/7d Spearman +0.02…+0.04, "winners" then averaged −1.9…−4.2%; symbol mean +0.04…+0.08; fixed preset ±0.03; real orders week→week −0.22. Activity (+0.22) and per-trade risk (+0.25) do persist modestly.
+- **Snapshot** (`dashboard/app/api/trades/_weight-shadow.ts`, called from the 30 s worker in `instrumentation.ts`): once per store-day per mode, appends to `data/weight_shadow_{mode}.jsonl` each symbol's weight, lock, 7d/14d top-row `[Profit%, trades, preset]`, and proposed weights: `static` (current), `tilt` = w × clamp(1 + 0.3·tanh(p14/50), 0.7, 1.3) with ≥ 20 trades, `brake` = w × 0.5 with ≥ 30 trades and p14 ≤ −30%. Never applied; writes nothing else.
+- **Evaluation**: `python3 scripts/eval_weight_shadow.py [mode] [days]` — per snapshot day, weight-normalised forward Profit% of the would-be-real trades (real + rank-1 virtual) for each policy vs `static`, and on how many days each beat it. Decide after 3–4 weeks of clean live data.
+
+## Trend History Depth (2026-09-28 — committed 00cb830, NOT deployed)
+
+- `analyzer_history_candles` (shared risk setting; default = `KLINE_CACHE_LIMIT`, 5000): candles the trend is bootstrapped from, at startup and for hot-added symbols (`main._analyzer_history`). Primary unchanged (always built from the whole cache); the live mirror had 1500 (backfill cap) and now gets the same depth.
+- A/B (same 14 testnet days, real simulator, all presets; `scratchpad/ab/ab_history.py`): rank-1 −75.7% / +13.7% / +169.3% at 1000 / 1500 / ~3600 candles; all ranks the other way; chaotic per symbol (APT +455% vs −5244% on history length alone). No clear winner → depth kept, made consistent.
+- Backfill pages back with `endTime` (`DataFeed._backfill`, 1500/request, up to 8 pages, stops at listing); every klines request capped at 1500 (`_KLINE_MAX_PER_REQUEST`).
+
+---
+
+## Kline Feed Fixes (2026-09-27 — deployed 2026-09-27 19:47 UTC)
 
 - **Live stream URL**: `_WS_LIVE = wss://fstream.binance.com/market/ws` (`bot/data_feed.py`); combined stream `/market/stream?streams=…`. The root `/stream` path connects and answers pings but pushes no kline data — verified from the server 2026-09-27 (0 messages in 15 s vs 53 on `/market/`; 22-symbol combined URL 224 messages, all 22 symbols). Testnet unchanged (`wss://stream.binancefuture.com/stream`, 21 messages). Since its first day (Sep 7) the live mirror ran on the REST watchdog: 47–68 candle batches/day instead of 96, ~90% late (median ~7.5 min), ~40% of candles never processed (the watchdog takes only the newest closed candle after 22.5 min of silence). **All live virtual statistics before this fix come from that gappy, delayed feed.** A live primary would have inherited it.
 - **Kline cache integrity**: writes are atomic (`_write_cache`: tmp + `os.replace`; `data/` is a directory mount), read-modify-write is serialised per file (`_cache_lock`), and `_read_cache` raises `CacheUnreadable` for an existing unparseable file instead of returning `[]` — callers skip rather than write over it. Before, a torn read let a refresh replace the whole history with the 100 candles it had fetched (live caches of 12 enabled symbols sat at ~100 candles).

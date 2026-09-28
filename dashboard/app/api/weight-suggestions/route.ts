@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { modeOr, readRiskConfig } from '../_risk-config'
-import { buildSnapshot, evaluateShadow } from '../trades/_weight-shadow'
+import { buildSnapshot, evaluateShadow, panelSuggestions } from '../trades/_weight-shadow'
 import { readSymbolState } from '../symbols/_registry'
 
 /** GET /api/weight-suggestions?mode=test|live — current weights with what each policy
@@ -10,13 +10,20 @@ export async function GET(req: NextRequest) {
   const mode = modeOr(new URL(req.url).searchParams.get('mode'))
   const snap = buildSnapshot(mode)
   const cfg = readRiskConfig(mode)
+  const disabled = Object.keys(readSymbolState(mode).disabled ?? {})
+  const history = evaluateShadow(mode, 7, 'history')
+  const tmw = Number(cfg.tats_min_weight ?? 0)
+  const suggestions = Object.fromEntries(Object.entries(snap?.symbols ?? {}).map(([sym, row]) => [
+    sym, panelSuggestions(row, { disabled: disabled.includes(sym), baseWeight: tmw > 0 ? tmw : 1, history }),
+  ]))
   return NextResponse.json({
     mode,
     day: snap?.day ?? null,
-    tats_min_weight: Number(cfg.tats_min_weight ?? 0),
+    tats_min_weight: tmw,
     symbols: snap?.symbols ?? {},
-    disabled: Object.keys(readSymbolState(mode).disabled ?? {}),
+    suggestions,
+    disabled,
     track: evaluateShadow(mode),
-    history: evaluateShadow(mode, 7, 'history'),
+    history,
   })
 }

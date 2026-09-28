@@ -115,3 +115,70 @@ def test_panel_shows_the_reconstructed_history():
     route = (ROOT / 'dashboard/app/api/weight-suggestions/route.ts').read_text()
     assert "evaluateShadow(mode, 7, 'history')" in route
     assert 'History (reconstructed)' in PANEL
+
+
+# ── Every symbol gets a tilt/brake value; doubts are flagged, columns sortable ──
+
+import json as _json
+import shutil
+import subprocess
+
+
+def _panel_suggestions(row: dict, disabled=False, base=3, history=None):
+    node = shutil.which('node')
+    jiti = ROOT / 'dashboard/node_modules/jiti'
+    if not node or not jiti.exists():
+        import pytest
+        pytest.skip('node / dashboard node_modules not available')
+    js = f"""
+const jiti=require({_json.dumps(str(jiti))})({_json.dumps(str(ROOT/'dashboard'/'jiti-entry.js'))},{{alias:{{'@':{_json.dumps(str(ROOT/'dashboard'))}}}}})
+const m=jiti({_json.dumps(str(ROOT/'dashboard/app/api/trades/_weight-shadow.ts'))})
+console.log(JSON.stringify(m.panelSuggestions({_json.dumps(row)},{{disabled:{str(disabled).lower()},baseWeight:{base},history:{_json.dumps(history)}}})))"""
+    out = subprocess.run([node, '-e', js], capture_output=True, text=True, cwd=ROOT / 'dashboard', timeout=60)
+    assert out.returncode == 0, out.stderr
+    return _json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def _row(w, pct, n):
+    return {'w': w, 'lock': None, 'p7': [pct, n, 'p'], 'p14': [pct, n, 'p'],
+            'policies': {'static': w, 'tilt': w, 'brake': w}}
+
+
+def test_weight_zero_symbol_gets_a_funding_tilt_with_reasons():
+    s = _panel_suggestions(_row(0, 50.0, 40))
+    assert s['tilt']['value'] > 3                          # from tats_min_weight, tilted up
+    assert any('turns REAL orders ON' in f for f in s['tilt']['flags'])
+    assert s['brake']['value'] == 0 and s['brake']['flags'] == [] and 'already 0' in s['brake']['note']
+
+
+def test_thin_evidence_is_flagged_not_hidden():
+    s = _panel_suggestions(_row(5, 40.0, 4))
+    assert s['tilt']['value'] != 5
+    assert any('only 4 trade(s)' in f for f in s['tilt']['flags'])
+    b = _panel_suggestions(_row(5, -60.0, 10))
+    assert b['brake']['value'] == 2.5 and any('needs ≥ 30' in f for f in b['brake']['flags'])
+
+
+def test_losing_unfunded_symbol_is_not_suggested_for_funding():
+    s = _panel_suggestions(_row(0, -20.0, 50))
+    assert s['tilt']['value'] == 0 and any('not positive' in f for f in s['tilt']['flags'])
+
+
+def test_history_without_edge_is_a_doubt():
+    h = {'snapshots': 112, 'evaluated': 105, 'days': 7,
+         'scores': {'static': {'mean': 0, 'vsStatic': 0, 'betterDays': 0},
+                    'tilt': {'mean': 0, 'vsStatic': 0.08, 'betterDays': 49},
+                    'brake': {'mean': 0, 'vsStatic': 0.0, 'betterDays': 8}}}
+    s = _panel_suggestions(_row(5, 40.0, 40), history=h)
+    assert any('no real edge' in f for f in s['tilt']['flags'])
+
+
+def test_panel_sorts_every_column_and_remembers_it():
+    assert "'risk-weight-suggestions:sort'" in PANEL
+    for col in ("'symbol'", "'weight'", "'p7'", "'p14'", "'tilt'", "'brake'"):
+        assert f'[{col},' in PANEL, col
+    assert 'toggleSort(col)' in PANEL
+
+
+def test_bulk_apply_takes_only_unflagged_values():
+    assert 'sug(s, pol).flags.length === 0' in PANEL

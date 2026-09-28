@@ -169,3 +169,70 @@ export function evaluateShadow(mode: Mode, days = 7, source: 'live' | 'history' 
   }
   return { snapshots: snaps.length, evaluated: n, days, scores }
 }
+
+// ── Panel suggestions: a value for EVERY symbol, with the reasons to doubt it ──
+// The tracked policies above stay evidence-gated (they are what the track record
+// scores). The panel shows the raw value for every symbol and flags each one that
+// is not well supported, so the user decides with the caveats in view.
+
+/** flags = reasons to doubt the value (shown as "!"); note = plain explanation (tooltip only). */
+export interface Suggestion { value: number; flags: string[]; note?: string }
+export interface PanelSuggestions { tilt: Suggestion; brake: Suggestion }
+
+const TILT_MIN_TRADES = 20
+const BRAKE_MIN_TRADES = 30
+const BRAKE_LOSS_PCT = -30
+
+export function panelSuggestions(
+  row: ShadowSymbol, opts: { disabled: boolean; baseWeight: number; history?: TrackRecord },
+): PanelSuggestions {
+  const [pct, n] = row.p14
+  const common: string[] = []
+  if (opts.disabled) common.push('disabled in this mode — the weight has no effect until the symbol is enabled in Settings')
+  if (row.lock && n === 0) common.push(`the locked preset ${row.lock} has no trades in 14 days`)
+
+  // Tilt
+  const tf: string[] = [...common]
+  let tilt: number
+  if (pct === null) {
+    tilt = row.w
+    tf.push('no trades in the last 14 days — nothing to tilt on')
+  } else {
+    const factor = Math.min(1.3, Math.max(0.7, 1 + 0.3 * Math.tanh(pct / 50)))
+    if (row.w > 0) {
+      tilt = round(row.w * factor)
+    } else if (pct > 0) {
+      tilt = round(opts.baseWeight * factor)
+      tf.push(`weight is 0: starts from ${opts.baseWeight} (tats_min_weight) and turns REAL orders ON`)
+    } else {
+      tilt = 0
+      tf.push('weight is 0 and 14-day Profit% is not positive — no reason to fund it')
+    }
+    if (n < TILT_MIN_TRADES) tf.push(`only ${n} trade(s) in 14 days — needs ≥ ${TILT_MIN_TRADES} to be meaningful`)
+  }
+  const ht = opts.history?.scores?.tilt
+  if (ht && opts.history!.evaluated >= 20 && ht.vsStatic <= 0.1) {
+    tf.push(`history: tilt added ${ht.vsStatic >= 0 ? '+' : ''}${ht.vsStatic.toFixed(2)} %/week over ${opts.history!.evaluated} days — no real edge`)
+  }
+
+  // Brake
+  const bf: string[] = [...common]
+  let brake = row.w
+  let bnote: string | undefined
+  if (row.w === 0) {
+    bnote = 'brake only lowers a weight — this one is already 0'
+  } else if (pct === null) {
+    bnote = 'no trades in the last 14 days — nothing to judge'
+  } else if (pct <= BRAKE_LOSS_PCT) {
+    brake = round(row.w * 0.5)
+    if (n < BRAKE_MIN_TRADES) bf.push(`only ${n} trade(s) in 14 days — needs ≥ ${BRAKE_MIN_TRADES} before halving on it`)
+  } else {
+    bnote = `14-day Profit% ${pct.toFixed(1)} % is above the ${BRAKE_LOSS_PCT} % brake level — no cut`
+  }
+  const hb = opts.history?.scores?.brake
+  if (brake !== row.w && hb && opts.history!.evaluated >= 20 && hb.vsStatic <= 0.1) {
+    bf.push(`history: brake added ${hb.vsStatic >= 0 ? '+' : ''}${hb.vsStatic.toFixed(2)} %/week over ${opts.history!.evaluated} days — no real edge`)
+  }
+  // a symbol-level doubt (e.g. disabled) only matters when the brake would change something
+  return { tilt: { value: tilt, flags: tf }, brake: { value: brake, flags: brake !== row.w ? bf : [], note: bnote } }
+}

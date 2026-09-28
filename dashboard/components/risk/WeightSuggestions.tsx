@@ -6,15 +6,20 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { SECTION_CLS, SECTION_HEADER_CLS, SECTION_BODY_CLS, INPUT_CLS, SAVE_BTN_CLS } from '@/lib/risk-styles'
+import { useLocalStorage } from '@/lib/useLocalStorage'
 
 type Top = [number | null, number, string | null]
 interface Row { w: number; lock: string | null; p7: Top; p14: Top; policies: { static: number; tilt: number; brake: number } }
 interface Score { mean: number; vsStatic: number; betterDays: number }
+interface Suggestion { value: number; flags: string[]; note?: string }
+type SortCol = 'symbol' | 'weight' | 'p7' | 'p14' | 'tilt' | 'brake'
 interface Data {
   mode: 'test' | 'live'
   day: string | null
   tats_min_weight: number
   symbols: Record<string, Row>
+  /** A value for every symbol, with the reasons to doubt it ("!"). */
+  suggestions: Record<string, { tilt: Suggestion; brake: Suggestion }>
   /** Disabled in this mode's registry: no real orders whatever the weight. */
   disabled: string[]
   track: Track
@@ -55,6 +60,12 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
   const [custom, setCustom] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  // Sort by any column; remembered across reloads. null col = default (funded first).
+  const [sort, setSort] = useLocalStorage<{ col: SortCol | null; dir: 'asc' | 'desc' }>(
+    'risk-weight-suggestions:sort', { col: null, dir: 'desc' })
+  function toggleSort(col: SortCol) {
+    setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: col === 'symbol' ? 'asc' : 'desc' })
+  }
 
   const load = useCallback(() => {
     fetch(`/api/weight-suggestions?mode=${mode}`)
@@ -75,7 +86,10 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
       const onOff = old === 0 && w > 0 ? '  ⚠ turns REAL orders ON for this symbol'
         : old > 0 && w === 0 ? '  ⚠ turns REAL orders OFF for this symbol' : ''
       const dis = disabled.has(s) && w > 0 ? '  (disabled in this mode — no real orders until enabled in Settings)' : ''
-      return `${s}: ${fmtW(old)} → ${fmtW(w)}${onOff}${crosses ? `  ⚠ crosses tats_min_weight ${tmw} (changes how a lone signal is sized)` : ''}${dis}`
+      const sg = data.suggestions?.[s]
+      const why = sg ? [...new Set([sg.tilt, sg.brake].filter(x => x.value === w).flatMap(x => x.flags))] : []
+      const doubts = why.length ? `\n      ! ${why.join('\n      ! ')}` : ''
+      return `${s}: ${fmtW(old)} → ${fmtW(w)}${onOff}${crosses ? `  ⚠ crosses tats_min_weight ${tmw} (changes how a lone signal is sized)` : ''}${dis}${doubts}`
     })
     if (!window.confirm(`Apply these ${mode.toUpperCase()} weights?\n\n${lines.join('\n')}\n\nThe bot uses them from the next candle. Every change is logged.`)) return
     setBusy(true); setMsg(null)
@@ -96,10 +110,32 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
   const disabled = new Set(data.disabled ?? [])
   const p14 = (r: Row) => r.p14[0] ?? -Infinity
   // Funded first (by weight), then weight 0 by 14-day Profit% — every symbol is checked.
-  const rows = Object.entries(data.symbols).sort((a, b) =>
-    (b[1].w > 0 ? 1 : 0) - (a[1].w > 0 ? 1 : 0) || b[1].w - a[1].w || p14(b[1]) - p14(a[1]))
+  const sug = (sym: string, pol: 'tilt' | 'brake'): Suggestion =>
+    data.suggestions?.[sym]?.[pol] ?? { value: data.symbols[sym].policies[pol], flags: [] }
+  const key = (sym: string, r: Row, col: SortCol): number | string => {
+    switch (col) {
+      case 'symbol': return sym
+      case 'weight': return r.w
+      case 'p7': return r.p7[0] ?? -Infinity
+      case 'p14': return r.p14[0] ?? -Infinity
+      case 'tilt': return sug(sym, 'tilt').value
+      case 'brake': return sug(sym, 'brake').value
+    }
+  }
+  const rows = Object.entries(data.symbols).sort((a, b) => {
+    if (sort.col) {
+      const ka = key(a[0], a[1], sort.col), kb = key(b[0], b[1], sort.col)
+      const c = typeof ka === 'string' ? ka.localeCompare(kb as string) : (ka as number) - (kb as number)
+      if (c !== 0) return sort.dir === 'asc' ? c : -c
+      return a[0].localeCompare(b[0])
+    }
+    // default: funded first (by weight), then weight 0 by 14-day Profit%
+    return (b[1].w > 0 ? 1 : 0) - (a[1].w > 0 ? 1 : 0) || b[1].w - a[1].w || p14(b[1]) - p14(a[1])
+  })
   const pending = (pol: 'tilt' | 'brake') =>
-    Object.fromEntries(rows.filter(([, r]) => r.w > 0 && r.policies[pol] !== r.w).map(([s, r]) => [s, r.policies[pol]]))
+    // bulk apply takes only well-supported values (no "!") — flagged ones are per-row decisions
+    Object.fromEntries(rows.filter(([s, r]) => sug(s, pol).value !== r.w && sug(s, pol).flags.length === 0)
+      .map(([s]) => [s, sug(s, pol).value]))
   const tiltAll = pending('tilt'), brakeAll = pending('brake')
   const t = data.track
 
@@ -132,27 +168,38 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="text-gray-500 border-b border-gray-800">
-              <th className="text-left py-1 font-normal">Symbol</th>
-              <th className="text-right py-1 font-normal">Weight</th>
-              <th className="text-right py-1 font-normal" title="Top row of Preset Efficiency (locked preset if any): Profit% (trades)">7d</th>
-              <th className="text-right py-1 font-normal">14d</th>
-              <th className="text-right py-1 font-normal">Tilt</th>
-              <th className="text-right py-1 font-normal">Brake</th>
+              {([
+                ['symbol', 'Symbol', 'text-left', ''],
+                ['weight', 'Weight', 'text-right', ''],
+                ['p7', '7d', 'text-right', 'Top row of Preset Efficiency (locked preset if any): Profit% (trades), last 7 days'],
+                ['p14', '14d', 'text-right', 'Same, last 14 days — what tilt and brake are computed from'],
+                ['tilt', 'Tilt', 'text-right', 'Weight moved at most ±30 % toward the 14-day Profit%. Weight 0: starts from tats_min_weight, only when Profit% > 0'],
+                ['brake', 'Brake', 'text-right', 'Halves the weight after ≤ −30 % over 14 days; never raises a weight'],
+              ] as [SortCol, string, string, string][]).map(([col, label, align, tip]) => (
+                <th key={col} className={`${align} py-1 font-normal cursor-pointer select-none hover:text-gray-300`}
+                  title={`${tip ? tip + ' — ' : ''}click to sort`} onClick={() => toggleSort(col)}>
+                  {label}{sort.col === col ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+                </th>
+              ))}
               <th className="text-right py-1 font-normal">Your value</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(([sym, r]) => {
               const cell = (pol: 'tilt' | 'brake') => {
-                const v = r.policies[pol]
-                if (r.w === 0) return <span className="text-gray-700" title="Tilt and brake scale an existing weight; 0 stays 0. Type a weight to fund it.">n/a</span>
-                if (v === r.w) return <span className="text-gray-600">=</span>
+                const { value: v, flags, note } = sug(sym, pol)
+                const warn = flags.length > 0 && (
+                  <span className="ml-0.5 text-amber-400 cursor-help font-bold" title={flags.map(f => '• ' + f).join('\n')}>!</span>
+                )
+                if (v === r.w) return <span className="text-gray-600" title={[note, ...flags].filter(Boolean).join('\n') || 'no change'}>={warn}</span>
                 return (
-                  <button disabled={busy} onClick={() => apply({ [sym]: v })}
-                    className={`px-1.5 rounded border ${v > r.w ? 'border-emerald-900/60 text-emerald-400' : 'border-amber-900/60 text-amber-400'} hover:bg-gray-800 disabled:opacity-40`}
-                    title={`Apply ${pol}: ${fmtW(r.w)} → ${fmtW(v)}`}>
-                    {fmtW(v)} ✓
-                  </button>
+                  <span className="whitespace-nowrap">
+                    <button disabled={busy} onClick={() => apply({ [sym]: v })}
+                      className={`px-1.5 rounded border ${v > r.w ? 'border-emerald-900/60 text-emerald-400' : 'border-amber-900/60 text-amber-400'} ${flags.length ? 'opacity-70' : ''} hover:bg-gray-800 disabled:opacity-40`}
+                      title={`Apply ${pol}: ${fmtW(r.w)} → ${fmtW(v)}${flags.length ? '\n' + flags.map(f => '! ' + f).join('\n') : ''}`}>
+                      {fmtW(v)} ✓
+                    </button>{warn}
+                  </span>
                 )
               }
               return (
@@ -181,10 +228,10 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
 
         <div className="flex flex-wrap items-center gap-2">
           <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(tiltAll).length} onClick={() => apply(tiltAll)}>
-            Apply all tilt ({Object.keys(tiltAll).length})
+            Apply all well-supported tilt ({Object.keys(tiltAll).length})
           </button>
           <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(brakeAll).length} onClick={() => apply(brakeAll)}>
-            Apply all brake ({Object.keys(brakeAll).length})
+            Apply all well-supported brake ({Object.keys(brakeAll).length})
           </button>
           <button className={SAVE_BTN_CLS} disabled={busy || !Object.values(custom).some(v => v.trim())}
             onClick={() => apply(Object.fromEntries(Object.entries(custom).filter(([, v]) => v.trim()).map(([s, v]) => [s, Number(v)])))}>

@@ -16,6 +16,8 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 ### Profit%-driven weights — measure first (2026-09-28)
 
+- [x] Score-allocation Tilt (top N, lock toggle, preset counts, recalculate) — deployed 2026-09-28 18:21 UTC (43d9309); history files written for test and live. Testnet history: −1.71 … −5.85 %/week vs equal weights at every N. Live history has 1 day — re-run `scripts/backfill_weight_shadow.py live --write` weekly.
+
 - [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
 - [x] Shadow calculator + evaluator + Risk-page "Weight suggestions" panel (deployed 2026-09-28 13:02 UTC; first snapshots written for both modes).
 - [x] Reconstructed track record from existing data (deployed 14:05 UTC): tilt +0.08 %/wk, brake +0.00 % over 105 testnet days — nothing to apply.

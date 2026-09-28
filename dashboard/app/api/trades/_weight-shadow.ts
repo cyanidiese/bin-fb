@@ -285,7 +285,9 @@ export function anchors(mode: Mode, currentWeights: Record<string, number>, days
     es.sort((a, b) => a.ts - b.ts)
     let anchor: Anchor | null = null
     for (const e of es) {
-      if (e.policy === 'custom') anchor = null
+      // Tilt is an absolute allocation now (computed from evidence, not the current
+      // weight), so like a typed value it is a new baseline; only a brake anchors.
+      if (e.policy !== 'brake') anchor = null
       else if (!anchor) anchor = { base: e.old, since: e.ts, policy: e.policy }
     }
     const last = es[es.length - 1]

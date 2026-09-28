@@ -172,7 +172,8 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
       .map(([s]) => [s, sug(s, pol).value]))
   const tiltAll = changed('tilt', false), brakeAll = changed('brake', true)
   const sh = data.score_history
-  const nStale = nInput > 0 && nApplied !== null && Math.min(nInput, data.eligible) !== nApplied
+  const nWanted = nInput > 0 ? Math.min(nInput, data.eligible) : data.eligible   // empty/0 = all eligible
+  const nStale = nApplied !== null && nWanted !== nApplied
   const t = data.track
 
   return (
@@ -188,7 +189,7 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
           <p>
             <span className="text-gray-300 font-semibold">Tilt</span> shares the budget ({fmtW(data.budget)}, the current
             total weight) among the <span className="text-gray-300">top N</span> enabled symbols by score, in proportion to
-            score, at most 30 % each; every other symbol gets 0. Score = ½ × 7-day + ½ × 14-day Profit%, each shrunk by its
+            score, at most 30 % each (with N ≤ 3 an equal share, so the whole budget is used); every other symbol gets 0. Score = ½ × 7-day + ½ × 14-day Profit%, each shrunk by its
             trade count (few trades count for little). <span className="text-gray-300 font-semibold">Brake</span> halves the
             weight of a symbol that clearly kept losing for two weeks (≥ 30 trades and −30 % or worse); it never raises one.
           </p>

@@ -155,7 +155,7 @@ def test_apply_logs_the_policy_that_set_each_weight():
     assert 'logApplied(body.mode' in APPLY
     assert "apply({ [sym]: v }, pol)" in PANEL
     shadow = (ROOT / 'dashboard/app/api/trades/_weight-shadow.ts').read_text()
-    assert "if (e.policy === 'custom') anchor = null" in shadow          # typed value = new base
+    assert "if (e.policy !== 'brake') anchor = null" in shadow          # typed value or tilt = new base
     assert 'Math.abs((currentWeights[sym] ?? 0) - last.new) < 1e-9' in shadow  # changed elsewhere = new base
 
 
@@ -271,3 +271,31 @@ def test_full_tilt_allocation_can_be_applied_including_zeros():
     assert "const tiltAll = changed('tilt', false)" in PANEL          # zeros included
     assert "brakeAll = changed('brake', true)" in PANEL                 # brake: unflagged only
     assert 'Apply tilt allocation' in PANEL
+
+
+def test_tilt_then_brake_does_not_halve_twice(tmp_path):
+    """Verifier finding: tilt 2 -> 3, then brake 3 -> 1.5 within 14 days kept the TILT
+    entry as the anchor, so the brake offered 0.75. The brake entry must anchor."""
+    import time
+    now = int(time.time() * 1000)
+    data = tmp_path / 'data'; data.mkdir()
+    (data / 'weight_suggestion_applies_test.jsonl').write_text(
+        _json.dumps({'ts': now - 7200_000, 'symbol': 'EIGENUSDT', 'policy': 'tilt', 'old': 2, 'new': 3}) + '\n' +
+        _json.dumps({'ts': now - 3600_000, 'symbol': 'EIGENUSDT', 'policy': 'brake', 'old': 3, 'new': 1.5}) + '\n')
+    node = shutil.which('node')
+    jiti = ROOT / 'dashboard/node_modules/jiti'
+    if not node or not jiti.exists():
+        import pytest; pytest.skip('node not available')
+    (tmp_path / 'dashboard').mkdir()
+    js = f"""
+const jiti=require({_json.dumps(str(jiti))})({_json.dumps(str(ROOT/'dashboard'/'jiti-entry.js'))},{{alias:{{'@':{_json.dumps(str(ROOT/'dashboard'))}}}}})
+const m=jiti({_json.dumps(str(ROOT/'dashboard/app/api/trades/_weight-shadow.ts'))})
+const a=m.anchors('test', {{EIGENUSDT: 1.5}})
+const row={{w:1.5,lock:null,p7:[0.9,32,'p'],p14:[-31.79,45,'p'],policies:{{static:1.5,tilt:0,brake:1.5}}}}
+const alloc={{score:-10,s7:0,s14:-20,rank:null,inTopN:false,value:0}}
+console.log(JSON.stringify({{a, s: m.panelSuggestions(row,{{disabled:false,alloc,n:5,eligible:12,budget:32.5,anchor:a.EIGENUSDT}})}}))"""
+    out = subprocess.run([node, '-e', js], capture_output=True, text=True, cwd=tmp_path / 'dashboard', timeout=60)
+    assert out.returncode == 0, out.stderr
+    r = _json.loads(out.stdout.strip().splitlines()[-1])
+    assert r['a']['EIGENUSDT']['policy'] == 'brake' and r['a']['EIGENUSDT']['base'] == 3
+    assert r['s']['brake']['value'] == 1.5 and 'already braked' in r['s']['brake']['note']

@@ -17,7 +17,7 @@ interface Row {
 }
 interface Score { mean: number; vsStatic: number; betterDays: number }
 interface Suggestion { value: number; flags: string[]; note?: string }
-interface Alloc { score: number; s7: number; s14: number; rank: number | null; inTopN: boolean; value: number }
+interface Alloc { score: number; base: number; s7: number; s14: number; breadth: number; momentum: boolean; rank: number | null; inTopN: boolean; value: number }
 interface ScoreHist { days: number; mean: number; vs_equal: number; vs_current: number; better_equal: number }
 type SortCol = 'symbol' | 'weight' | 'p7' | 'p14' | 'tilt' | 'brake'
 interface Track { snapshots: number; evaluated: number; days: number; scores: Record<'static' | 'tilt' | 'brake', Score> | null }
@@ -187,10 +187,12 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
       <div className={SECTION_BODY_CLS}>
         <div className="text-[11px] text-gray-400 space-y-1">
           <p>
-            <span className="text-gray-300 font-semibold">Tilt</span> shares the budget ({fmtW(data.budget)}, the current
-            total weight) among the <span className="text-gray-300">top N</span> enabled symbols by score, in proportion to
-            score, at most 30 % each (with N ≤ 3 an equal share, so the whole budget is used); every other symbol gets 0. Score = ½ × 7-day + ½ × 14-day Profit%, each shrunk by its
-            trade count (few trades count for little). <span className="text-gray-300 font-semibold">Brake</span> halves the
+            <span className="text-gray-300 font-semibold">Tilt</span> shares the budget ({fmtW(data.budget)}, risk_config
+            weight_budget, default 33) among the <span className="text-gray-300">top N</span> enabled symbols by score, in proportion to
+            score, at most 30 % each (with N ≤ 3 an equal share, so the whole budget is used), in whole numbers; every other symbol
+            gets 0. Score = ½ × 7-day + ½ × 14-day Profit%, each shrunk by its trade count (few trades count for little);
+            cut when under 10 % of presets were profitable in 7 days (bad sign), ×1.25 when the 7-day Profit% is above half of
+            the 14-day one (good sign: the profit is recent). <span className="text-gray-300 font-semibold">Brake</span> halves the
             weight of a symbol that clearly kept losing for two weeks (≥ 30 trades and −30 % or worse); it never raises one.
           </p>
         </div>

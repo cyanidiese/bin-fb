@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { modeOr, readRiskConfig } from '../_risk-config'
 import {
-  anchors, buildSnapshot, evaluateShadow, panelSuggestions, readScoreHistory, scoreAllocation,
+  anchors, buildSnapshot, weightBudget, evaluateShadow, panelSuggestions, readScoreHistory, scoreAllocation,
 } from '../trades/_weight-shadow'
 import { readSymbolState } from '../symbols/_registry'
 
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const symbols = snap?.symbols ?? {}
   const disabled = Object.keys(readSymbolState(mode).disabled ?? {})
   const disabledSet = new Set(disabled)
-  const budget = Math.round(Object.values(symbols).reduce((a, r) => a + r.w, 0) * 100) / 100
+  const budget = weightBudget(cfg)
 
   // Eligible = enabled with a positive score; N is clamped to 1..eligible.
   const all = scoreAllocation(symbols, { disabled: disabledSet, n: Infinity, budget })

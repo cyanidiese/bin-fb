@@ -180,9 +180,34 @@ def _book():
 
 def test_score_formula_matches_the_approved_table():
     sc = _ts(f"m.symbolScore({_json.dumps(_book()['EGLDUSDT'])})")
-    assert abs(sc['s7'] - 62.16) < 0.05 and abs(sc['s14'] - 24.49) < 0.05 and abs(sc['score'] - 43.33) < 0.05
+    assert abs(sc['s7'] - 62.16) < 0.05 and abs(sc['s14'] - 24.49) < 0.05 and abs(sc['base'] - 43.33) < 0.05
     sc = _ts(f"m.symbolScore({_json.dumps(_book()['WLDUSDT'])})")
-    assert abs(sc['score'] - 38.25) < 0.1
+    assert abs(sc['base'] - 38.25) < 0.1
+
+
+def test_few_profitable_presets_in_7_days_is_a_bad_sign():
+    """User rule 2026-09-28: 2 of 81 profitable presets in 7 days is a bad sign."""
+    wld = {**_book()['WLDUSDT'], 'c7': [2, 81]}
+    sc = _ts(f"m.symbolScore({_json.dumps(wld)})")
+    assert abs(sc['breadth'] - (2 / 81) / 0.10) < 0.01          # x0.25
+    assert sc['score'] < sc['base'] * 0.31
+    broad = _ts(f"m.symbolScore({_json.dumps({**_book()['WLDUSDT'], 'c7': [30, 81]})})")
+    assert broad['breadth'] == 1
+
+
+def test_recent_profit_above_half_of_the_fortnight_is_a_good_sign():
+    """User rule: 7d Profit% > half of 14d Profit% is a good sign (x1.25)."""
+    egld = _ts(f"m.symbolScore({_json.dumps({**_book()['EGLDUSDT'], 'c7': [30, 81]})})")   # 77.7 > 33.2/2
+    assert egld['momentum'] is True and abs(egld['score'] - egld['base'] * 1.25) < 0.01
+    wld = _ts(f"m.symbolScore({_json.dumps({**_book()['WLDUSDT'], 'c7': [30, 81]})})")     # 38.7 < 111.1/2
+    assert wld['momentum'] is False and abs(wld['score'] - wld['base']) < 0.01
+
+
+def test_weights_are_whole_numbers_adding_up_to_the_budget():
+    a = _ts(f"m.scoreAllocation({_json.dumps(_book())}, {{disabled:new Set(), n:10, budget:32.5}})")
+    vals = [v['value'] for v in a.values()]
+    assert all(float(x).is_integer() for x in vals)
+    assert sum(vals) == 33                                        # Math.round(32.5)
 
 
 def test_promising_symbols_get_more_and_losers_get_zero():
@@ -192,15 +217,15 @@ def test_promising_symbols_get_more_and_losers_get_zero():
     assert a['EGLDUSDT']['score'] > a['WLDUSDT']['score']
     assert a['INJUSDT']['value'] == 0 and a['SOLUSDT']['value'] == 0         # losers
     assert a['APTUSDT']['value'] == 0 and a['APTUSDT']['rank'] is None     # disabled
-    assert abs(sum(v['value'] for v in a.values()) - 32.5) < 0.05          # the whole budget
-    assert max(v['value'] for v in a.values()) <= 0.30 * 32.5 + 0.01       # 30 % cap
+    assert sum(v['value'] for v in a.values()) == 33                        # the whole budget, whole numbers
+    assert max(v['value'] for v in a.values()) <= 0.30 * 32.5 + 1          # 30 % cap (+ rounding)
 
 
 def test_only_the_top_n_symbols_take_part():
     a = _ts(f"m.scoreAllocation({_json.dumps(_book())}, {{disabled:new Set(), n:2, budget:30}})")
     funded = {s for s, v in a.items() if v['value'] > 0}
     assert funded == {'EGLDUSDT', 'WLDUSDT'}
-    assert abs(a['EGLDUSDT']['value'] + a['WLDUSDT']['value'] - 30) < 0.05  # cap relaxes to 1/N
+    assert a['EGLDUSDT']['value'] + a['WLDUSDT']['value'] == 30            # cap relaxes to 1/N
     assert a['ARBUSDT']['inTopN'] is False and a['ARBUSDT']['rank'] == 3
 
 
@@ -240,7 +265,7 @@ def test_backfill_uses_the_same_score_allocation():
     a = m.score_allocation(rows, 10, 32.5, disabled={'APTUSDT'})
     ts = _ts(f"m.scoreAllocation({_json.dumps(_book())}, {{disabled:new Set(['APTUSDT']), n:10, budget:32.5}})")
     for sym in rows:
-        assert abs(a[sym] - ts[sym]['value']) < 0.02, sym
+        assert a[sym] == ts[sym]['value'], sym                            # identical whole numbers
 
 
 # ── Panel: N field, recalculate, lock toggle, preset counts ──────────────────
@@ -299,3 +324,14 @@ console.log(JSON.stringify({{a, s: m.panelSuggestions(row,{{disabled:false,alloc
     r = _json.loads(out.stdout.strip().splitlines()[-1])
     assert r['a']['EIGENUSDT']['policy'] == 'brake' and r['a']['EIGENUSDT']['base'] == 3
     assert r['s']['brake']['value'] == 1.5 and 'already braked' in r['s']['brake']['note']
+
+
+def test_budget_is_a_fixed_whole_number_not_the_current_weight_sum():
+    # a decimal apply left the weights summing to 1.26 — that must not become the budget
+    assert _ts("m.weightBudget({symbol_weights:{A:0.36,B:0.9}})") == 33
+    assert _ts("m.weightBudget({weight_budget:40.4})") == 40
+    assert _ts("m.weightBudget({weight_budget:0})") == 33
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("bws", pathlib.Path(__file__).parents[1] / "scripts/backfill_weight_shadow.py")
+    bws = importlib.util.module_from_spec(spec); spec.loader.exec_module(bws)
+    assert bws.weight_budget({}) == 33 and bws.weight_budget({"weight_budget": 40.4}) == 40

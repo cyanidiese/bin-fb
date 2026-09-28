@@ -111,19 +111,48 @@ def top_row(presets: dict[str, Series], lock: str | None, a: float, b: float):
 
 
 SHRINK_7D, SHRINK_14D, SCORE_CAP = 10, 20, 0.30      # = dashboard _weight-shadow.ts
+WEIGHT_BUDGET_DEFAULT = 33                              # = weightBudget()
 
 
-def symbol_score(p7, p14):
-    """Same as symbolScore() in the dashboard: Profit% shrunk by trade count, 50/50."""
+def weight_budget(cfg: dict) -> int:
+    try:
+        b = int(math.floor(float(cfg.get("weight_budget")) + 0.5))
+    except (TypeError, ValueError):
+        b = 0
+    return b if b > 0 else WEIGHT_BUDGET_DEFAULT
+BREADTH_FULL, MOMENTUM_BONUS = 0.10, 1.25
+
+
+def symbol_score(p7, p14, c7=None):
+    """Same as symbolScore() in the dashboard: Profit% shrunk by trade count, 50/50;
+    cut when < 10 % of presets were profitable in 7 days; x1.25 when 7d > half of 14d."""
     s7 = (p7[0] or 0) * p7[1] / (p7[1] + SHRINK_7D)
     s14 = (p14[0] or 0) * p14[1] / (p14[1] + SHRINK_14D)
-    return 0.5 * s7 + 0.5 * s14
+    base = 0.5 * s7 + 0.5 * s14
+    if base <= 0:
+        return base
+    prof, total = c7 or (0, 0)
+    breadth = min(1.0, (prof / total) / BREADTH_FULL) if total > 0 else 1.0
+    momentum = p7[0] is not None and p14[0] is not None and p7[0] > 0 and p7[0] > p14[0] / 2
+    return base * breadth * (MOMENTUM_BONUS if momentum else 1.0)
+
+
+def whole_weights(shares: dict, total: int) -> dict:
+    """Same as wholeWeights(): largest remainder, adding up to `total`."""
+    out = {k: math.floor(v) for k, v in shares.items()}
+    left = total - sum(out.values())
+    for k, v in sorted(shares.items(), key=lambda kv: (-(kv[1] - math.floor(kv[1])), -kv[1])):
+        if left <= 0:
+            break
+        out[k] += 1
+        left -= 1
+    return out
 
 
 def score_allocation(rows: dict, n: int, budget: float, disabled=frozenset()) -> dict:
     """Same as scoreAllocation(): top-n positive-score symbols share `budget` in proportion
     to score, each at most max(CAP, 1/n) of it; everyone else 0."""
-    sc = {s: symbol_score(v["p7"], v["p14"]) for s, v in rows.items() if s not in disabled}
+    sc = {s: symbol_score(v["p7"], v["p14"], v.get("c7")) for s, v in rows.items() if s not in disabled}
     elig = sorted(((s, x) for s, x in sc.items() if x > 0), key=lambda kv: (-kv[1], kv[0]))[:n]
     tot = sum(x for _, x in elig)
     out = {s: 0.0 for s in rows}
@@ -144,8 +173,19 @@ def score_allocation(rows: dict, n: int, budget: float, disabled=frozenset()) ->
             break
         for s in free:
             w[s] += ex * free[s] / fs
-    out.update(w)
+    out.update(whole_weights(w, int(math.floor(budget + 0.5))))   # JS Math.round
     return out
+
+
+def counts(presets: dict, a: float, b: float) -> list:
+    """[presets with Profit% > 0, presets with any trade] in [a, b) — as the dashboard."""
+    prof = total = 0
+    for ser in presets.values():
+        v, n = ser.window(a, b)
+        if n:
+            total += 1
+            prof += v > 0
+    return [prof, total]
 
 
 def tilt(w, p14):
@@ -183,8 +223,9 @@ def main() -> int:
             lock = locks.get(s)
             p7 = top_row(per_sym[s], lock, d0 - 7 * DAY, d0)
             p14 = top_row(per_sym[s], lock, d0 - 14 * DAY, d0)
+            c7, c14 = counts(per_sym[s], d0 - 7 * DAY, d0), counts(per_sym[s], d0 - 14 * DAY, d0)
             w = float(weights.get(s, 0))
-            symbols[s] = {"w": w, "lock": lock,
+            symbols[s] = {"w": w, "lock": lock, "c7": c7, "c14": c14,
                           "p7": [None if p7[0] is None else round(p7[0], 2), p7[1], p7[2]],
                           "p14": [None if p14[0] is None else round(p14[0], 2), p14[1], p14[2]],
                           "policies": {"static": w, "tilt": round(tilt(w, p14), 4), "brake": round(brake(w, p14), 4)},
@@ -195,7 +236,7 @@ def main() -> int:
     # tracked tilt = the score allocation over every eligible symbol (as the dashboard)
     for snap in snaps:
         rows = snap["symbols"]
-        budget = sum(v["w"] for v in rows.values())
+        budget = weight_budget(cfg)
         alloc = score_allocation(rows, len(rows), budget)
         for s, v in rows.items():
             v["policies"]["tilt"] = round(alloc[s], 4)
@@ -272,7 +313,7 @@ def main() -> int:
                     continue
                 rows = snap["symbols"]
                 F = fwd_of(snap, d0, d1, measure)
-                budget = sum(v["w"] for v in rows.values())
+                budget = weight_budget(cfg)
                 books = {
                     "score": score_allocation(rows, n, budget),
                     "equal": {s: 1.0 for s in rows},

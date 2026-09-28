@@ -32,8 +32,8 @@ const fmtNum = (x: number) => Number.isInteger(x) ? String(x) : x.toFixed(2)
 
 // ── Score allocation (the "Tilt" column) ─────────────────────────────────────
 // Profit% of each window shrunk by its sample (few trades count for little), blended
-// 50/50 so the recent week weighs as much as the fortnight. The weight budget (the
-// mode's current total weight) is shared among the top N positive-score, enabled
+// 50/50 so the recent week weighs as much as the fortnight. The weight budget
+// (risk_config weight_budget, default 33 — the long-standing total) is shared among the top N positive-score, enabled
 // symbols in proportion to score, at most CAP of it each; every other symbol gets 0.
 // Computed from evidence, not from the current weight — applying it twice cannot
 // compound. Spec: docs/specs/2026-09-28-weight-shadow-calculator.md (score allocation)
@@ -41,16 +41,47 @@ const fmtNum = (x: number) => Number.isInteger(x) ? String(x) : x.toFixed(2)
 export const SHRINK_7D = 10
 export const SHRINK_14D = 20
 export const SCORE_CAP = 0.30
+/** Below this share of profitable presets (7 days) the score is cut proportionally:
+ *  2 of 81 (2.5 %) keeps a quarter — one lucky preset is not a symbol that works. */
+export const BREADTH_FULL = 0.10
+/** 7-day Profit% above half of the 14-day one: the profit is recent, not fading. */
+export const MOMENTUM_BONUS = 1.25
+/** Whole-number weights need a whole budget. It is NOT the sum of the current weights:
+ *  after a decimal apply that sum was 1.26, which rounds to a single symbol weighted 1.
+ *  Only ratios matter to sizing, so a fixed total keeps the numbers readable. */
+export const WEIGHT_BUDGET_DEFAULT = 33
+export function weightBudget(cfg: Record<string, unknown>): number {
+  const b = Math.round(Number(cfg.weight_budget))
+  return Number.isFinite(b) && b > 0 ? b : WEIGHT_BUDGET_DEFAULT
+}
 
-export function symbolScore(r: { p7: Top; p14: Top }): { score: number; s7: number; s14: number } {
+export interface ScoreParts { score: number; base: number; s7: number; s14: number; breadth: number; momentum: boolean }
+
+export function symbolScore(r: { p7: Top; p14: Top; c7?: [number, number] }): ScoreParts {
   const [p7, n7] = r.p7, [p14, n14] = r.p14
   const s7 = (p7 ?? 0) * n7 / (n7 + SHRINK_7D)
   const s14 = (p14 ?? 0) * n14 / (n14 + SHRINK_14D)
-  return { score: round(0.5 * s7 + 0.5 * s14, 3), s7: round(s7, 2), s14: round(s14, 2) }
+  const base = 0.5 * s7 + 0.5 * s14
+  const [prof, total] = r.c7 ?? [0, 0]
+  const breadth = total > 0 ? Math.min(1, (prof / total) / BREADTH_FULL) : 1
+  const momentum = p7 !== null && p14 !== null && p7 > 0 && p7 > p14 / 2
+  const score = base > 0 ? base * breadth * (momentum ? MOMENTUM_BONUS : 1) : base
+  return { score: round(score, 3), base: round(base, 3), s7: round(s7, 2), s14: round(s14, 2), breadth: round(breadth, 3), momentum }
 }
 
-export interface AllocationRow {
-  score: number; s7: number; s14: number
+/** Whole-number weights that add up to `total` (largest remainder); shares keep their order. */
+export function wholeWeights(shares: Record<string, number>, total: number): Record<string, number> {
+  const floors = Object.fromEntries(Object.entries(shares).map(([k, v]) => [k, Math.floor(v)]))
+  let left = total - Object.values(floors).reduce((a, b) => a + b, 0)
+  const byRemainder = Object.entries(shares).sort((a, b) => (b[1] - Math.floor(b[1])) - (a[1] - Math.floor(a[1])) || b[1] - a[1])
+  for (const [k] of byRemainder) {
+    if (left <= 0) break
+    floors[k] += 1; left -= 1
+  }
+  return floors
+}
+
+export interface AllocationRow extends ScoreParts {
   /** 1-based rank among eligible (enabled, score > 0) symbols; null when not eligible. */
   rank: number | null
   inTopN: boolean
@@ -58,7 +89,7 @@ export interface AllocationRow {
 }
 
 export function scoreAllocation(
-  symbols: Record<string, { p7: Top; p14: Top }>,
+  symbols: Record<string, { p7: Top; p14: Top; c7?: [number, number] }>,
   opts: { disabled: Set<string>; n: number; budget: number; cap?: number },
 ): Record<string, AllocationRow> {
   const out: Record<string, AllocationRow> = {}
@@ -85,8 +116,10 @@ export function scoreAllocation(
       for (const [sym, v] of free) alloc[sym] = v + excess * v / fs
     }
   }
+  // whole numbers adding up to the (rounded) budget
+  const whole = Object.keys(alloc).length ? wholeWeights(alloc, Math.round(opts.budget)) : {}
   for (const [sym, sc] of scored) {
-    out[sym] = { ...sc, rank: rankOf.get(sym) ?? null, inTopN: sym in alloc, value: round(alloc[sym] ?? 0, 2) }
+    out[sym] = { ...sc, rank: rankOf.get(sym) ?? null, inTopN: sym in alloc, value: whole[sym] ?? 0 }
   }
   return out
 }
@@ -128,8 +161,7 @@ export function buildSnapshot(mode: Mode): { day: string; symbols: Record<string
   // tracked tilt = the score allocation over every eligible symbol (the widget lets the
   // user narrow N; the daily record keeps one comparable definition)
   const disabled = new Set(Object.keys(readSymbolState(mode).disabled ?? {}))
-  const budget = Object.values(symbols).reduce((a, r) => a + r.w, 0)
-  const alloc = scoreAllocation(symbols, { disabled, n: Infinity, budget })
+  const alloc = scoreAllocation(symbols, { disabled, n: Infinity, budget: weightBudget(cfg) })
   for (const [sym, r] of Object.entries(symbols)) r.policies.tilt = alloc[sym].value
   return { day, symbols }
 }
@@ -323,8 +355,14 @@ export function panelSuggestions(
   if (opts.disabled) common.push('disabled in this mode — the weight has no effect until the symbol is enabled in Settings')
   if (row.lock && n === 0) common.push(`the locked preset ${row.lock} has no trades in 14 days`)
 
-  // Tilt = score allocation (independent of the current weight: cannot compound)
-  const a = opts.alloc
+  // Tilt = score allocation (independent of the current weight: cannot compound).
+  // Defaults keep an older/partial row renderable.
+  const a = {
+    ...opts.alloc,
+    base: opts.alloc.base ?? opts.alloc.score,
+    breadth: opts.alloc.breadth ?? 1,
+    momentum: opts.alloc.momentum ?? false,
+  }
   const tilt = a.value
   const tf: string[] = [...common]
   const why =
@@ -336,11 +374,18 @@ export function panelSuggestions(
   if (tilt > 0 && row.p7[1] < TILT_THIN_7D && row.p14[1] < TILT_MIN_TRADES) {
     tf.push(`only ${row.p7[1]} / ${row.p14[1]} trades in 7 / 14 days — the score is mostly shrinkage`)
   }
+  const [prof7, tot7] = row.c7 ?? [0, 0]
+  if (a.base > 0 && a.breadth < 1) {
+    tf.push(`bad sign: only ${prof7} of ${tot7} presets profitable in 7 days — score cut to ×${a.breadth.toFixed(2)}`)
+  }
   const h = opts.scoreHist?.top
   if (tilt !== row.w && h && h.days >= 20 && h.vs_equal <= 0) {
     tf.push(`history: this allocation (top ${opts.n}) made ${h.vs_equal >= 0 ? '+' : ''}${h.vs_equal.toFixed(2)} %/week vs equal weights over ${h.days} days — it lost to simply equal-weighting`)
   }
-  const tnote = `score ${a.score.toFixed(1)} = ½ × 7d ${a.s7 >= 0 ? '+' : ''}${a.s7.toFixed(1)} + ½ × 14d ${a.s14 >= 0 ? '+' : ''}${a.s14.toFixed(1)} (Profit% shrunk by trade count)` +
+  const parts = [`½ × 7d ${a.s7 >= 0 ? '+' : ''}${a.s7.toFixed(1)} + ½ × 14d ${a.s14 >= 0 ? '+' : ''}${a.s14.toFixed(1)} (Profit% shrunk by trade count) = ${a.base.toFixed(1)}`]
+  if (a.base > 0 && a.breadth < 1) parts.push(`× ${a.breadth.toFixed(2)} (few profitable presets in 7 days)`)
+  if (a.base > 0 && a.momentum) parts.push(`× ${MOMENTUM_BONUS} (7d above half of 14d — recent profit)`)
+  const tnote = `score ${a.score.toFixed(1)}: ${parts.join(' ')}` +
     (a.inTopN ? ` · rank ${a.rank} of ${opts.eligible} → ${fmtNum(tilt)} of budget ${fmtNum(opts.budget)}` : why ? ` · ${why} → 0` : '')
 
   // Brake: halves; anchored so applying again does not compound (3 -> 1.5 -> 0.75 ...)

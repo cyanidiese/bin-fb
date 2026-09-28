@@ -75,3 +75,4 @@ risk_config_template.json
 .claude/worktrees/
 server_data/
 sweep_range_position_results.csv
+snapshots/

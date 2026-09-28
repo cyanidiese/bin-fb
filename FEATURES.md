@@ -2371,6 +2371,21 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 
 ---
 
+## State Snapshots (2026-09-28)
+
+- **What**: `scripts/snapshot_state.py` (host, stdlib only, read-only) writes one JSON per run to `snapshots/<UTC>.json`. Run it before and after any change whose impact should be measured. `--label "..."` adds a note. `--compare A.json B.json` prints, A→B: changed settings (flattened key paths), balance, real and rank-1 virtual results over 7d/30d (n, win%, PnL), and decision-log counts.
+- **Per mode (test/live)**:
+  - settings: risk config with telegram/token/secret keys redacted, shared config, non-zero weights, `weight_budget`, locked presets, disabled/paused symbols;
+  - open position counts;
+  - balance now and 1/7/30 days ago;
+  - closed real orders per window (1d/7d/30d/all), with per-symbol and per-exit breakdowns and sub-minute closes (the pre-entry-candle bug signature);
+  - rank-1 virtual orders per window and symbol;
+  - the 7d/14d Profit% leader per symbol, with profitable/total preset counts;
+  - 7-day decision-log outcome counts.
+  Top level: git HEAD, primary mode, symbol roster.
+- **Storage**: snapshots hold account data, so `snapshots/` is gitignored (this also covers local copies under `docs/snapshots/`) and they are never committed. The baseline is `/opt/bot/snapshots/2026-09-28T2010Z.json` on the server, labelled "baseline: whole-number tilt N=5 applied (test), a411e3e".
+- **Caveat**: `balance_history_test.json` has discontinuities (a jump of about 2,400 USDT within a week), so balance change is not a performance measure. Use the summed real PnL.
+
 ## Kline Feed Fixes (2026-09-27 — deployed 2026-09-27 19:47 UTC)
 
 - **Live stream URL**: `_WS_LIVE = wss://fstream.binance.com/market/ws` (`bot/data_feed.py`); combined stream `/market/stream?streams=…`. The root `/stream` path connects and answers pings but pushes no kline data — verified from the server 2026-09-27 (0 messages in 15 s vs 53 on `/market/`; 22-symbol combined URL 224 messages, all 22 symbols). Testnet unchanged (`wss://stream.binancefuture.com/stream`, 21 messages). Since its first day (Sep 7) the live mirror ran on the REST watchdog: 47–68 candle batches/day instead of 96, ~90% late (median ~7.5 min), ~40% of candles never processed (the watchdog takes only the newest closed candle after 22.5 min of silence). **All live virtual statistics before this fix come from that gappy, delayed feed.** A live primary would have inherited it.

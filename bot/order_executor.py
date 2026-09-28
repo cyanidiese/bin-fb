@@ -572,9 +572,17 @@ class OrderExecutor:
         low: float,
         candle_open: float,
         candle_close: float,
+        candle_close_ms: int | None = None,
     ) -> list[dict]:
         """Call once per closed candle for a specific symbol. Handles gap scenarios
-        (price jumped through SL/TP at candle open) that per-tick checks miss."""
+        (price jumped through SL/TP at candle open) that per-tick checks miss.
+
+        `candle_close_ms`: the candle's close time. A position opened at or after it is
+        skipped — that candle ended before the position existed. Real orders are placed
+        in the same candle-close handler that then calls this, so every new order used
+        to be judged against the pre-entry candle's high/low: 46 of the 48 real orders
+        closed within a minute in 30 days (to 2026-09-28) were exactly that, −186.66 USDT.
+        Ticks protect the position from its first second; later candles are checked."""
         if self._states.get(symbol) == OrderState.PLACING:
             return []
         # An exit we decided on earlier but could not execute (a ban, a transient
@@ -587,6 +595,8 @@ class OrderExecutor:
             return []  # still stranded; do not re-evaluate or double-handle
         fake_order = self._fake_orders.get(symbol)
         if fake_order is None:
+            return []
+        if candle_close_ms is not None and self._opened_after(symbol, candle_close_ms):
             return []
 
         self._symbol_candle_index[symbol] = self._symbol_candle_index.get(symbol, 0) + 1
@@ -614,6 +624,18 @@ class OrderExecutor:
             return [info] if info is not None else []
         finally:
             self._closing.discard(symbol)
+
+    def _opened_after(self, symbol: str, candle_close_ms: int) -> bool:
+        """True when the open position began at or after the candle's close — i.e. the
+        candle is entirely before the position. Unknown open time → False (check it)."""
+        order = self._open_orders.get(symbol)
+        if order is None or not order.open_time:
+            return False
+        try:
+            opened_ms = int(datetime.fromisoformat(order.open_time).timestamp() * 1000)
+        except (TypeError, ValueError):
+            return False
+        return opened_ms >= int(candle_close_ms)
 
     # ------------------------------------------------------------------ #
     # Bulk close                                                           #

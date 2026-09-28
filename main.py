@@ -2038,6 +2038,8 @@ async def run() -> None:
         candle_close_price = float(candle_to_add[4])
         candle_closed = await order_executor.check_symbol_candle(
             symbol, candle_high, candle_low, candle_open_price, candle_close_price,
+            # skip a position placed after this candle closed (earlier in this handler)
+            candle_close_ms=int(candle_to_add[6]) if len(candle_to_add) > 6 and candle_to_add[6] else None,
         )
         for c in candle_closed:
             if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):

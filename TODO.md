@@ -19,7 +19,8 @@ Legend: [ ] pending  [~] in progress  [x] done
 - [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
 - [x] Shadow calculator + evaluator + Risk-page "Weight suggestions" panel (deployed 2026-09-28 13:02 UTC; first snapshots written for both modes).
 - [x] Reconstructed track record from existing data (deployed 14:05 UTC): tilt +0.08 %/wk, brake +0.00 % over 105 testnet days — nothing to apply.
-- [ ] **Next (money is here)**: investigate why the funded symbols' top preset earns +5.4 %/week on its own virtual trades while would-be-real trades (real + rank-1) lose −0.55 %/week.
+- [x] Gap investigated: real orders were judged against the pre-entry candle (46/48 sub-minute exits, −186.66 USDT/30d) — FIXED, deployed 2026-09-28 16:00 UTC.
+- [ ] Re-measure the virtual-vs-real gap in ~1 week (remaining suspects: max_losing_pct 55 on r5_arm25, early-loss cap computed from signal not fill price, slippage/fees, real-only gates).
 - [ ] After 3–4 weeks: read the panel's live track record (or `python3 scripts/eval_weight_shadow.py`) and decide whether any policy is applied.
 - [ ] Consider equal-risk sizing (per-trade risk persists, +0.25) — needs its own A/B.
 - [x] Trend history depth made explicit and consistent (deployed 13:15 UTC; all 22 live caches backfilled 1569/3291 → 5000).

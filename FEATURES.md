@@ -2327,6 +2327,12 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ---
 
+## Real-Order Candle Check Skips the Pre-Entry Candle (2026-09-28 — deployed 16:00 UTC)
+
+`OrderExecutor.check_symbol_candle(..., candle_close_ms=)` skips a position opened at or after that candle's close (`_opened_after`); `main.py` passes the closed candle's close time (`candle_to_add[6]`). Real orders are placed in the same candle-close handler that then runs this OHLC check, so every new order used to be judged against the pre-entry candle: 46 of 48 real orders closed within a minute in the 30 days to 2026-09-28 (30 losses, 16 trail exits) were that, −186.66 USDT plus fees. Ticks guard the position from its first second; later candles are checked as before; without a close time the old behaviour stays. Tests: `tests/test_candle_check_skips_pre_entry_candle.py`.
+
+---
+
 ## Weight Shadow Calculator (2026-09-28 — deployed 13:02 UTC)
 
 Measures whether Profit%-driven weighting would earn more **before** any money follows it. Spec: `docs/specs/2026-09-28-weight-shadow-calculator.md`.

@@ -18,7 +18,9 @@ Legend: [ ] pending  [~] in progress  [x] done
 
 - [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
 - [x] Shadow calculator + evaluator + Risk-page "Weight suggestions" panel (deployed 2026-09-28 13:02 UTC; first snapshots written for both modes).
-- [ ] After 3–4 weeks: read the panel's track record (or `python3 scripts/eval_weight_shadow.py`) and decide whether any policy is applied.
+- [x] Reconstructed track record from existing data (deployed 14:05 UTC): tilt +0.08 %/wk, brake +0.00 % over 105 testnet days — nothing to apply.
+- [ ] **Next (money is here)**: investigate why the funded symbols' top preset earns +5.4 %/week on its own virtual trades while would-be-real trades (real + rank-1) lose −0.55 %/week.
+- [ ] After 3–4 weeks: read the panel's live track record (or `python3 scripts/eval_weight_shadow.py`) and decide whether any policy is applied.
 - [ ] Consider equal-risk sizing (per-trade risk persists, +0.25) — needs its own A/B.
 - [x] Trend history depth made explicit and consistent (deployed 13:15 UTC; all 22 live caches backfilled 1569/3291 → 5000).
 - [x] Verified 2026-09-28: every symbol (disabled / weight 0 / funded, both modes) is run through the virtual simulator every candle; zero-open symbols show only `no_signal` (signal drought, not a gate).

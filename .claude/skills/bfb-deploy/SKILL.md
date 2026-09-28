@@ -35,6 +35,24 @@ Python source is baked into `bot-bot`; the dashboard is baked into `bot-dashboar
 
 ---
 
+## Three images, not two
+
+`bot`, `bot_mirror` and `dashboard` each have their own `build:` in docker-compose, so
+compose builds **three** images: `bot-bot`, `bot-bot_mirror`, `bot-dashboard`. Building
+`bot` does NOT update the mirror — measured 2026-09-28: after `docker compose build bot
+dashboard` + `up -d --no-deps bot_mirror`, the mirror came back on the previous day's
+image. Always name every service you recreate in the build:
+
+```bash
+docker compose build bot_mirror dashboard            # mirror + dashboard only
+docker stop -t 60 bot_mirror
+docker compose up -d --no-deps bot_mirror dashboard  # the trading bot keeps running
+docker inspect -f '{{.Name}} {{.Image}} {{.State.StartedAt}}' bot bot_mirror
+```
+
+`--no-deps` plus naming services is how to ship bot-side changes that only matter to the
+mirror (virtual only) without restarting the trading bot and its real positions.
+
 ## Dashboard-only deploy (does NOT touch the bot)
 
 When a commit changes only `dashboard/`, skip the stop/start dance entirely.

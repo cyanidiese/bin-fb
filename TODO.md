@@ -17,10 +17,11 @@ Legend: [ ] pending  [~] in progress  [x] done
 ### Profit%-driven weights — measure first (2026-09-28)
 
 - [x] Persistence study (testnet): trailing Profit% does not predict forward Profit% → no auto-reweighting on it now.
-- [x] Shadow calculator + evaluator (4c0ffc5, not deployed; dashboard-only deploy).
-- [ ] Deploy dashboard; after 3–4 weeks run `python3 scripts/eval_weight_shadow.py` and decide.
+- [x] Shadow calculator + evaluator + Risk-page "Weight suggestions" panel (deployed 2026-09-28 13:02 UTC; first snapshots written for both modes).
+- [ ] After 3–4 weeks: read the panel's track record (or `python3 scripts/eval_weight_shadow.py`) and decide whether any policy is applied.
 - [ ] Consider equal-risk sizing (per-trade risk persists, +0.25) — needs its own A/B.
-- [x] Trend history depth made explicit and consistent (00cb830, not deployed; mirror restart only).
+- [x] Trend history depth made explicit and consistent (deployed 13:15 UTC; all 22 live caches backfilled 1569/3291 → 5000).
+- [x] Verified 2026-09-28: every symbol (disabled / weight 0 / funded, both modes) is run through the virtual simulator every candle; zero-open symbols show only `no_signal` (signal drought, not a gate).
 
 ### Signal drought on oscillating symbols (investigated 2026-09-27)
 

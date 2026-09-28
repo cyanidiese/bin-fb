@@ -2327,7 +2327,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ---
 
-## Weight Shadow Calculator (2026-09-28 — committed 4c0ffc5, NOT deployed)
+## Weight Shadow Calculator (2026-09-28 — deployed 13:02 UTC)
 
 Measures whether Profit%-driven weighting would earn more **before** any money follows it. Spec: `docs/specs/2026-09-28-weight-shadow-calculator.md`.
 
@@ -2336,7 +2336,7 @@ Measures whether Profit%-driven weighting would earn more **before** any money f
 - **Risk page → Weight suggestions** (`components/risk/WeightSuggestions.tsx`, `GET /api/weight-suggestions?mode=`, `POST /api/weight-suggestions/apply`): per mode, every funded symbol's weight, 7d/14d Profit% (trades), tilt and brake values, and the track record (`evaluateShadow`: mean vs current weights, better on N/M days; appears once a snapshot is 7 days old). Apply per row, all tilt, all brake, or typed values, after a confirmation listing each change and warning when a weight crosses `tats_min_weight`. Applied server-side onto a fresh read of that mode's `symbol_weights`; weights must stay > 0 (a suggestion never switches real orders on/off); the bot audits changes in `weight_changes_{mode}.json`. **Nothing is applied automatically.**
 - **Evaluation**: `python3 scripts/eval_weight_shadow.py [mode] [days]` — per snapshot day, weight-normalised forward Profit% of the would-be-real trades (real + rank-1 virtual) for each policy vs `static`, and on how many days each beat it. Decide after 3–4 weeks of clean live data.
 
-## Trend History Depth (2026-09-28 — committed 00cb830, NOT deployed)
+## Trend History Depth (2026-09-28 — deployed 13:15 UTC; mirror only, primary untouched)
 
 - `analyzer_history_candles` (shared risk setting; default = `KLINE_CACHE_LIMIT`, 5000): candles the trend is bootstrapped from, at startup and for hot-added symbols (`main._analyzer_history`). Primary unchanged (always built from the whole cache); the live mirror had 1500 (backfill cap) and now gets the same depth.
 - A/B (same 14 testnet days, real simulator, all presets; `scratchpad/ab/ab_history.py`): rank-1 −75.7% / +13.7% / +169.3% at 1000 / 1500 / ~3600 candles; all ranks the other way; chaotic per symbol (APT +455% vs −5244% on history length alone). No clear winner → depth kept, made consistent.

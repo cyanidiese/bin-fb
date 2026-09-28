@@ -2384,6 +2384,7 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
   - 7-day decision-log outcome counts.
   Top level: git HEAD, primary mode, symbol roster.
 - **Storage**: snapshots hold account data, so `snapshots/` is gitignored (this also covers local copies under `docs/snapshots/`) and they are never committed. The baseline is `/opt/bot/snapshots/2026-09-28T2010Z.json` on the server, labelled "baseline: whole-number tilt N=5 applied (test), a411e3e".
+- **Daily schedule**: host root crontab `5 0 * * *` (00:05 UTC) runs `cd /opt/bot && python3 scripts/snapshot_state.py --label daily`, appending output to `logs/snapshot_cron.log`. About 45 KB per snapshot, roughly 16 MB a year; no retention needed at that size. Check with `crontab -l`.
 - **Caveat**: `balance_history_test.json` has discontinuities (a jump of about 2,400 USDT within a week), so balance change is not a performance measure. Use the summed real PnL.
 
 ## Kline Feed Fixes (2026-09-27 — deployed 2026-09-27 19:47 UTC)

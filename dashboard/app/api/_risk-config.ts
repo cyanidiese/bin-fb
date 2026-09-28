@@ -37,6 +37,8 @@ export const SHARED_KEYS = [
   // preset ranking
   'preset_blocklist', 'ranking_window_size', 'min_trades_for_ranking',
   'min_trades_for_ranking_per_symbol', 'preset_hysteresis_pct', 'preset_cooldown_trades',
+  // trend bootstrap depth
+  'analyzer_history_candles',
 ] as const
 
 export function isSharedKey(k: string): boolean {

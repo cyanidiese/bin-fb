@@ -62,6 +62,7 @@ _KLINE_WEIGHT_TIERS = (100, 500, 1000, 1500)
 # Extra candles on top of the measured gap, so a boundary gap cannot lose the newest
 # candle to an off-by-one.
 _KLINE_GAP_MARGIN = 3
+_KLINE_MAX_PER_REQUEST = 1500
 
 
 def cache_is_current(last_close_ms: int, candle_ms: int) -> bool:
@@ -201,10 +202,9 @@ class DataFeed:
         # from one day instead of ~15. One full-window fetch, merged, fixes it.
         want = min(limit, self._settings.kline_cache_limit)
         if cached and len(cached) < want - _KLINE_GAP_MARGIN:
+            before = len(cached)
             try:
-                older = self._fetch(symbol, timeframe, limit=limit)
-                before = len(cached)
-                cached = self._merge(cached, older, timeframe, self._settings.kline_cache_limit)
+                cached = self._backfill(symbol, timeframe, cached, want)
                 logger.info(f"[{symbol}] Kline history backfilled: {before} -> {len(cached)} candles")
             except Exception as e:
                 logger.warning(f"[{symbol}] Kline backfill failed (keeping {len(cached)}): {e}")
@@ -240,12 +240,34 @@ class DataFeed:
                 fresh = []
         else:
             logger.info(f"No cache found, fetching {limit} klines")
-            fresh = self._fetch(symbol, timeframe, limit=limit)
+            fresh = self._backfill(symbol, timeframe, [], min(limit, self._settings.kline_cache_limit))
 
         merged = self._merge(cached, fresh, timeframe, self._settings.kline_cache_limit)
         self._write_cache(cache_path, merged)
         logger.info(f"Kline cache ready: {len(merged)} candles")
         return merged
+
+    def _backfill(self, symbol: str, timeframe: str, cached: list, want: int) -> list:
+        """Page backwards (endTime) until the cache holds `want` candles or the exchange
+        has no older data. One request per 1500 candles, only for a short cache."""
+        rows = list(cached)
+        # Newest part first if the cache is not current, so the pages join up.
+        fresh = self._fetch(symbol, timeframe, limit=_KLINE_MAX_PER_REQUEST)
+        rows = self._merge(rows, fresh, timeframe, want)
+        for _ in range(8):                        # hard stop: 8 x 1500 candles
+            if len(rows) >= want:
+                break
+            older = self._fetch(symbol, timeframe, limit=_KLINE_MAX_PER_REQUEST,
+                                end_ms=int(rows[0][0]) - 1)
+            if not older:
+                break                             # listing date reached
+            combined = {int(k[0]): k for k in older}
+            combined.update({int(k[0]): k for k in rows})
+            grown = sorted(combined.values(), key=lambda k: int(k[0]))
+            if len(grown) == len(rows):
+                break
+            rows = grown
+        return rows[-self._settings.kline_cache_limit:]
 
     def append_kline(self, symbol: str, timeframe: str, kline: list) -> None:
         """Appends a single closed candle to the cache file."""
@@ -307,10 +329,14 @@ class DataFeed:
         candle_ms = self._timeframe_to_ms(timeframe)
         return incoming_open_ms > last_close_ms + candle_ms
 
-    def _fetch(self, symbol: str, timeframe: str, limit: int, start_ms: Optional[int] = None) -> list:
-        params = {'symbol': symbol, 'interval': timeframe, 'limit': limit}
+    def _fetch(self, symbol: str, timeframe: str, limit: int, start_ms: Optional[int] = None,
+               end_ms: Optional[int] = None) -> list:
+        # Binance caps a klines request at 1500 rows; a larger limit is an API error.
+        params = {'symbol': symbol, 'interval': timeframe, 'limit': min(int(limit), _KLINE_MAX_PER_REQUEST)}
         if start_ms is not None:
             params['startTime'] = start_ms
+        if end_ms is not None:
+            params['endTime'] = end_ms
         _key = self._klines_source
         _wait = rl_guard.blocked_for(_key)
         if _wait > 0:

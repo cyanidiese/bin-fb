@@ -118,18 +118,39 @@ def test_orders_table_includes_rank1_like_preset_efficiency():
     assert 'fdata.rank1_orders' in block
 
 
-def test_short_cache_is_backfilled_once_at_load(feed, monkeypatch):
+def test_short_cache_is_backfilled_by_paging_back(feed, monkeypatch):
+    """The live mirror's caches were ~100 candles; the update path only fetched forward.
+    Backfill pages back with endTime until the requested depth (one request per 1500)."""
     p = feed._cache_path('SOLUSDT', '15m')
-    DataFeed._write_cache(p, [_row(i) for i in range(1400, 1500)])      # 100 candles
+    DataFeed._write_cache(p, [_row(i) for i in range(4900, 5000)])      # 100 newest
+    universe = [_row(i) for i in range(0, 5000)]
     calls = []
 
-    def fetch(sym, tf, limit, start_ms=None):
-        calls.append((limit, start_ms))
-        return [_row(i) for i in range(0, 1500)] if start_ms is None else []
+    def fetch(sym, tf, limit, start_ms=None, end_ms=None):
+        calls.append((limit, start_ms, end_ms))
+        assert limit <= 1500, 'Binance rejects limit > 1500'
+        rows = [r for r in universe if (end_ms is None or r[0] <= end_ms)
+                and (start_ms is None or r[0] >= start_ms)]
+        return rows[-limit:] if start_ms is None else rows[:limit]
     feed._fetch = fetch
     monkeypatch.setattr(df, 'cache_is_current', lambda *a: True)
-    rows = feed.load_klines('SOLUSDT', '15m', 1500)
-    assert len(rows) == 1500 and calls[0] == (1500, None)
+    rows = feed.load_klines('SOLUSDT', '15m', 5000)
+    assert len(rows) == 5000 and rows[0][0] == _row(0)[0]
+    assert len(calls) == 4                      # newest page + 3 pages back
     calls.clear()
-    feed.load_klines('SOLUSDT', '15m', 1500)
+    feed.load_klines('SOLUSDT', '15m', 5000)
     assert calls == [], 'a full cache must not be re-fetched'
+
+
+def test_backfill_stops_at_the_listing_date(feed, monkeypatch):
+    p = feed._cache_path('NEWUSDT', '15m')
+    DataFeed._write_cache(p, [_row(i) for i in range(250, 300)])
+    feed._fetch = lambda sym, tf, limit, start_ms=None, end_ms=None: (
+        [_row(i) for i in range(0, 300) if end_ms is None or _row(i)[0] <= end_ms][-limit:])
+    monkeypatch.setattr(df, 'cache_is_current', lambda *a: True)
+    assert len(feed.load_klines('NEWUSDT', '15m', 5000)) == 300
+
+
+def test_fetch_never_asks_for_more_than_1500():
+    src = (ROOT / 'bot/data_feed.py').read_text()
+    assert "'limit': min(int(limit), _KLINE_MAX_PER_REQUEST)" in src

@@ -190,6 +190,16 @@ def _resolve_mode(base_settings: "Settings", mode_manager: "ModeManager") -> str
     return resolved
 
 
+def _analyzer_history(risk_cfg: dict, settings) -> int:
+    """Candles the trend is bootstrapped from (risk_config analyzer_history_candles,
+    default: the kline cache limit)."""
+    try:
+        n = int(risk_cfg.get('analyzer_history_candles') or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return max(200, min(n, settings.kline_cache_limit)) if n > 0 else settings.kline_cache_limit
+
+
 async def _mirror_watch(mode_manager: "ModeManager") -> None:
     """Exit when the primary's mode changes, so the container restarts as its opposite.
 
@@ -657,10 +667,15 @@ async def run() -> None:
               trigger='startup' if startup_balance > 0 else 'startup_unconfirmed')
     virtual_order_simulator.sync_real_balance_on_start(risk_manager.get_balance())
 
-    # Kline bootstrap + initial export
+    # Kline bootstrap + initial export. How much history the trend is built from changes
+    # which signals fire (A/B 2026-09-28: same 14 days, rank-1 -75.7% / +13.7% / +169.3%
+    # at 1000 / 1500 / ~3600 candles — chaotic per symbol, no clear winner). So it is one
+    # explicit, SHARED setting: both instances build from the same depth. Default = the
+    # cache limit, i.e. what the primary has always done; the mirror used to get 1500.
+    _hist = _analyzer_history(risk_cfg, first_settings)
     for symbol in symbols:
-        klines = feed.load_klines(symbol, timeframe, limit=1500)
-        analyzers[symbol].build_from_klines(klines)
+        klines = feed.load_klines(symbol, timeframe, limit=_hist)
+        analyzers[symbol].build_from_klines(klines[-_hist:])
         recs = analyzers[symbol].get_recommendations()
         best = analyzers[symbol].get_best_recommendation()
         export(
@@ -1554,7 +1569,8 @@ async def run() -> None:
                     # an empty analyzer and no retry, because the next pass would see it
                     # as already present — so skip and pick it up on a later candle.
                     _kl = await asyncio.to_thread(
-                        feed.load_klines, _sym, timeframe, 1500)
+                        feed.load_klines, _sym, timeframe, _analyzer_history(risk_cfg, first_settings))
+                    _kl = _kl[-_analyzer_history(risk_cfg, first_settings):]
                     if not _kl:
                         logger.warning(
                             f"[{_sym}] added to the registry but no klines available "

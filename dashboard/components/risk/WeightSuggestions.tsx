@@ -76,7 +76,7 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
   // The page remounts this per mode (key), so there is no stale mode's data to clear.
   useEffect(() => { load() }, [load])
 
-  async function apply(changes: Record<string, number>) {
+  async function apply(changes: Record<string, number>, policy: 'tilt' | 'brake' | 'custom' = 'custom') {
     if (!data || Object.keys(changes).length === 0) return
     const disabled = new Set(data.disabled ?? [])
     const tmw = data.tats_min_weight
@@ -96,7 +96,7 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
     try {
       const r = await fetch('/api/weight-suggestions/apply', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, changes }),
+        body: JSON.stringify({ mode, changes, policies: Object.fromEntries(Object.keys(changes).map(k => [k, policy])) }),
       })
       const d = await r.json()
       if (!r.ok) { setMsg(d.error ?? `HTTP ${r.status}`); return }
@@ -194,9 +194,9 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
                 if (v === r.w) return <span className="text-gray-600" title={[note, ...flags].filter(Boolean).join('\n') || 'no change'}>={warn}</span>
                 return (
                   <span className="whitespace-nowrap">
-                    <button disabled={busy} onClick={() => apply({ [sym]: v })}
+                    <button disabled={busy} onClick={() => apply({ [sym]: v }, pol)}
                       className={`px-1.5 rounded border ${v > r.w ? 'border-emerald-900/60 text-emerald-400' : 'border-amber-900/60 text-amber-400'} ${flags.length ? 'opacity-70' : ''} hover:bg-gray-800 disabled:opacity-40`}
-                      title={`Apply ${pol}: ${fmtW(r.w)} → ${fmtW(v)}${flags.length ? '\n' + flags.map(f => '! ' + f).join('\n') : ''}`}>
+                      title={`Apply ${pol}: ${fmtW(r.w)} → ${fmtW(v)}${note ? '\n' + note : ''}${flags.length ? '\n' + flags.map(f => '! ' + f).join('\n') : ''}`}>
                       {fmtW(v)} ✓
                     </button>{warn}
                   </span>
@@ -227,10 +227,10 @@ export default function WeightSuggestions({ mode, onApplied }: Props) {
         </table>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(tiltAll).length} onClick={() => apply(tiltAll)}>
+          <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(tiltAll).length} onClick={() => apply(tiltAll, 'tilt')}>
             Apply all well-supported tilt ({Object.keys(tiltAll).length})
           </button>
-          <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(brakeAll).length} onClick={() => apply(brakeAll)}>
+          <button className={SAVE_BTN_CLS} disabled={busy || !Object.keys(brakeAll).length} onClick={() => apply(brakeAll, 'brake')}>
             Apply all well-supported brake ({Object.keys(brakeAll).length})
           </button>
           <button className={SAVE_BTN_CLS} disabled={busy || !Object.values(custom).some(v => v.trim())}

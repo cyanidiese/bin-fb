@@ -124,7 +124,7 @@ import shutil
 import subprocess
 
 
-def _panel_suggestions(row: dict, disabled=False, base=3, history=None):
+def _panel_suggestions(row: dict, disabled=False, base=3, history=None, anchor=None):
     node = shutil.which('node')
     jiti = ROOT / 'dashboard/node_modules/jiti'
     if not node or not jiti.exists():
@@ -133,7 +133,7 @@ def _panel_suggestions(row: dict, disabled=False, base=3, history=None):
     js = f"""
 const jiti=require({_json.dumps(str(jiti))})({_json.dumps(str(ROOT/'dashboard'/'jiti-entry.js'))},{{alias:{{'@':{_json.dumps(str(ROOT/'dashboard'))}}}}})
 const m=jiti({_json.dumps(str(ROOT/'dashboard/app/api/trades/_weight-shadow.ts'))})
-console.log(JSON.stringify(m.panelSuggestions({_json.dumps(row)},{{disabled:{str(disabled).lower()},baseWeight:{base},history:{_json.dumps(history)}}})))"""
+console.log(JSON.stringify(m.panelSuggestions({_json.dumps(row)},{{disabled:{str(disabled).lower()},baseWeight:{base},history:{_json.dumps(history)},anchor:{_json.dumps(anchor)}}})))"""
     out = subprocess.run([node, '-e', js], capture_output=True, text=True, cwd=ROOT / 'dashboard', timeout=60)
     assert out.returncode == 0, out.stderr
     return _json.loads(out.stdout.strip().splitlines()[-1])
@@ -182,3 +182,28 @@ def test_panel_sorts_every_column_and_remembers_it():
 
 def test_bulk_apply_takes_only_unflagged_values():
     assert 'sug(s, pol).flags.length === 0' in PANEL
+
+
+# ── Anchoring: applying a suggestion twice must not compound ─────────────────
+
+def test_brake_does_not_halve_again_after_it_was_applied():
+    """EIGENUSDT 2026-09-28: 3 -> 1.5 by brake at 14:52; the panel then offered 0.75."""
+    anchor = {'base': 3, 'since': 1790520000000, 'policy': 'brake'}
+    s = _panel_suggestions(_row(1.5, -31.79, 45), anchor=anchor)
+    assert s['brake']['value'] == 1.5                        # = current: no further cut
+    assert 'already braked' in s['brake']['note']
+
+
+def test_tilt_is_computed_from_the_pre_suggestion_weight():
+    anchor = {'base': 10, 'since': 1790520000000, 'policy': 'tilt'}
+    s = _panel_suggestions(_row(13, 200.0, 40), anchor=anchor)
+    assert s['tilt']['value'] <= 13                          # 10 x at most 1.3, not 13 x 1.3
+    assert 'does not compound' in s['tilt']['note']
+
+
+def test_apply_logs_the_policy_that_set_each_weight():
+    assert 'logApplied(body.mode' in APPLY
+    assert "apply({ [sym]: v }, pol)" in PANEL
+    shadow = (ROOT / 'dashboard/app/api/trades/_weight-shadow.ts').read_text()
+    assert "if (e.policy === 'custom') anchor = null" in shadow          # typed value = new base
+    assert 'Math.abs((currentWeights[sym] ?? 0) - last.new) < 1e-9' in shadow  # changed elsewhere = new base

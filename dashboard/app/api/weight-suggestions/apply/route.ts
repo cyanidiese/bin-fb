@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isMode, updateRiskConfig } from '../../_risk-config'
+import { logApplied, type AppliedPolicy } from '../../trades/_weight-shadow'
 
 /** POST /api/weight-suggestions/apply {mode, changes: {SYMBOL: weight}} — set those
  *  symbols' weights in that mode's risk config, merged onto a FRESH read so nothing else
@@ -7,7 +8,7 @@ import { isMode, updateRiskConfig } from '../../_risk-config'
  *  data/weight_changes_{mode}.json. Only symbols that have a weight entry; 0 turns real
  *  orders OFF for a symbol and 0 -> >0 turns them ON — the panel's confirmation says so. */
 export async function POST(req: NextRequest) {
-  let body: { mode?: unknown; changes?: Record<string, unknown> }
+  let body: { mode?: unknown; changes?: Record<string, unknown>; policies?: Record<string, unknown> }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
   if (!isMode(body.mode)) return NextResponse.json({ error: 'mode must be test or live' }, { status: 400 })
   const changes = body.changes ?? {}
@@ -34,5 +35,13 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     return NextResponse.json({ error: String(e instanceof Error ? e.message : e) }, { status: 400 })
   }
+  // Remember which policy set each weight, so the next suggestion is computed from the
+  // pre-suggestion weight instead of compounding on top of it.
+  const pol = (x: unknown): AppliedPolicy => (x === 'tilt' || x === 'brake' ? x : 'custom')
+  try {
+    logApplied(body.mode, Object.entries(clean).map(([sym, w]) => ({
+      ts: Date.now(), symbol: sym, policy: pol(body.policies?.[sym]), old: before[sym], new: w,
+    })))
+  } catch { /* the weights are saved; the log is a convenience */ }
   return NextResponse.json({ ok: true, mode: body.mode, before, after: clean })
 }

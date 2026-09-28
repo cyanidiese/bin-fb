@@ -24,6 +24,7 @@ export interface ShadowSymbol {
 }
 
 const round = (x: number, d = 4) => Math.round(x * 10 ** d) / 10 ** d
+const fmtNum = (x: number) => Number.isInteger(x) ? String(x) : x.toFixed(2)
 
 /** Bounded momentum: at most ±30 %, only with ≥ 20 trades in 14 days. */
 export function tiltWeight(w: number, p14: Top): number {
@@ -183,10 +184,59 @@ const TILT_MIN_TRADES = 20
 const BRAKE_MIN_TRADES = 30
 const BRAKE_LOSS_PCT = -30
 
+// ── Applied-suggestion log: anchors suggestions so applying twice does not compound ──
+
+export type AppliedPolicy = 'tilt' | 'brake' | 'custom'
+export interface AppliedEntry { ts: number; symbol: string; policy: AppliedPolicy; old: number; new: number; note?: string }
+const appliedPath = (mode: Mode) => path.join(BOT_ROOT, 'data', `weight_suggestion_applies_${mode}.jsonl`)
+
+export function logApplied(mode: Mode, entries: AppliedEntry[]): void {
+  if (entries.length) fs.appendFileSync(appliedPath(mode), entries.map(e => JSON.stringify(e)).join('\n') + '\n')
+}
+
+export interface Anchor { base: number; since: number; policy: AppliedPolicy }
+
+/** Per symbol, the weight suggestions should be computed from: the weight before the first
+ *  tilt/brake applied in the last `days`, unless a typed (custom) value was set later — that
+ *  is the user's new baseline. Only while the current weight is still the one applied. */
+export function anchors(mode: Mode, currentWeights: Record<string, number>, days = 14): Record<string, Anchor> {
+  let lines: string[] = []
+  try { lines = fs.readFileSync(appliedPath(mode), 'utf8').split('\n').filter(Boolean) } catch { return {} }
+  const cutoff = Date.now() - days * 86400_000
+  const bySym: Record<string, AppliedEntry[]> = {}
+  for (const l of lines) {
+    try {
+      const e = JSON.parse(l) as AppliedEntry
+      if (e.ts >= cutoff) (bySym[e.symbol] ??= []).push(e)
+    } catch { /* torn line */ }
+  }
+  const out: Record<string, Anchor> = {}
+  for (const [sym, es] of Object.entries(bySym)) {
+    es.sort((a, b) => a.ts - b.ts)
+    let anchor: Anchor | null = null
+    for (const e of es) {
+      if (e.policy === 'custom') anchor = null
+      else if (!anchor) anchor = { base: e.old, since: e.ts, policy: e.policy }
+    }
+    const last = es[es.length - 1]
+    // someone changed the weight since (Risk table, SSH): that is the new baseline
+    if (anchor && Math.abs((currentWeights[sym] ?? 0) - last.new) < 1e-9) out[sym] = anchor
+  }
+  return out
+}
+
 export function panelSuggestions(
-  row: ShadowSymbol, opts: { disabled: boolean; baseWeight: number; history?: TrackRecord },
+  row: ShadowSymbol,
+  opts: { disabled: boolean; baseWeight: number; history?: TrackRecord; anchor?: Anchor },
 ): PanelSuggestions {
   const [pct, n] = row.p14
+  // Compute from the pre-suggestion weight, so applying again does not compound
+  // (3 -> brake 1.5 -> brake 0.75 ...). The current weight stays what "=" compares to.
+  const anchor = opts.anchor
+  const baseW = anchor ? anchor.base : row.w
+  const anchorNote = anchor
+    ? `computed from ${fmtNum(anchor.base)} — the weight before ${anchor.policy} was applied on ${new Date(anchor.since).toISOString().slice(0, 10)} — so applying again does not compound`
+    : undefined
   const common: string[] = []
   if (opts.disabled) common.push('disabled in this mode — the weight has no effect until the symbol is enabled in Settings')
   if (row.lock && n === 0) common.push(`the locked preset ${row.lock} has no trades in 14 days`)
@@ -199,8 +249,8 @@ export function panelSuggestions(
     tf.push('no trades in the last 14 days — nothing to tilt on')
   } else {
     const factor = Math.min(1.3, Math.max(0.7, 1 + 0.3 * Math.tanh(pct / 50)))
-    if (row.w > 0) {
-      tilt = round(row.w * factor)
+    if (baseW > 0) {
+      tilt = round(baseW * factor)
     } else if (pct > 0) {
       tilt = round(opts.baseWeight * factor)
       tf.push(`weight is 0: starts from ${opts.baseWeight} (tats_min_weight) and turns REAL orders ON`)
@@ -219,12 +269,12 @@ export function panelSuggestions(
   const bf: string[] = [...common]
   let brake = row.w
   let bnote: string | undefined
-  if (row.w === 0) {
+  if (baseW === 0) {
     bnote = 'brake only lowers a weight — this one is already 0'
   } else if (pct === null) {
     bnote = 'no trades in the last 14 days — nothing to judge'
   } else if (pct <= BRAKE_LOSS_PCT) {
-    brake = round(row.w * 0.5)
+    brake = round(baseW * 0.5)
     if (n < BRAKE_MIN_TRADES) bf.push(`only ${n} trade(s) in 14 days — needs ≥ ${BRAKE_MIN_TRADES} before halving on it`)
   } else {
     bnote = `14-day Profit% ${pct.toFixed(1)} % is above the ${BRAKE_LOSS_PCT} % brake level — no cut`
@@ -234,5 +284,12 @@ export function panelSuggestions(
     bf.push(`history: brake added ${hb.vsStatic >= 0 ? '+' : ''}${hb.vsStatic.toFixed(2)} %/week over ${opts.history!.evaluated} days — no real edge`)
   }
   // a symbol-level doubt (e.g. disabled) only matters when the brake would change something
-  return { tilt: { value: tilt, flags: tf }, brake: { value: brake, flags: brake !== row.w ? bf : [], note: bnote } }
+  if (anchor && brake === row.w && pct !== null && pct <= BRAKE_LOSS_PCT) {
+    bnote = `already braked on ${new Date(anchor.since).toISOString().slice(0, 10)} (${fmtNum(anchor.base)} → ${fmtNum(row.w)}); it will not halve again while the same loss window is in force`
+  }
+  const tnote = anchorNote
+  return {
+    tilt: { value: tilt, flags: tf, note: tnote },
+    brake: { value: brake, flags: brake !== row.w ? bf : [], note: [bnote, anchorNote].filter(Boolean).join(' · ') || undefined },
+  }
 }

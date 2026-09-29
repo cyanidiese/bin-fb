@@ -10,6 +10,7 @@ import asyncio
 import types
 
 import pytest
+from unittest.mock import AsyncMock, patch
 
 from bot.order_executor import OpenOrder, OrderExecutor
 
@@ -122,6 +123,7 @@ def test_reconcile_returns_zero_on_api_error_so_caller_keeps_signalled_price():
     assert _run(ex._reconcile_entry_fill('INJUSDT', '123')) == 0.0
 
 
+@patch('bot.order_executor.asyncio.sleep', new=AsyncMock())  # skip the 0.25 s retry waits
 def test_reconcile_retries_while_trade_records_are_empty():
     ex, calls = _executor_with_trades([])
     assert _run(ex._reconcile_entry_fill('INJUSDT', '123')) == 0.0

@@ -43,8 +43,13 @@ def test_appends_multiple_entries(tmp_path):
 
 
 def test_caps_at_max_entries(tmp_path):
+    # Seeded at the cap in one write, then filled past it through record(): appending all
+    # MAX_ENTRIES one by one rewrote the file each time and took ~48 s.
     path = tmp_path / 'bh.json'
-    for i in range(MAX_ENTRIES + 5):
+    path.write_text(json.dumps([
+        {'timestamp': '2026-01-01T00:00:00+00:00', 'balance': float(i), 'trigger': 'startup'}
+        for i in range(MAX_ENTRIES)]))
+    for i in range(MAX_ENTRIES, MAX_ENTRIES + 5):
         record(path, balance=float(i), trigger='startup')
     data = json.loads(path.read_text())
     assert len(data) == MAX_ENTRIES

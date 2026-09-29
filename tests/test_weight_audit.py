@@ -103,16 +103,24 @@ class TestHistory:
         audit(store, {'INJUSDT': 5, 'REZUSDT': 10})
         assert [c['symbol'] for c in history(store, 'INJUSDT')] == ['INJUSDT']
 
-    def test_it_is_capped(self, store):
-        audit(store, {'X': 0})
-        for i in range(1, MAX_CHANGES + 50):
+    @staticmethod
+    def _full(store):
+        # A store already at the cap, written once; audit() then pushes it over. Driving
+        # all MAX_CHANGES through audit() rewrote the file each time (~3.6 s per test).
+        store.write_text(json.dumps({
+            'snapshot': {'X': float(MAX_CHANGES - 1)},
+            'changes': [{'timestamp': '2026-01-01T00:00:00+00:00', 'symbol': 'X',
+                         'old': float(i - 1), 'new': float(i), 'source': 'seed'}
+                        for i in range(MAX_CHANGES)]}))
+        for i in range(MAX_CHANGES, MAX_CHANGES + 50):
             audit(store, {'X': i})
+
+    def test_it_is_capped(self, store):
+        self._full(store)
         assert len(history(store)) == MAX_CHANGES
 
     def test_the_cap_keeps_the_newest(self, store):
-        audit(store, {'X': 0})
-        for i in range(1, MAX_CHANGES + 50):
-            audit(store, {'X': i})
+        self._full(store)
         assert history(store)[-1]['new'] == float(MAX_CHANGES + 49)
 
 

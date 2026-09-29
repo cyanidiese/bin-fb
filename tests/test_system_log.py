@@ -19,7 +19,11 @@ def test_creates_file_and_appends(tmp_path):
 
 def test_rolling_cap(tmp_path):
     path = tmp_path / "log.json"
-    for i in range(MAX_ENTRIES + 10):
+    # Seeded at the cap in one write, then pushed over it through append_entry().
+    path.write_text(json.dumps([{"id": str(i), "timestamp": "2026-01-01T00:00:00+00:00", "level": "info",
+                                 "title": f"title {i}", "detail": "", "source": "test"}
+                                for i in range(MAX_ENTRIES)]))
+    for i in range(MAX_ENTRIES, MAX_ENTRIES + 10):
         append_entry(path, "info", f"title {i}", "", "test")
     entries = json.loads(path.read_text())
     assert len(entries) == MAX_ENTRIES

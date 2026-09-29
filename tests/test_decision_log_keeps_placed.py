@@ -43,7 +43,8 @@ def test_trim_respects_the_row_cap():
 def test_trim_preserves_chronological_order():
     rows = _rows(6000, 30)
     kept = _trim(rows)
-    idx = [rows.index(e) for e in kept]
+    pos = {id(e): i for i, e in enumerate(rows)}   # rows.index() per row was O(n^2)
+    idx = [pos[id(e)] for e in kept]
     assert idx == sorted(idx)
 
 

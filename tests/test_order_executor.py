@@ -52,6 +52,7 @@ async def test_round_quantity_below_min_returns_zero():
 # --- place_order with mocked exchange ---
 
 @pytest.mark.asyncio
+@patch('bot.order_executor.asyncio.sleep', new=AsyncMock())  # skip the 0.25 s fill-retry waits
 async def test_place_order_happy_path():
     ex = make_executor(with_feed=True)
     ex._lot_cache['BTCUSDT'] = {'step_size': '0.001', 'min_qty': 0.001, 'min_notional': 0.0, 'tick_size': '0.01', 'max_qty': 0.0}
@@ -371,6 +372,7 @@ async def test_check_symbol_candle_skips_if_already_closing():
 
 
 @pytest.mark.asyncio
+@patch('bot.order_executor.asyncio.sleep', new=AsyncMock())  # skip the 0.25 s fill-retry waits
 async def test_place_order_caps_notional():
     """When notional > max_order_notional_usdt, OpenOrder.quantity is reduced so PnL is accurate."""
     ex = make_executor(with_feed=True)

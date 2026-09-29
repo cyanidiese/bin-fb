@@ -41,8 +41,13 @@ def test_skip_entry_without_optional_fields(tmp_path):
 
 
 def test_caps_at_max_entries(tmp_path):
+    # Seeded at the cap in one write (see test_balance_history): ~26 s -> milliseconds.
     path = tmp_path / 'dl.json'
-    for i in range(MAX_ENTRIES + 5):
+    path.write_text(json.dumps([
+        {'timestamp': '2026-01-01T00:00:00+00:00', 'candle_ts': i, 'symbol': 'BTCUSDT',
+         'decision': 'placed', 'reason': '', 'balance': 100.0, 'leverage': 1,
+         'efficiency_score': 0.0} for i in range(MAX_ENTRIES)]))
+    for i in range(MAX_ENTRIES, MAX_ENTRIES + 5):
         record(path, candle_ts=i, symbol='BTCUSDT', decision='placed',
                reason='', balance=100.0, leverage=1, efficiency_score=0.0)
     data = json.loads(path.read_text())

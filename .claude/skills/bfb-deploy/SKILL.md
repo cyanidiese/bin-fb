@@ -100,36 +100,36 @@ stop so they are not force-closed, but never a reason to postpone a deploy.
 git push origin feature/mean-reversion-overlay
 ```
 
-### Step 3 — Graceful stop (SIGTERM)
-
-**Preferred (2026-09-26): `docker stop -t 60 bot bot_mirror`.** It sends the same SIGTERM
-to PID 1 (`main.py`), waits for the graceful handler, and — unlike killing the process from
-inside — does not trigger the `restart: unless-stopped` policy. The in-container kill below
-made Docker restart `bot` on the OLD image for ~30 s before `docker stop` (seen 2026-09-26
-11:19). With `close_positions_on_stop=false`, open real positions are saved to
-`data/restart_positions_{mode}.json` and restored on start; their exchange SL stays live.
-Stop right AFTER a candle has been processed (e.g. :46, :01), never across :00/:15/:30/:45.
-
-Legacy method, kept for reference:
-
-Both bot containers run `main.py` and answer to the same pattern (verified 2026-09-07).
-Run it for **each** container you are about to recreate — swap `bot` for `bot_mirror`:
+### Step 3 — Graceful stop: `docker stop -t 60` ONLY
 
 ```bash
-ssh ... "docker exec bot /bin/sh -c 'for PID in \$(grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"); do kill -TERM \$PID 2>/dev/null && echo \"SIGTERM → \$PID\"; done' 2>/dev/null || echo not_running"
-ssh ... "docker exec bot_mirror /bin/sh -c 'for PID in \$(grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"); do kill -TERM \$PID 2>/dev/null && echo \"SIGTERM → \$PID\"; done' 2>/dev/null || echo not_running"
+ssh ... "docker stop -t 60 bot bot_mirror"
 ```
 
-Skipping the mirror does not corrupt anything, but every hard restart force-closes its open
-virtual positions as `closed_early`, which pollutes preset statistics.
+It sends SIGTERM to PID 1 (`main.py`), waits for the graceful handler, and does not trigger
+the `restart: unless-stopped` policy. With `close_positions_on_stop=false`, open real
+positions are saved to `data/restart_positions_{mode}.json` and restored on start (their
+exchange SL stays live); since 2026-09-29 virtual positions are saved too
+(`data/virtual_open_state_{mode}.json`) and resume instead of closing as `closed_early`.
+Build the new images BEFORE stopping (`docker compose build bot bot_mirror`) so downtime is
+only the restart. Stop right AFTER a candle has been processed (e.g. :46, :01), never across
+:00/:15/:30/:45.
 
-### Step 4 — Wait for exit then stop container
+**NEVER kill `main.py` from inside the container** (`docker exec … kill -TERM`). The process
+exits, Docker's restart policy immediately starts the OLD image again, that start restores
+and deletes the restart file, and the later `docker stop` gives it no chance to save again.
+The new container then finds the positions on the exchange with no record and closes them
+at market as orphans. Happened 2026-09-26 11:19 and again 2026-09-29 14:52: APTUSDT −3.16 and
+ENAUSDT +8.87 USDT closed by the deploy, re-entered at the next candle at worse prices.
 
-Use `for` loop — `sleep N && command` chains are **blocked** by the tool sandbox:
+### Step 4 — Start on the new images
 
 ```bash
-ssh ... "for i in \$(seq 1 20); do PIDS=\$(docker exec bot /bin/sh -c 'grep -rl main.py /proc/*/cmdline 2>/dev/null | grep -o \"[0-9]*\"' 2>/dev/null); [ -z \"\$PIDS\" ] && echo \"Exited after \${i}s\" && break; sleep 1; done; docker stop bot 2>/dev/null || true"
+ssh ... "cd /opt/bot && docker compose up -d --no-deps bot bot_mirror"
 ```
+
+Then confirm in the log: `Startup: N position(s) restored from restart state` (if any were
+open), `Virtual restore: …`, and no `Orphan position closed on startup`.
 
 ### Step 5 — Inspect the working tree, then pull
 

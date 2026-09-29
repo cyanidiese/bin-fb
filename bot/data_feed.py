@@ -35,7 +35,15 @@ class CacheUnreadable(Exception):
 logger = logging.getLogger(__name__)
 
 # REST endpoints
-_FUTURES_REST_TESTNET = 'https://testnet.binancefuture.com/fapi'
+# Test mode REST goes to Binance's current futures testnet host, demo-fapi.binance.com,
+# NOT testnet.binancefuture.com. The old host sits behind CloudFront, and Binance counts
+# weight against CloudFront's shared origin address (15.158.242.x) — measured 2026-09-29
+# on a signed /fapi/v2/account call: X-MBX-USED-WEIGHT-1M 3308 on the old host (other
+# users' traffic; our own calls weigh single digits) vs 5 on demo-fapi, same account and
+# wallet. Every -1003 ban we logged named a 15.158.242.x address. demo-fapi has no
+# CloudFront in front, so only our own traffic (185.237.14.105) counts.
+# Official: developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+_FUTURES_REST_TESTNET = 'https://demo-fapi.binance.com/fapi'
 _FUTURES_REST_LIVE = 'https://fapi.binance.com/fapi'
 
 # WebSocket stream base URLs
@@ -102,15 +110,24 @@ def update_fetch_limit(gap_ms: int, candle_ms: int, max_limit: int) -> int:
     return max_limit
 
 
+def _trading_client(api_key: str, api_secret: str, is_testnet: bool) -> Client:
+    """The REST client for trading. With testnet=True python-binance builds futures URLs
+    from FUTURES_TESTNET_URL and ignores FUTURES_URL, so that is the attribute to set —
+    setting FUTURES_URL (as this code did until 2026-09-29) changed nothing."""
+    client = Client(api_key, api_secret, testnet=is_testnet)
+    if is_testnet:
+        client.FUTURES_TESTNET_URL = _FUTURES_REST_TESTNET
+        client.FUTURES_URL = _FUTURES_REST_TESTNET
+    return client
+
+
 class DataFeed:
     def __init__(self, settings: Settings, live_klines: bool = False):
         self._settings = settings
         self._is_testnet = settings.trading_mode == 'test'
         self._mode_suffix = 'test' if self._is_testnet else 'live'
 
-        self._client = Client(settings.api_key, settings.api_secret, testnet=self._is_testnet)
-        if self._is_testnet:
-            self._client.FUTURES_URL = _FUTURES_REST_TESTNET
+        self._client = _trading_client(settings.api_key, settings.api_secret, self._is_testnet)
 
         # When live_klines=True and running in test mode, kline fetches use the
         # production API (klines are public data; production is far more stable).
@@ -151,9 +168,7 @@ class DataFeed:
         """Re-initialise client and endpoints for a new mode without creating a new DataFeed."""
         self._is_testnet = (mode == 'test')
         self._mode_suffix = 'test' if self._is_testnet else 'live'
-        self._client = Client(api_key, api_secret, testnet=self._is_testnet)
-        if self._is_testnet:
-            self._client.FUTURES_URL = _FUTURES_REST_TESTNET
+        self._client = _trading_client(api_key, api_secret, self._is_testnet)
         self._klines_client = self._client  # reinit always uses the trading client
         self._klines_source = 'testnet' if self._is_testnet else 'production'
         logger.info(f"Kline REST endpoint after reinit: {self._klines_source}")

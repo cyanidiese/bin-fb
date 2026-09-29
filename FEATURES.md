@@ -2371,6 +2371,16 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 
 ---
 
+## Testnet REST via demo-fapi.binance.com (2026-09-29) — the -1003 ban fix
+
+- **What**: test-mode REST now goes to `https://demo-fapi.binance.com/fapi` (Binance's current official futures testnet host) instead of `testnet.binancefuture.com` (`bot/data_feed.py`: `_FUTURES_REST_TESTNET`, `_trading_client`). Live mode and the WebSocket streams are unchanged.
+- **Why**: the old host sits behind CloudFront, and Binance counts rate-limit weight against CloudFront's shared origin address. Every -1003 ban we logged named a 15.158.242.x address, never ours (185.237.14.105).
+  - Measured 2026-09-29 with the same signed `/fapi/v2/account` call on the same account (wallet 2468.49 on both): `X-MBX-USED-WEIGHT-1M` **3308** on the old host (other users' traffic) vs **5** on demo-fapi.
+  - demo-fapi has no CloudFront in front, so only our own traffic counts.
+  - Verified read-only on demo-fapi: account, positionRisk, openAlgoOrders, leverageBracket, exchangeInfo, klines.
+- **Latent bug fixed**: with `testnet=True`, python-binance builds futures URLs from `FUTURES_TESTNET_URL` and ignores `FUTURES_URL`. The old override set `FUTURES_URL`, so it never took effect. `_trading_client` sets both.
+- **Tests**: `tests/test_testnet_rest_host.py`.
+
 ## Virtual/Real Parity (2026-09-29)
 
 Spec: `docs/specs/2026-09-29-virtual-real-parity.md`. Why: over 30 days, real averaged −1.76 %/trade against +0.30 % for the same presets' virtual trades, and a third of the virtual sample was cut short by housekeeping and recorded at about 0 %.

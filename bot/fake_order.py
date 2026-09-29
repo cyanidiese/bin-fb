@@ -290,6 +290,31 @@ class FakeOrder:
                 return 'trail'
         return None
 
+    def protective_stop(self) -> float:
+        """The price at which this order's own logic would currently close it at a loss or
+        locked profit — the level an exchange stop should back up. Trail (when armed and
+        activated), else the fixed partial level (armed, no trail), else the early-loss
+        exit, else the SL; never looser than the SL. Mirrors check()/_check_trail()."""
+        stop = 0.0
+        if self._partial_armed and self._partial_price is not None:
+            if self._trailing_stop_pct > 0:
+                gained = ((self._max_favorable - self.entry_price) if self.side == 'BUY'
+                          else (self.entry_price - self._max_favorable))
+                active = gained > 0 and not (
+                    self._trail_activation_pct > 0
+                    and gained / self.entry_price * 100 < self._trail_activation_pct)
+                if active:
+                    dist = max(self._trailing_stop_pct * gained, self._trail_min_distance)
+                    stop = (self._max_favorable - dist if self.side == 'BUY'
+                            else self._max_favorable + dist)
+            else:
+                stop = self._partial_price
+        elif not self._partial_armed:
+            stop = self._early_exit_price
+        if stop <= 0:
+            return self.sl
+        return max(stop, self.sl) if self.side == 'BUY' else min(stop, self.sl)
+
     @property
     def _early_exit_price(self) -> float:
         """The tighter (closer-to-entry) of the pct-based and amount-based early exit thresholds.

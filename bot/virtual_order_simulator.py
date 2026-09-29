@@ -5,12 +5,14 @@ import collections
 import dataclasses
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from bot.fake_order import FakeOrder
+from bot.order_sizing import real_quantity
 from bot.recommendation_engine import RecommendationEngine
 from config.risk_config import load_risk_config
 from bot import analysis_log
@@ -75,6 +77,7 @@ class VirtualOrderSimulator:
         get_scenario: Optional[Callable[[], str]] = None,
         rank_max: int = _DEFAULT_RANK_MAX,
         is_rank_disabled: Optional[Callable[[str, int], bool]] = None,
+        get_bracket_max: Optional[Callable[[str], int]] = None,
     ) -> None:
         self._mode = mode
         self._all_presets = all_presets
@@ -87,6 +90,9 @@ class VirtualOrderSimulator:
         self._get_scenario = get_scenario
         self._rank_max = rank_max
         self._is_rank_disabled = is_rank_disabled
+        # Exchange leverage ceiling per symbol (OrderExecutor.get_bracket_max) — the same
+        # ceiling a real order is held to. None = Binance's absolute 125.
+        self._get_bracket_max = get_bracket_max
         self._initial_balance = initial_balance
         # symbol -> (monotonic_ts, pct); see _slippage_pct
         self._slippage_cache: dict[str, tuple[float, float]] = {}
@@ -112,6 +118,13 @@ class VirtualOrderSimulator:
 
         # Duplicate-signal skip: records last SL-hit signal per "symbol:preset" key
         self._recent_sl_hit: dict[str, dict] = {}
+        # Real-order cooldowns inherited by ranks >= 2 (V4). Real keys them symbol:side
+        # because it holds one position per symbol; virtual holds one per preset, so the
+        # equivalent key is symbol:preset:side (pause: symbol:preset). Times are epoch ms.
+        self._gate: dict[str, dict] = {
+            'streak': {}, 'streak_until': {}, 'last_loss': {}, 'pause_until': {},
+            'zone_level': {}, 'zone_count': {}, 'zone_until': {},
+        }
         self._lot_cache: dict = {}
 
         # Rank 1 is the real-order slot. It gets a pool so that when a real order is
@@ -256,8 +269,10 @@ class VirtualOrderSimulator:
                 if virtual_only:
                     continue
                 if real_slot_busy:
-                    if symbol in self._rank_open[1]:
-                        await self._evict(symbol, 1, current_price, 'real_order_took_over')
+                    # A rank-1 position of the SAME preset as the real one was already
+                    # evicted above (the all-rank rule). A different preset keeps running
+                    # to its own exit instead of being cut as 'real_order_took_over'
+                    # (spec 2026-09-29 part 2, V5); nothing new opens while real is busy.
                     continue
                 # the preset that would have traded: the manual lock, else the best
                 _r1_name = locked_preset or (
@@ -437,6 +452,14 @@ class VirtualOrderSimulator:
         # available during signal evaluation, not only during sizing (original position was line ~361).
         _risk_cfg = load_risk_config()
 
+        # Real-order gates, inherited by ranks >= 2 so they measure the strategy real
+        # orders actually run (spec 2026-09-29 part 2, V4). Rank 1 is exempt: it exists to
+        # record the signals real refused.
+        if rank >= 2:
+            _blackout = set(_risk_cfg.get('trading_blackout_hours', []) or [])
+            if _blackout and datetime.now(timezone.utc).hour in _blackout:
+                return 'blackout_hour'
+
         try:
             preset_settings = dataclasses.replace(base_settings, **overrides)
             # Mirror live _try_place_order: apply per_symbol_settings on top of preset overrides
@@ -554,6 +577,11 @@ class VirtualOrderSimulator:
                             )
                             return 'duplicate_skip'
 
+        if rank >= 2:
+            _blocked = self._gate_block(symbol, preset_name, side, preset_settings)
+            if _blocked:
+                return _blocked
+
         # Size from the rank pool balance using the same allocation formula as real orders,
         # substituting the rank pool's own balance instead of the real account balance.
         # For BGF scenarios: use score-proportional fraction of the rank pool's deployable budget.
@@ -586,23 +614,23 @@ class VirtualOrderSimulator:
                 )
                 alloc = _max_alloc
 
-        quantity = max(alloc, min_notional) * lev / entry if entry > 0 else 0.0
-
-        # Apply the same per-order notional cap as real orders so virtual PnL is
-        # comparable to real PnL and does not distort the efficiency scoreboard.
-        _max_notional = _risk_cfg.get("max_order_notional_usdt", 0.0)
-        if _max_notional > 0 and quantity * entry > _max_notional:
-            logger.debug(
-                f"[{symbol}] Rank-{rank} virtual notional cap: "
-                f"qty {quantity:.4f} → {_max_notional / entry:.4f} "
-                f"(notional {quantity * entry:.2f} > cap {_max_notional:.2f})"
-            )
-            quantity = _max_notional / entry
-        # Respect Binance per-symbol maxQty so virtual sizes match what real orders can place
-        _max_qty = self._lot_cache.get(symbol, {}).get('max_qty', 0.0)
-        if _max_qty > 0 and quantity > _max_qty:
-            logger.debug(f"[{symbol}] Virtual qty {quantity:.0f} capped to exchange maxQty {_max_qty:.0f}")
-            quantity = _max_qty
+        # Sized exactly as a real order would be (spec 2026-09-29 part 2, V3): the
+        # allocation must fund the minimum notional's margin — if it cannot, raise the
+        # leverage as far as the exchange bracket allows, as _try_place_order does — then
+        # the 1.02 buffer, lot-step rounding, min-notional bump and notional cap.
+        _min_margin = min_notional / lev if lev > 0 else 0.0
+        if alloc < _min_margin and min_notional > 0 and alloc > 0:
+            _bracket = self._get_bracket_max(symbol) if self._get_bracket_max else 125
+            _lev_needed = math.ceil(min_notional / alloc)
+            if _lev_needed > _bracket:
+                return 'insufficient_balance'
+            lev = _lev_needed
+            _min_margin = min_notional / lev
+        _trade_margin = max(alloc, _min_margin)
+        quantity = real_quantity(
+            _trade_margin, lev, entry, self._lot_cache.get(symbol, {}),
+            float(_risk_cfg.get("max_order_notional_usdt", 0.0) or 0.0),
+        )
         if quantity <= 0:
             return 'zero_qty'
 
@@ -624,6 +652,20 @@ class VirtualOrderSimulator:
             # could not be compared between the two.
             'signal_level': rec.getLevel() or 0,
             'rank_balance_at_open': self._rank_balance[rank],
+            # Candles this position has been checked against (V1) — also drives
+            # max_losing_candles, and survives a restart with the record.
+            'candles_seen': 0,
+            # The preset's cooldown rules, so the close can update the gate state (V4).
+            'gates': {
+                'loss_streak_max': int(getattr(preset_settings, 'loss_streak_max', 0) or 0),
+                'loss_streak_cooldown_candles': int(getattr(preset_settings, 'loss_streak_cooldown_candles', 0) or 0),
+                'global_pause_trigger_candles': int(getattr(preset_settings, 'global_pause_trigger_candles', 0) or 0),
+                'global_pause_candles': int(getattr(preset_settings, 'global_pause_candles', 0) or 0),
+                'zone_sl_max': int(getattr(preset_settings, 'zone_sl_max', 0) or 0),
+                'zone_sl_cooldown_candles': int(getattr(preset_settings, 'zone_sl_cooldown_candles', 0) or 0),
+                'duplicate_skip_pct': float(getattr(preset_settings, 'duplicate_skip_pct', 0.0) or 0.0),
+                'tf_ms': _tf_to_ms(base_settings.timeframe),
+            },
             'open_time': datetime.now(timezone.utc).isoformat(),
             'status': 'open',
             'close_price': None,
@@ -741,6 +783,8 @@ class VirtualOrderSimulator:
                 'sl': record.get('sl', 0.0),
                 'tp': record.get('tp', 0.0),
             }
+        if rank >= 2:
+            self._gate_update(symbol, record, result, pnl, int(when.timestamp() * 1000))
         await self._append_rank_closed(symbol, rank, record)
         logger.debug(
             f"[{symbol}] Rank-{rank} closed: {record['preset_name']} "
@@ -755,6 +799,92 @@ class VirtualOrderSimulator:
             'close_price': close_price,
             'side': record['side'],
         }
+
+    # ------------------------------------------------------------------ #
+    # Candle check and inherited real-order gates                         #
+    # ------------------------------------------------------------------ #
+
+    async def check_candle(
+        self, symbol: str, candle_open: float, high: float, low: float,
+        candle_close: float, close_ms: int,
+    ) -> list[dict]:
+        """The candle-level check real positions get every close (check_symbol_candle):
+        a wick between two ticks still closes the trade, the same-candle SL/TP rule
+        applies, and max_losing_candles counts candles. Virtual had ticks only.
+        A position opened at/after the candle's close is skipped — that candle ended
+        before it existed (spec 2026-09-29 part 2, V1)."""
+        closed: list[dict] = []
+        now = datetime.now(timezone.utc)
+        for rank in range(1, self._rank_max + 1):
+            record = self._rank_open[rank].get(symbol)
+            fake = self._rank_fake[rank].get(symbol)
+            if record is None or fake is None:
+                continue
+            try:
+                opened_ms = int(datetime.fromisoformat(record['open_time']).timestamp() * 1000)
+            except (KeyError, TypeError, ValueError):
+                opened_ms = 0
+            if close_ms and opened_ms >= close_ms:
+                continue
+            record['candles_seen'] = int(record.get('candles_seen') or 0) + 1
+            result = fake.check(high, low, record['candles_seen'],
+                                candle_open=candle_open, candle_close=candle_close)
+            if result is not None:
+                closed.append(await self._close_position(
+                    symbol, rank, result, fake.close_price or candle_close, now))
+        return closed
+
+    def _gate_block(self, symbol: str, preset: str, side: str, ps) -> str | None:
+        """Mirror of the real cooldown checks in _try_place_order."""
+        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        sk = f"{symbol}:{preset}:{side}"
+        if self._gate['streak_until'].get(sk, 0) >= now:
+            return 'loss_streak_cooldown'
+        if int(getattr(ps, 'loss_streak_max', 0) or 0) > 0:
+            if self._gate['pause_until'].get(f"{symbol}:{preset}", 0) >= now:
+                return 'global_pause'
+            if (int(getattr(ps, 'zone_sl_max', 0) or 0) > 0
+                    and self._gate['zone_until'].get(sk, 0) >= now):
+                return 'zone_sl_cooldown'
+        return None
+
+    def _gate_update(self, symbol: str, record: dict, result: str, pnl: float, ts: int) -> None:
+        """Mirror of main._update_loss_streak, keyed per preset."""
+        g = record.get('gates') or {}
+        if not g:
+            return
+        preset, side = record['preset_name'], record['side']
+        sk = f"{symbol}:{preset}:{side}"
+        other = f"{symbol}:{preset}:{'SELL' if side == 'BUY' else 'BUY'}"
+        tf = int(g.get('tf_ms') or 900_000)
+        is_loss = result == 'loss' or (result in ('trail', 'partial') and pnl < 0)
+        if is_loss:
+            cnt = self._gate['streak'].get(sk, 0) + 1
+            self._gate['last_loss'][sk] = ts
+            self._gate['streak'][sk] = cnt
+            if g['loss_streak_max'] > 0 and cnt >= g['loss_streak_max']:
+                self._gate['streak_until'][sk] = ts + g['loss_streak_cooldown_candles'] * tf
+                self._gate['streak'][sk] = 0
+            if g['global_pause_trigger_candles'] > 0:
+                other_ts = self._gate['last_loss'].get(other, 0)
+                if other_ts > 0 and (ts - other_ts) <= g['global_pause_trigger_candles'] * tf:
+                    self._gate['pause_until'][f"{symbol}:{preset}"] = ts + g['global_pause_candles'] * tf
+        else:
+            self._gate['streak'][sk] = 0
+        if g['zone_sl_max'] > 0 and result == 'loss':
+            sl_price = float(record.get('sl') or 0.0)
+            if sl_price > 0:
+                tol = g['duplicate_skip_pct'] / 100.0
+                prev = self._gate['zone_level'].get(sk, 0.0)
+                if prev > 0 and abs(sl_price - prev) / max(prev, 1e-10) <= tol:
+                    self._gate['zone_count'][sk] = self._gate['zone_count'].get(sk, 0) + 1
+                else:
+                    self._gate['zone_count'][sk] = 1
+                    self._gate['zone_level'][sk] = sl_price
+                if self._gate['zone_count'][sk] >= g['zone_sl_max']:
+                    self._gate['zone_until'][sk] = ts + g['zone_sl_cooldown_candles'] * tf
+                    self._gate['zone_count'][sk] = 0
+                    self._gate['zone_level'][sk] = 0.0
 
     # ------------------------------------------------------------------ #
     # Restart persistence — open positions survive a stop/start           #
@@ -777,7 +907,7 @@ class VirtualOrderSimulator:
                 positions.append({'rank': rank, 'symbol': symbol,
                                   'record': record, 'fake': fake.get_state()})
         state = {'saved_at_ms': int(datetime.now(timezone.utc).timestamp() * 1000),
-                 'positions': positions}
+                 'positions': positions, 'gates': self._gate}
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix('.json.tmp')
         tmp.write_text(json.dumps(state))
@@ -802,6 +932,9 @@ class VirtualOrderSimulator:
             logger.warning(f"Virtual open state unreadable ({path}): {exc}")
             return 0, []
         saved_at_ms = int(state.get('saved_at_ms') or 0)
+        for _k, _v in (state.get('gates') or {}).items():
+            if _k in self._gate and isinstance(_v, dict):
+                self._gate[_k].update(_v)
         wanted = set(symbols)
         closed: list[tuple[str, dict]] = []
         restored = dropped = 0
@@ -840,7 +973,6 @@ class VirtualOrderSimulator:
             opened_ms = int(datetime.fromisoformat(record['open_time']).timestamp() * 1000)
         except (KeyError, TypeError, ValueError):
             opened_ms = saved_at_ms
-        idx = fake.open_candle
         for k in klines:
             try:
                 close_ms = int(k[6])
@@ -850,8 +982,8 @@ class VirtualOrderSimulator:
                 continue
             if close_ms > int(datetime.now(timezone.utc).timestamp() * 1000):
                 break  # the forming candle; ticks take over from here
-            idx += 1
-            result = fake.check(float(k[2]), float(k[3]), idx,
+            record['candles_seen'] = int(record.get('candles_seen') or 0) + 1
+            result = fake.check(float(k[2]), float(k[3]), record['candles_seen'],
                                 candle_open=float(k[1]), candle_close=float(k[4]))
             if result is not None:
                 when = datetime.fromtimestamp(close_ms / 1000, tz=timezone.utc)

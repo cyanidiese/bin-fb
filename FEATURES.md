@@ -2397,6 +2397,33 @@ Spec: `docs/specs/2026-09-29-virtual-real-parity.md`. Why: over 30 days, real av
   - Evidence so far: a 24h limit replayed on real trades was +74 USDT over 9 trades, and 12h was −91 over 22.
 - **Tests**: `tests/test_virtual_persistence.py`.
 
+### Part 2 — full parity pass (2026-09-29)
+
+Rule: change real where it can adopt virtual's behaviour; otherwise virtual inherits real. Rank 1 keeps recording the signals real refused. Tests: `tests/test_parity_part2.py`.
+
+- **V1 — candle high/low check for virtual.** `VirtualOrderSimulator.check_candle()` runs at every candle close, called from `main._virtual_candle_check` on both the normal and the disabled-symbol candle paths.
+  - A wick between ticks now closes virtual trades, as it does real ones.
+  - The same-candle SL/TP rule applies, and `max_losing_candles` counts candles.
+  - It skips positions opened after the candle closed.
+  - The per-position counter `candles_seen` is also used by the restart replay.
+- **V2 — leverage ceiling.** Virtual now uses `order_executor.get_bracket_max(sym)` instead of 125.
+- **V3 — sizing.** `bot/order_sizing.real_quantity()` sizes virtual exactly as real: ×1.02, floor to the lot step and maxQty, one-step bump to min notional, then the notional cap floored to the step.
+  - If the allocation can't fund the minimum notional's margin, leverage is raised up to the bracket.
+  - If even that isn't enough, the virtual order is skipped as `insufficient_balance`.
+- **V4 — real gates inherited by ranks ≥ 2.**
+  - Blackout hours (`blackout_hour`).
+  - Loss-streak / global-pause / zone-SL cooldowns (`loss_streak_cooldown`, `global_pause`, `zone_sl_cooldown`), keyed symbol:preset:side and driven by the preset's own virtual closes (`_gate_block`, `_gate_update`). The gate state is persisted in `data/virtual_open_state_{mode}.json`.
+  - Profit-factor and drawdown hard stop stay real-only (account-level).
+- **V5 — rank 1 when a real order opens.** A rank-1 position of a *different* preset keeps running to its own exit. The same preset is still evicted by the all-rank rule.
+- **R1 — duplicate-SL clock.** Real counts from the SL-hit candle, as virtual does.
+- **R2 — real candle counter.** Saved with the restart state and restored.
+- **R3 — exit slippage enabler.** Real close records include `exit_trigger_price` (the software decision price); `close_price` remains the fill.
+- **R4 — exchange SL follows the software stop.** `OrderExecutor.sync_exchange_stop()` runs each candle close (not on virtual-only instances), using `FakeOrder.protective_stop()` (trail → partial → early-loss exit → SL).
+  - The new STOP_MARKET is placed `exchange_sl_buffer_pct` (0.1) beyond the software stop, and only when it is tighter by `exchange_sl_min_move_pct` (0.1 % of price).
+  - New stop first, then the old one is cancelled; a failed cancel is queued and retried.
+  - Skipped while rate-limit banned, or when the stop would trigger at once.
+  - Config (per mode): `exchange_sl_follow_trail` (default true), `exchange_sl_buffer_pct`, `exchange_sl_min_move_pct`. `OpenOrder.exchange_sl_price` tracks the resting stop.
+
 ## State Snapshots (2026-09-28)
 
 - **What**: `scripts/snapshot_state.py` (host, stdlib only, read-only) writes one JSON per run to `snapshots/<UTC>.json`. Run it before and after any change whose impact should be measured. `--label "..."` adds a note. `--compare A.json B.json` prints, A→B: changed settings (flattened key paths), balance, real and rank-1 virtual results over 7d/30d (n, win%, PnL), and decision-log counts.

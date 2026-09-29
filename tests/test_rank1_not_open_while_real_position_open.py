@@ -75,13 +75,22 @@ class TestBehaviour:
         await _candle(sim, real_slot_busy=True)
         assert 'BTCUSDT' not in sim._rank_open[1]
 
-    async def test_an_open_rank_1_position_is_evicted_when_the_slot_becomes_busy(self, tmp_path):
-        """This is the observed bug: the stand-in kept running beside a real trade."""
+    async def test_an_open_rank_1_position_is_evicted_when_real_trades_its_preset(self, tmp_path):
+        """The observed bug: the stand-in ran beside a real trade on the SAME preset."""
         sim = make_simulator(tmp_path)
         await _candle(sim, real_slot_busy=False)
-        assert 'BTCUSDT' in sim._rank_open[1]
-        await _candle(sim, real_slot_busy=True)
-        assert 'BTCUSDT' not in sim._rank_open[1], 'stand-in ran alongside a real trade'
+        assert sim._rank_open[1]['BTCUSDT']['preset_name'] == 'preset_a'
+        await _candle(sim, real_slot_busy=True, real_preset='preset_a')
+        assert 'BTCUSDT' not in sim._rank_open[1], 'stand-in ran alongside its own real trade'
+
+    async def test_a_different_preset_at_rank_1_runs_to_its_own_exit(self, tmp_path):
+        """2026-09-29 (parity V5): cutting it as 'real_order_took_over' recorded an exit
+        at a random price. A different preset is not a duplicate sample; it keeps running
+        and nothing new opens at rank 1 while real is busy."""
+        sim = make_simulator(tmp_path)
+        await _candle(sim, real_slot_busy=False)
+        await _candle(sim, real_slot_busy=True, real_preset='preset_c')
+        assert sim._rank_open[1]['BTCUSDT']['preset_name'] == 'preset_a'
 
     async def test_the_real_orders_preset_is_not_opened_at_any_rank(self, tmp_path):
         """The rule is symbol+preset. preset_b sits at rank 2 in this harness."""

@@ -85,6 +85,9 @@ class OpenOrder:
     # the "Before" figure in the trade-close notification; balance_at_open above is
     # the allocated per-symbol trade cap, which is a different (much smaller) number.
     wallet_at_open: float = 0.0
+    # Trigger price of the stop currently resting on the exchange (the SL at entry, then
+    # wherever sync_exchange_stop moved it). 0.0 = none / unknown.
+    exchange_sl_price: float = 0.0
 
 
 # Both startup callers — check_symbols_on_exchange() and _ensure_lot_size() — pull the
@@ -138,6 +141,7 @@ class OrderExecutor:
         self._bracket_max: dict[str, int] = {}  # symbol → max leverage from first bracket
         self._candle_index: int = 0  # used by check_all_orders (legacy, single-symbol tests)
         self._symbol_candle_index: dict[str, int] = {}  # per-symbol candle counter for check_symbol_candle
+        self._last_tick: dict[str, float] = {}  # latest tick price per symbol (sync_exchange_stop)
         self._closing: set[str] = set()
 
         cfg = load_risk_config()
@@ -305,6 +309,8 @@ class OrderExecutor:
                 if sl > 0:
                     sl_order_id = await self._place_sl_on_exchange(symbol, side, rounded_qty, sl)
                     self._open_orders[symbol].sl_order_id = sl_order_id
+                    if sl_order_id:
+                        self._open_orders[symbol].exchange_sl_price = sl
                 self._record_success(symbol)
                 logger.info(
                     f"Order placed: {symbol} {side} qty={rounded_qty} "
@@ -446,7 +452,8 @@ class OrderExecutor:
         self._pending_close_logged.pop(symbol, None)
 
         pnl = self._calc_pnl(open_order, actual_close_price)
-        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl)
+        self._record_real_order_close(symbol, open_order, actual_close_price, result, pnl,
+                                      exit_trigger_price=software_close_price)
         info = {
             "symbol": symbol,
             "preset_name": open_order.preset_name,
@@ -540,6 +547,7 @@ class OrderExecutor:
 
     async def check_symbol_price(self, symbol: str, current_price: float) -> list[dict]:
         """Call on every price tick for a specific symbol. Checks that symbol's FakeOrder only."""
+        self._last_tick[symbol] = current_price
         if self._states.get(symbol) == OrderState.PLACING:
             return []
         fake_order = self._fake_orders.get(symbol)
@@ -696,6 +704,8 @@ class OrderExecutor:
             state[symbol] = {
                 'open_order': _dc.asdict(order),
                 'fake_order': fake.get_state() if fake else None,
+                # max_losing_candles counts on this; a restart used to reset it to 0 (R2)
+                'candle_index': self._symbol_candle_index.get(symbol, 0),
             }
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix('.json.tmp')
@@ -722,6 +732,8 @@ class OrderExecutor:
                 fake_state = data.get('fake_order')
                 if fake_state:
                     self._fake_orders[symbol] = FakeOrder.from_state(fake_state)
+                if data.get('candle_index'):
+                    self._symbol_candle_index[symbol] = int(data['candle_index'])
                 logger.info(
                     f"[{symbol}] Restored open position: {order.side} entry={order.entry_price} "
                     f"SL={order.sl_price} TP={order.tp_price} preset={order.preset_name}"
@@ -797,6 +809,7 @@ class OrderExecutor:
         close_price: float,
         result: str,
         pnl_usdt: float,
+        exit_trigger_price: float | None = None,
     ) -> None:
         if self._project_root is None:
             return
@@ -824,6 +837,9 @@ class OrderExecutor:
             'fee_usdt': self._order_fee(
                 order.quantity, self._effective_entry(order), close_price),
             'result': result,
+            # The price the software decided to exit at; close_price is the fill. Their
+            # gap is the exit slippage virtual orders do not model yet (parity R3).
+            'exit_trigger_price': exit_trigger_price,
             'balance_at_open': order.balance_at_open,
             'wallet_at_open': order.wallet_at_open,
             'signal_level': order.signal_level,
@@ -839,6 +855,53 @@ class OrderExecutor:
     # ------------------------------------------------------------------ #
     # Exchange integration                                                 #
     # ------------------------------------------------------------------ #
+
+    async def sync_exchange_stop(
+        self, symbol: str, buffer_pct: float = 0.1, min_move_pct: float = 0.1,
+    ) -> bool:
+        """Move the exchange stop to follow the software stop (parity R4).
+
+        The exchange stop used to stay at the entry SL while the software trail
+        tightened, so an exit the software could not send (a ban, an outage) fell back to
+        the original, wider stop. It is re-placed `buffer_pct` beyond the software stop —
+        the software normally exits first and labels the result — only when that is
+        tighter by at least `min_move_pct` of price. New stop first, then cancel the old
+        one, so the position is never unprotected; both are reduceOnly. Returns True
+        when the stop was moved."""
+        order = self._open_orders.get(symbol)
+        fake = self._fake_orders.get(symbol)
+        if (order is None or fake is None or self._feed is None or not order.sl_order_id
+                or symbol in self._closing or symbol in self._pending_close):
+            return False
+        _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
+        if rl_guard.blocked_for(_key) > 0:
+            return False
+        soft = fake.protective_stop()
+        if soft <= 0:
+            return False
+        buf = buffer_pct / 100.0
+        target = soft * (1 - buf) if order.side == 'BUY' else soft * (1 + buf)
+        current = order.exchange_sl_price or order.sl_price
+        price = self._last_tick.get(symbol) or 0.0
+        ref = price if price > 0 else soft
+        tighter = target > current if order.side == 'BUY' else target < current
+        if not tighter or abs(target - current) < ref * min_move_pct / 100.0:
+            return False
+        # A stop at or through the market would fire at once; the software exit owns that.
+        if price > 0 and ((order.side == 'BUY' and target >= price)
+                          or (order.side == 'SELL' and target <= price)):
+            return False
+        new_id = await self._place_sl_on_exchange(symbol, order.side, order.quantity, target)
+        if not new_id:
+            return False
+        old_id = order.sl_order_id
+        order.sl_order_id = new_id
+        order.exchange_sl_price = target
+        await self._cancel_exchange_order(symbol, old_id)
+        logger.info(
+            f"[{symbol}] Exchange stop moved {current:.6g} → {target:.6g} "
+            f"(software stop {soft:.6g}, buffer {buffer_pct}%)")
+        return True
 
     async def _place_sl_on_exchange(
         self, symbol: str, side: str, quantity: float, sl_price: float

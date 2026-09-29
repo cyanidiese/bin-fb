@@ -408,15 +408,18 @@ async def run() -> None:
     all_presets = ALL_PRESETS
 
     def _virtual_lev(sym: str) -> int:
+        # The same exchange bracket ceiling a real order is held to (was a best-case 125).
+        # Spec 2026-09-29-virtual-real-parity part 2, V2.
+        bracket = order_executor.get_bracket_max(sym)
         override = symbol_registry.get_leverage_override(sym)
         if override > 0:
-            return min(override, 125)
+            return min(override, bracket)
         score = virtual_tracker.get_efficiency_score(sym)
         return scenario.get_leverage(
             sym, score,
             risk_cfg.get("base_leverage", 1),
             risk_cfg.get("max_leverage_level", 5),
-            125,  # Binance absolute max; virtual sim uses best-case ceiling
+            bracket,
         )
 
     # min_notionals populated later after exchange fetch; default to 5 USDT until then
@@ -434,6 +437,7 @@ async def run() -> None:
         get_scenario=lambda: _active_scenario_name,
         rank_max=len(all_presets),
         is_rank_disabled=symbol_registry.is_rank_disabled,
+        get_bracket_max=order_executor.get_bracket_max,
     )
 
     _wr_cfg = risk_cfg.get("weight_rebalancer", {})
@@ -797,6 +801,17 @@ async def run() -> None:
                 continue
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
+
+    async def _virtual_candle_check(symbol: str, kline: list) -> None:
+        """Candle-level exit check for virtual positions, as real ones get (V1)."""
+        try:
+            closed = await virtual_order_simulator.check_candle(
+                symbol, float(kline[1]), float(kline[2]), float(kline[3]), float(kline[4]),
+                int(kline[6]) if len(kline) > 6 and kline[6] else 0,
+            )
+            _record_virtual_closes(symbol, closed)
+        except Exception as _vc_exc:
+            logger.warning(f"[{symbol}] Virtual candle check failed: {_vc_exc}")
 
     # Virtual positions survive a restart: re-open what was saved and replay the candles
     # that closed meanwhile, so an exit during the downtime lands on its own candle.
@@ -1701,6 +1716,7 @@ async def run() -> None:
             # collect preset performance data to inform future re-enablement decisions.
             # Placement logic is skipped entirely.
             recs = analyzer.add_candle(kline)
+            await _virtual_candle_check(symbol, kline)
             _locked_preset = locked_presets_for(risk_cfg, mode_manager.current_mode).get(symbol)
             await virtual_order_simulator.on_candle_close(
                 symbol=symbol,
@@ -2096,13 +2112,25 @@ async def run() -> None:
             # skip a position placed after this candle closed (earlier in this handler)
             candle_close_ms=int(candle_to_add[6]) if len(candle_to_add) > 6 and candle_to_add[6] else None,
         )
+        # The exchange stop follows the software stop, so an exit the software cannot
+        # send (ban, outage) still lands near where virtual would exit (parity R4).
+        if not candle_closed and not _virtual_only and risk_cfg.get('exchange_sl_follow_trail', True):
+            try:
+                await order_executor.sync_exchange_stop(
+                    symbol,
+                    buffer_pct=float(risk_cfg.get('exchange_sl_buffer_pct', 0.1)),
+                    min_move_pct=float(risk_cfg.get('exchange_sl_min_move_pct', 0.1)),
+                )
+            except Exception as _xs_exc:
+                logger.warning(f"[{symbol}] Exchange stop sync failed: {_xs_exc}")
         for c in candle_closed:
             if not (c['pnl_usdt'] == 0.0 and c.get('close_price') == c.get('entry_price')):
                 virtual_tracker.record_closed_trade(c['symbol'], c['preset_name'], c['pnl_usdt'])
             if c.get('result') == 'loss':
                 _sig = _pending_signals.get(c['symbol'])
                 if _sig and _sig['preset_name'] == c.get('preset_name'):
-                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
+                    # counted from the SL-hit candle, as virtual counts it (parity R1)
+                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = {**_sig, 'candle_ts': candle_ts}
             _update_loss_streak(c, candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()
@@ -2159,6 +2187,7 @@ async def run() -> None:
         # not the symbol: every other preset keeps collecting comparison data.
         _open_real = order_executor.get_open_orders().get(symbol)
         _real_preset = _open_real.preset_name if _open_real else None
+        await _virtual_candle_check(symbol, candle_to_add)
         await virtual_order_simulator.on_candle_close(
             symbol=symbol,
             analyzer=analyzer,
@@ -2214,7 +2243,8 @@ async def run() -> None:
             if c.get('result') == 'loss':
                 _sig = _pending_signals.get(c['symbol'])
                 if _sig and _sig['preset_name'] == c.get('preset_name'):
-                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = _sig
+                    # counted from the SL-hit candle, as virtual counts it (parity R1)
+                    _recent_sl_hit[f"{c['symbol']}:{_sig['preset_name']}"] = {**_sig, 'candle_ts': _approx_candle_ts}
             _update_loss_streak(c, _approx_candle_ts)
             scenario.record_closed(c['symbol'], c.get('leverage', 1))
             _push_scenario_info()

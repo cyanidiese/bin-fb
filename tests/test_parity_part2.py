@@ -13,9 +13,8 @@ from bot.order_executor import OpenOrder
 from bot.order_sizing import real_quantity
 from bot.rate_limit_guard import guard as rl_guard
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_order_executor import make_executor  # noqa: E402
-from test_virtual_order_simulator import (  # noqa: E402
+from tests.factories import make_executor  # noqa: E402
+from tests.factories import (  # noqa: E402
     make_analyzer, make_preset_settings, make_rec, make_simulator,
 )
 

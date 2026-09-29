@@ -83,74 +83,9 @@ def test_seed_from_backtest_seeds_new_symbol_even_if_other_exists(tmp_path):
 # ── VirtualOrderSimulator rank-based tests ────────────────────────────────
 
 from bot.virtual_order_simulator import VirtualOrderSimulator
-
-
-def make_vt_with_scores(scores: dict):
-    """Return a VirtualTracker mock that returns per-preset efficiency scores."""
-    vt = MagicMock()
-    vt.get_preset_efficiency.side_effect = lambda symbol, name: scores.get(name, 0.0)
-    # Ranking uses the tier-aware key; tier 1 for all keeps value as the tiebreaker.
-    vt.get_preset_rank_key.side_effect = lambda symbol, name: (1, scores.get(name, 0.0))
-    return vt
-
-
-def make_simulator(tmp_path, initial_balance=1000.0, rank_max=4, scores=None):
-    """
-    3 presets ranked preset_a > preset_b > preset_c by default.
-    rank_max=4 means we track ranks 2, 3, 4 (rank 1 = real, not tracked here).
-    """
-    if scores is None:
-        scores = {'preset_a': 3.0, 'preset_b': 2.0, 'preset_c': 1.0}
-    vt = make_vt_with_scores(scores)
-    return VirtualOrderSimulator(
-        mode='test',
-        all_presets={'preset_a': {}, 'preset_b': {}, 'preset_c': {}},
-        project_root=tmp_path,
-        get_leverage=lambda sym: 1,
-        initial_balance=initial_balance,
-        virtual_tracker=vt,
-        min_notionals={'BTCUSDT': 5.0},
-        rank_max=rank_max,
-    )
-
-
-def make_rec(side='BUY', entry=50000.0, tp=55000.0, sl=48000.0):
-    rec = MagicMock()
-    rec.getSide.return_value = side
-    rec.getEntryPrice.return_value = entry
-    rec.getTarget.return_value = tp
-    rec.getStop.return_value = sl
-    rec.getLevel.return_value = 1
-    rec.getType.return_value = MagicMock(value='test_signal')
-    return rec
-
-
-def make_analyzer(price=50000.0):
-    a = MagicMock()
-    a.get_current_price.return_value = price
-    a.get_trend.return_value = MagicMock()
-    a.get_klines.return_value = []
-    return a
-
-
-def make_preset_settings():
-    """Return a MagicMock preset settings with all filter thresholds disabled (0 = off)."""
-    s = MagicMock()
-    s.tp_multiplier = 1.0
-    s.max_profit_pct = 0.0
-    s.min_sl_pct = 0.0
-    s.max_sl_pct = 0.0
-    s.min_sl_atr_mult = 0.0
-    s.atr_lookback = 0
-    s.min_profit_loss_ratio = 0.0
-    s.sl_adjust_to_rr = False
-    s.duplicate_skip_candles = 0
-    s.partial_take_pct = 0.0
-    s.trailing_stop_pct = 0.0
-    s.max_losing_pct = 0.0
-    s.max_losing_candles = 0
-    s.max_losing_amount_usdt = 0.0
-    return s
+from tests.factories import (  # noqa: F401 — re-exported for older imports
+    make_analyzer, make_preset_settings, make_rec, make_simulator, make_vt_with_scores,
+)
 
 
 # ── balance initialisation ─────────────────────────────────────────────────

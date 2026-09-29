@@ -3,20 +3,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from bot.order_executor import OrderExecutor, OrderState, OpenOrder
+from tests.factories import make_executor
 
-
-def make_executor(with_feed=False):
-    settings = MagicMock()
-    settings.partial_take_pct = 0.0
-    settings.trailing_stop_pct = 0.0
-    risk_manager = MagicMock()
-    notifier = MagicMock()
-    feed = None
-    if with_feed:
-        feed = MagicMock()
-        feed.client = MagicMock()
-    with patch('bot.order_executor.load_risk_config', return_value={'consecutive_failure_threshold': 3}):
-        return OrderExecutor('test', settings, risk_manager, notifier, data_feed=feed)
 
 
 # --- State machine ---

@@ -22,9 +22,7 @@ from unittest.mock import MagicMock, patch
 
 from bot.virtual_order_simulator import VirtualOrderSimulator
 
-# Reuse the existing simulator harness rather than duplicating it.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_virtual_order_simulator import (  # noqa: E402
+from tests.factories import (  # noqa: E402
     make_simulator, make_analyzer, make_rec, make_preset_settings,
 )
 

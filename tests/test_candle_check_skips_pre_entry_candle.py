@@ -12,7 +12,7 @@ from pathlib import Path
 
 from bot.fake_order import FakeOrder
 from bot.order_executor import OpenOrder, OrderState
-from tests.test_order_executor import make_executor
+from tests.factories import make_executor
 
 CANDLE_CLOSE_MS = 1_790_000_899_999          # the candle that just closed
 

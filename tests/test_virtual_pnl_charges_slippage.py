@@ -22,7 +22,7 @@ See docs/specs/2026-09-13-slippage-modelling.md.
 """
 import pytest
 
-from tests.test_virtual_order_simulator import make_simulator
+from tests.factories import make_simulator
 
 FEE = 0.0004
 

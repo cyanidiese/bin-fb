@@ -12,7 +12,7 @@ import pytest
 
 from bot.fake_order import FakeOrder
 from bot.virtual_order_simulator import VirtualOrderSimulator
-from tests.test_virtual_order_simulator import (
+from tests.factories import (
     make_analyzer, make_preset_settings, make_rec, make_vt_with_scores,
 )
 

@@ -17,7 +17,7 @@ export type Config = Record<string, unknown>
 /** Keys with one value for both modes, kept in risk_config_shared.json. The rule: shared =
  *  anything that shapes signals, preset ranking or virtual/backtest accounting, plus process
  *  settings. Per mode = everything that decides real orders and money.
- *  Must match SHARED_KEYS in config/risk_config.py (tests/test_shared_settings.py checks). */
+ *  Must match SHARED_KEYS in config/risk_config.py (tests/test_config_and_modes.py::TestSharedSettings checks). */
 export const SHARED_KEYS = [
   // process
   'telegram', 'telegram_notify_interval_s', 'emergency_repeat_interval_s',

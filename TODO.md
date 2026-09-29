@@ -869,7 +869,7 @@ several connections at that symbol count. Size that before attempting it.
 
 - [x] **Diagnose zero-trade silence (3 days post-deploy)** — root cause: dead trailing stop in FakeOrder arming logic
 - [x] **Fix dead trailing stop for trail-only presets** — when partial_take_pct==0, now arm at entry±trail_activation_pct (commit 82ca600)
-- [x] **Add regression tests** — 3 new tests in tests/test_fake_order_trail_activation.py
+- [x] **Add regression tests** — 3 new tests in tests/test_order_executor.py::TestFakeOrderTrailActivation
 - [x] **Deploy fix to feature/backtest-live-parity** — commit 82ca600, graceful stop, Docker rebuild verified
 - [x] **Force-close TIAUSDT SELL** — closed at 0.4047, realized -$66.34 loss (avoided worst-case)
 - [x] **Force-close DOGEUSDT SELL** — closed at 0.07345, realized -$19.27 loss
@@ -1047,7 +1047,7 @@ See full spec: `docs/superpowers/specs/2026-05-04-multi-symbol-design.md`
 See plan: `docs/superpowers/plans/2026-05-07-symbol-discovery.md`
 
 - [x] `bot/symbol_discovery.py` — SymbolDiscovery class: get_precandidates, get_fast_presets, compute_baseline, score_candidate
-- [x] `tests/test_symbol_discovery.py` — 10 tests all passing; uses _DASHBOARD_PUBLIC patch for fs isolation
+- [x] `tests/test_data_feed.py::TestSymbolDiscovery` — 10 tests all passing; uses _DASHBOARD_PUBLIC patch for fs isolation
 - [x] `discover.py` — project-root CLI: ThreadPoolExecutor, SIGTERM via threading.Event, atomic writes
 - [x] `dashboard/app/api/discovery/run/route.ts` — POST: spawn discover.py, track PID, update state on close
 - [x] `dashboard/app/api/discovery/cancel/route.ts` — POST: SIGTERM to running discover.py
@@ -1200,7 +1200,7 @@ See spec: `docs/superpowers/specs/2026-05-09-trades-page-and-virtual-orders-desi
 - [x] Live positions shown with LIVE badge (real=green, virtual=blue)
 
 **Tests:**
-- [x] `tests/test_virtual_order_simulator.py` — lifecycle, dedup, TP/SL, early-close, persistence
+- [x] `tests/test_virtual_simulator.py::TestRankSimulator` — lifecycle, dedup, TP/SL, early-close, persistence
 
 **Session 2026-05-14 refinements (session 16–17):**
 - [x] Virtual tracker `seed_from_backtest` redesign — trade_count vs seeded_winning_usdt separation
@@ -1442,7 +1442,7 @@ Design approved + implemented in session 14.
 ## Session 39 — Strategy Page Time Travel (2026-05-28)
 
 - [x] **replay_api.py** — Python script re-runs Analyzer.build_from_klines(klines[:idx+1]) on stored results JSON
-- [x] **tests/test_replay_api.py** — 6 pytest tests for symbol validation, negative index guard, boundary cases
+- [x] **tests/test_dashboard.py::TestReplayApi** — 6 pytest tests for symbol validation, negative index guard, boundary cases
 - [x] **dashboard/app/api/replay/route.ts** — POST route, validate input, subprocess timeout guard
 - [x] **TimeScrubber.tsx** — React slider with ◀ ▶ buttons, LIVE badge, datetime label, loading state
 - [x] **Integration** — scrubber state in Strategy page, 300ms debounced fetch, data-source switching

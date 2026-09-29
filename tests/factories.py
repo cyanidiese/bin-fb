@@ -3,6 +3,7 @@
 ROOT / src(): the repository root and a cached reader for source files, for the checks
 on code that has no runnable harness (dashboard TypeScript, wiring in main.py).
 """
+import asyncio
 from functools import lru_cache
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,25 @@ from bot.order_executor import OrderExecutor
 from bot.virtual_order_simulator import VirtualOrderSimulator
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_coro(coro):
+    """Drive a coroutine on a fresh loop and restore whatever loop was current before.
+
+    asyncio.run() closes its loop and clears the current-loop slot, which broke later
+    tests that use asyncio.get_event_loop() — failures that depended purely on order.
+    """
+    try:
+        previous = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        previous = None
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(previous)
 
 
 @lru_cache(maxsize=None)

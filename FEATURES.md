@@ -469,7 +469,7 @@ Bot logs no longer leak the Telegram API token. All exception URLs containing th
 A symbol with no readable `backtest_results_{symbol}.json` scores **0.0** in
 `_get_cross_symbol_score`, so it sizes at `base_leverage`.
 
-**Files**: `bot/risk_manager.py`; tests in `tests/test_risk_manager_unknown_symbol.py`
+**Files**: `bot/risk_manager.py`; tests in `tests/test_risk_manager.py::TestRiskManagerUnknownSymbol`
 
 **Key details**:
 - Previously returned `0.5`, which on a 2/10 config gave an entirely unknown symbol
@@ -516,7 +516,7 @@ next preset down. **Off by default** (`substitution_enabled: false`).
 **Files**: `bot/virtual_tracker.py` (`ranked_presets`, `substitute_preset`), `main.py`
 (candidate loop + `_try_place_order`), `components/risk/PresetRankingSection.tsx`
 (checkbox), `app/api/risk/route.ts`, `lib/risk-types.ts`.
-Tests: `tests/test_preset_substitution.py`.
+Tests: `tests/test_virtual_tracker.py::TestPresetSubstitution`.
 
 **Key details**:
 - **Per-symbol**, with the global flag as the default
@@ -651,7 +651,7 @@ Tracks one virtual position per rank per symbol, with a balance pool per rank sh
 - A preset can show trades in the count with nothing in Wins/Part/Trail/Losses — those closes were bookkeeping, not strategy exits
 - The trade-count cell carries a dotted underline and a `title` tooltip breaking down the reasons, e.g. `12 reshuffled away (rank changed)`
 - Rejected a dedicated column: the reasons are diagnostic and would compete with real outcomes
-- Counting is derived (anything outside win/partial/trail/loss), so a reason added in the bot still surfaces; `tests/test_bookkeeping_tooltip.py` fails if the bot emits a reason the dashboard cannot name
+- Counting is derived (anything outside win/partial/trail/loss), so a reason added in the bot still surfaces; `tests/test_dashboard.py::TestBookkeepingTooltip` fails if the bot emits a reason the dashboard cannot name
 - **Files**: `dashboard/app/trades/page.tsx` (`BOOKKEEPING_LABELS`, `bookkeepingTooltip`)
 
 **Preset efficiency scoring (session 32 refinement — two-tier ranking)**:
@@ -684,7 +684,7 @@ Tracks one virtual position per rank per symbol, with a balance pool per rank sh
 ### Last-N Preset Ranking with Virtual-Only Floor Gate (Session 35)
 Sliding-window ranking system that elevates recent performance and prevents negative-efficiency presets from executing real orders. Once a preset accumulates N live trades, scoring switches from all-time cumulative to sum of last N trades.
 
-**Files**: `bot/virtual_tracker.py`, `config/risk_config.py`, `main.py`, `dashboard/app/api/trades/route.ts`, `tests/test_virtual_tracker.py`
+**Files**: `bot/virtual_tracker.py`, `config/risk_config.py`, `main.py`, `dashboard/app/api/trades/route.ts`, `tests/test_virtual_tracker.py::TestVirtualTracker`
 **Key details**:
 - **Recent trades window**: VirtualTracker stores `recent_trades: float[]` per preset (capped to `ranking_window_size`, default 10)
 - **Window-based scoring**: Once preset has ≥ `min_trades_for_ranking` live trades (default 3), ranking uses sum of last N trades instead of all-time cumulative. Fallback to cumulative during warm-up phase.
@@ -804,7 +804,7 @@ replace three duplicated close blocks (`on_candle_close`, `check_symbol_price`,
   whenever the close then failed. Leaving it live during the close is safe — both legs
   are reduceOnly and same-direction, and an SL that fills first returns `-2022`, already
   handled by recovering the real fill price.
-- Tests: `tests/test_failed_close_keeps_position.py` (11)
+- Tests: `tests/test_order_executor.py::TestFailedCloseKeepsPosition` (11)
 
 **Note**: four tests in `test_real_order_recording.py` were passing *because* of this
 bug — their `fake_close(symbol, order)` mock omitted the `fallback` kwarg, so every call
@@ -844,9 +844,9 @@ that, and suppresses further requests to that endpoint until it expires.
   (info) gives the endpoint, mode, how it resolved, and how early it recovered against
   the stated expiry. One alert per ban, not one per blocked call. A failing notifier can
   never affect trading — the call is wrapped.
-- Tests: `tests/test_rate_limit_guard.py` (19), `tests/test_rate_limit_integration.py` (4,
+- Tests: `tests/test_rate_limit.py::TestRateLimitGuard` (19), `tests/test_rate_limit.py::TestRateLimitIntegration` (4,
   asserting the network call is actually skipped rather than just state being recorded),
-  `tests/test_rate_limit_probe_and_alerts.py` (12)
+  `tests/test_rate_limit.py::TestRateLimitProbeAndAlerts` (12)
 
 **This is damage control, not prevention.** Our own consumption is 1–3 request-weight
 against a 6000/min limit, and the IP Binance names (`15.158.242.x`) is a shared
@@ -867,7 +867,7 @@ far below the 900s candle interval, so the balance still refreshes every candle.
 only moves when a position closes, and closes call `_read_wallet_now()`, which bypasses
 the TTL and refreshes this cache on the way past.
 
-**Files**: `main.py` (`_BALANCE_TTL`), `tests/test_balance_ttl.py` (4 cases)
+**Files**: `main.py` (`_BALANCE_TTL`), `tests/test_balance.py::TestBalanceTtl` (4 cases)
 
 **Note**: this is API hygiene, not a ban fix — see the rate-limit analysis in TODO.md.
 Our measured testnet consumption is 1–3 weight against a 6000/min limit, and the IP
@@ -904,7 +904,7 @@ IP is a shared CloudFront edge, not our address.
   *stream* still comes from the testnet WebSocket, so the cache is mixed across restarts.
   At ±0.09% this is immaterial, but moving the stream too is a separate decision with
   trading implications (fills happen at testnet prices).
-- Tests: `tests/test_kline_endpoint_routing.py` (13 cases)
+- Tests: `tests/test_data_feed.py::TestKlineEndpointRouting` (13 cases)
 
 ### Level-Scoped TP Cap — `max_profit_pct_levels` (Session 65)
 Restricts `max_profit_pct` to specific trend levels instead of applying it at every level.
@@ -935,7 +935,7 @@ suppressed the levels that were working. L4 is in fact the only net-positive lev
 - **Deploy ordering matters**: the config key only takes effect once the code is deployed. On an
   older build `max_profit_pct_levels` is not a valid Settings field, so the merge silently drops
   it and `max_profit_pct` would apply at EVERY level. Deploy the code before setting the config.
-- Tests: `tests/test_max_profit_pct_levels.py` (7 cases)
+- Tests: `tests/test_signal_filters.py::TestMaxProfitPctLevels` (7 cases)
 
 ### Order Trend Level in the Dashboard (Session 65)
 Narrow **L** column in the Trades page Trading Orders table showing the trend level of the
@@ -1005,7 +1005,7 @@ Data-backed stop-loss width limits per symbol, protecting against artifact SL ge
 ### Two-Tier Preset Ranking (Session 32)
 Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ranking system. Live-proven presets (≥N real+virtual trades) are always ranked above seed-only presets (backtest-only), regardless of seed magnitude. Solves the TIAUSDT problem where a less-profitable preset with a large backtest seed outranked a better-performing preset with fewer live trades.
 
-**Files**: `config/risk_config.py`, `bot/virtual_tracker.py`, `tests/test_virtual_tracker.py`, `main.py`, `dashboard/lib/risk-types.ts`, `dashboard/app/api/risk/route.ts`, `dashboard/components/risk/PresetRankingSection.tsx`, `dashboard/app/risk/page.tsx`
+**Files**: `config/risk_config.py`, `bot/virtual_tracker.py`, `tests/test_virtual_tracker.py::TestVirtualTracker`, `main.py`, `dashboard/lib/risk-types.ts`, `dashboard/app/api/risk/route.ts`, `dashboard/components/risk/PresetRankingSection.tsx`, `dashboard/app/risk/page.tsx`
 **Key details**:
 - **Scoring**: Each preset gets a tuple `(tier, value)` where:
   - Tier 1: preset has ≥ N real+virtual trades (tier value = total_winning_usdt, live track record)
@@ -1020,7 +1020,7 @@ Replaces hard-coded `_MIN_TRADES = 8` threshold with configurable tuple-based ra
 ### Dynamic Weight Rebalancer (Session 31)
 Gradually rebalances `symbol_weights` in risk_config.json based on real-time symbol performance. Every N closed candles, scores each symbol on two metrics (mini-backtest recent klines + real closed P&L), rank-normalizes both, and soft-blends current weights toward new scores. Better-performing symbols accumulate more allocation; a floor prevents any symbol from dropping below minimum share.
 
-**Files**: `bot/weight_rebalancer.py`, `tests/test_weight_rebalancer.py`, `dashboard/components/risk/WeightRebalancerSection.tsx`
+**Files**: `bot/weight_rebalancer.py`, `tests/test_weights.py::TestBlendWeights`, `dashboard/components/risk/WeightRebalancerSection.tsx`
 **Key details**:
 - Triggered: every `rebalance_candles` closed candles (default 96, ~1 day at 15m)
 - Scoring: `backtest_window_candles` lookback window (default 96)
@@ -1445,7 +1445,7 @@ genuine second close on one symbol. From the user's side that is indistinguishab
 from the bot hiding a losing trade — which is exactly the suspicion that opened
 session 62. The generic time throttle still applies to ordinary warnings.
 
-**Files**: `bot/notifier.py`; tests in `tests/test_notifier.py`.
+**Files**: `bot/notifier.py`; tests in `tests/test_notifications.py::TestNotifier`.
 
 #### Trade-close message: Before / Net / Fee / After (session 62)
 Every real trade-close notification reports the wallet on both sides of the trade,
@@ -1507,7 +1507,7 @@ Machine-parseable event log at `logs/analysis.jsonl`, separate from `bot.log` so
 operational logs stay readable and this file carries its own rotation budget.
 
 **Files**: `bot/analysis_log.py`; wired in `bot/virtual_order_simulator.py`,
-`bot/virtual_tracker.py`, `main.py`. Tests: `tests/test_analysis_log.py`.
+`bot/virtual_tracker.py`, `main.py`. Tests: `tests/test_logs.py::TestAnalysisLog`.
 
 **Events**:
 | event | emitted when | why it exists |
@@ -1669,7 +1669,7 @@ from scratch with real money.
 
 `VIRTUAL_ONLY=1` plus **no credentials at all** (`environment:` with empty keys, never
 `env_file: .env`). python-binance refuses private endpoints without a secret, before any
-request reaches Binance. `tests/test_compose_mirror_has_no_credentials.py` enforces this
+request reaches Binance. `tests/test_mirror_and_virtual_only.py::TestComposeMirrorHasNoCredentials` enforces this
 in CI and is verified non-vacuous — adding `env_file: .env` makes it fail.
 
 `VIRTUAL_ONLY` only ever makes the process **skip** work. It never changes what a real
@@ -1919,11 +1919,11 @@ Preset Efficiency counts always reflected all history regardless of the chart ra
 ### Strategy Page Time Travel (Session 39)
 Replay bot's trend analysis state at any historical candle index. Users can scrub backward through the strategy timeline to see what signals were active at past moments, including swing points, trend levels, and indicators at that candle.
 
-**Files**: `replay_api.py`, `tests/test_replay_api.py`, `dashboard/app/api/replay/route.ts`, `dashboard/components/TimeScrubber.tsx`, `dashboard/lib/types.ts`, `dashboard/app/page.tsx`
+**Files**: `replay_api.py`, `tests/test_dashboard.py::TestReplayApi`, `dashboard/app/api/replay/route.ts`, `dashboard/components/TimeScrubber.tsx`, `dashboard/lib/types.ts`, `dashboard/app/page.tsx`
 
 **Key details**:
 - **`replay_api.py`**: Python script that re-runs `Analyzer.build_from_klines(klines[:idx+1])` on stored results JSON. Returns `{trend_levels, all_points, signals}` for historical moment. Symbol validation (regex), negative index guard, 10s CLI usage.
-- **`tests/test_replay_api.py`**: 6 pytest tests covering symbol validation, negative index guard, boundary cases.
+- **`tests/test_dashboard.py::TestReplayApi`**: 6 pytest tests covering symbol validation, negative index guard, boundary cases.
 - **`dashboard/app/api/replay/route.ts`**: POST route validates `{symbol, candle_index}`, spawns `replay_api.py`, 10-second subprocess timeout guard.
 - **`dashboard/components/TimeScrubber.tsx`**: React component with `input[type=range]` slider, ◀ ▶ tick buttons (±10 klines), LIVE badge (green pulsing dot) when at live position, datetime label when historical, "updating…" while loading.
 - **Travel range**: Limited to klines in `results_{symbol}.json` (up to 1000 candles, ~10 days at 15-min).
@@ -2309,7 +2309,7 @@ Spec: `docs/specs/2026-09-13-slippage-modelling.md`
 
 Test and live each have their own risk config: `risk_config_test.json` and `risk_config_live.json` in the repo root (gitignored, like the legacy `risk_config.json`). The mode is the *trading mode*, not the instance: the primary reads `risk_config_{bot_mode}` (from `data/bot_mode.json`, default test), the mirror reads the opposite. Switching `bot_mode` swaps configs on the next restart with nothing to migrate. Spec: `docs/specs/2026-09-26-per-mode-risk-config.md`.
 
-**Files**: `config/risk_config.py`, `main.py`, `bot/risk_manager.py`, `bot/weight_rebalancer.py` (via main), `backtest.py`, `bot/symbol_discovery.py`, `scripts/split_risk_config.py`, `dashboard/app/api/_risk-config.ts`, `dashboard/app/api/risk/route.ts` (+ `lock-preset`, `symbols`, `symbols/[symbol]`, `telegram/test`, `trades`, `trades/symbol-scores`), `dashboard/app/risk/page.tsx`, `dashboard/app/trades/page.tsx`, `docker-compose.yml`, `tests/test_per_mode_risk_config.py`.
+**Files**: `config/risk_config.py`, `main.py`, `bot/risk_manager.py`, `bot/weight_rebalancer.py` (via main), `backtest.py`, `bot/symbol_discovery.py`, `scripts/split_risk_config.py`, `dashboard/app/api/_risk-config.ts`, `dashboard/app/api/risk/route.ts` (+ `lock-preset`, `symbols`, `symbols/[symbol]`, `telegram/test`, `trades`, `trades/symbol-scores`), `dashboard/app/risk/page.tsx`, `dashboard/app/trades/page.tsx`, `docker-compose.yml`, `tests/test_config_and_modes.py::TestPerModeRiskConfig`.
 
 **Behaviour**:
 - **Read**: test = `DEFAULTS ⊕ test file`; live = `DEFAULTS ⊕ test file ⊕ live file` — any key missing in live comes from test. Reading never creates a file.
@@ -2329,7 +2329,7 @@ Test and live each have their own risk config: `risk_config_test.json` and `risk
 
 ## Real-Order Candle Check Skips the Pre-Entry Candle (2026-09-28 — deployed 16:00 UTC)
 
-`OrderExecutor.check_symbol_candle(..., candle_close_ms=)` skips a position opened at or after that candle's close (`_opened_after`); `main.py` passes the closed candle's close time (`candle_to_add[6]`). Real orders are placed in the same candle-close handler that then runs this OHLC check, so every new order used to be judged against the pre-entry candle: 46 of 48 real orders closed within a minute in the 30 days to 2026-09-28 (30 losses, 16 trail exits) were that, −186.66 USDT plus fees. Ticks guard the position from its first second; later candles are checked as before; without a close time the old behaviour stays. Tests: `tests/test_candle_check_skips_pre_entry_candle.py`.
+`OrderExecutor.check_symbol_candle(..., candle_close_ms=)` skips a position opened at or after that candle's close (`_opened_after`); `main.py` passes the closed candle's close time (`candle_to_add[6]`). Real orders are placed in the same candle-close handler that then runs this OHLC check, so every new order used to be judged against the pre-entry candle: 46 of 48 real orders closed within a minute in the 30 days to 2026-09-28 (30 losses, 16 trail exits) were that, −186.66 USDT plus fees. Ticks guard the position from its first second; later candles are checked as before; without a close time the old behaviour stays. Tests: `tests/test_order_executor.py::TestCandleCheckSkipsPreEntryCandle`.
 
 ---
 
@@ -2379,7 +2379,7 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
   - demo-fapi has no CloudFront in front, so only our own traffic counts.
   - Verified read-only on demo-fapi: account, positionRisk, openAlgoOrders, leverageBracket, exchangeInfo, klines.
 - **Latent bug fixed**: with `testnet=True`, python-binance builds futures URLs from `FUTURES_TESTNET_URL` and ignores `FUTURES_URL`. The old override set `FUTURES_URL`, so it never took effect. `_trading_client` sets both.
-- **Tests**: `tests/test_testnet_rest_host.py`.
+- **Tests**: `tests/test_rate_limit.py::TestTestnetRestHost`.
 
 ## Virtual/Real Parity (2026-09-29)
 
@@ -2395,11 +2395,11 @@ Spec: `docs/specs/2026-09-29-virtual-real-parity.md`. Why: over 30 days, real av
   - When > 0, the candle-close handler closes a real position older than N × 15 min at market via `order_executor.close_order(symbol, reason='max_age')`.
   - The virtual counterpart `virtual_max_age_candles` (shared, 96) is unchanged.
   - Evidence so far: a 24h limit replayed on real trades was +74 USDT over 9 trades, and 12h was −91 over 22.
-- **Tests**: `tests/test_virtual_persistence.py`.
+- **Tests**: `tests/test_virtual_simulator.py::TestVirtualPersistence`.
 
 ### Part 2 — full parity pass (2026-09-29)
 
-Rule: change real where it can adopt virtual's behaviour; otherwise virtual inherits real. Rank 1 keeps recording the signals real refused. Tests: `tests/test_parity_part2.py`.
+Rule: change real where it can adopt virtual's behaviour; otherwise virtual inherits real. Rank 1 keeps recording the signals real refused. Tests: `tests/test_virtual_simulator.py::TestVirtualRealParityPart2`.
 
 - **V1 — candle high/low check for virtual.** `VirtualOrderSimulator.check_candle()` runs at every candle close, called from `main._virtual_candle_check` on both the normal and the disabled-symbol candle paths.
   - A wick between ticks now closes virtual trades, as it does real ones.
@@ -2458,7 +2458,7 @@ Rule: change real where it can adopt virtual's behaviour; otherwise virtual inhe
 - **Backfill**: `load_klines` fetches the full window once when the cache is shorter than requested (the update path only fetches forward, so short caches stayed short).
 - **Disabled-symbol charts**: the disabled branch of `on_candle_close` now exports `results_{SYM}.json` every candle; it returned before the export, so those charts froze at the last restart (all 6 disabled symbols at the 2026-09-26 20:45 UTC candle). Bug dated from f0323a1 (2026-06-14), hidden by frequent restarts.
 - **Trades page orders table**: includes `rank1_orders`, as Preset Efficiency counts them (`app/trades/page.tsx`). 494 live / 390 test closed rank-1 orders were hidden (INJUSDT live `oscillating_zone`: table 4 vs 74 counted). Data was never lost — verified independently.
-- Tests: `tests/test_kline_feed_fixes_2026_09_27.py`.
+- Tests: `tests/test_data_feed.py::TestKlineFeedFixes20260927`.
 
 ---
 
@@ -2466,7 +2466,7 @@ Rule: change real where it can adopt virtual's behaviour; otherwise virtual inhe
 
 Pressing Settings → Trading Mode writes `data/bot_mode.json`. The primary then switches by **closing everything and restarting** (user decision 2026-09-26: close at market, then restart). Spec: `docs/specs/2026-09-26-mode-switch-restart-and-per-mode-backtests.md`.
 
-**Files**: `main.py::_primary_mode_watch`, `bot/mode_switch.py::close_out`, `bot/mode_manager.py` (`requested_mode_change`, `write_primary_mode`, `read_primary_running_mode`, `instance_mode`), `bot/order_executor.py::exchange_open_symbols`, `config/settings.py::api_keys_present`, `dashboard/components/settings/TradingMode.tsx`, `tests/test_mode_switch.py`.
+**Files**: `main.py::_primary_mode_watch`, `bot/mode_switch.py::close_out`, `bot/mode_manager.py` (`requested_mode_change`, `write_primary_mode`, `read_primary_running_mode`, `instance_mode`), `bot/order_executor.py::exchange_open_symbols`, `config/settings.py::api_keys_present`, `dashboard/components/settings/TradingMode.tsx`, `tests/test_config_and_modes.py::TestModeSwitch`.
 
 **Sequence** (primary only, every 30 s):
 1. `bot_mode.json` valid and ≠ running mode → switch pending: the placement pass gets no candidates (no new real orders); Telegram warning.
@@ -2485,7 +2485,7 @@ Withdrawing the request (setting the mode back) before step 2 resumes real order
 
 Backtest results belong to a market: `dashboard/public/backtest_results_{SYM}_{mode}.json`, written by every backtest run for that mode, from any instance or the dashboard.
 
-**Files**: `bot/instance_paths.py` (`backtest_results_name(symbol, mode)`, `backtest_results_path(dir, symbol, mode)`), `bot/risk_manager.py`, `main.py`, `bot/telegram_menu.py`, `bot/symbol_discovery.py`, `backtest.py`, `bot/data_feed.py::set_cache_suffix`, `config/settings.py::load_settings(require_keys=)`, `dashboard/app/api/_backtest-results.ts`, `dashboard/app/api/backtest-results/route.ts`, `run-backtest`, `refresh-scores`, `telegram/test`, `trades/_preset-names.ts`, `symbols` routes, `app/backtest/page.tsx`, `app/create/page.tsx`, `tests/test_backtest_results_per_mode.py`.
+**Files**: `bot/instance_paths.py` (`backtest_results_name(symbol, mode)`, `backtest_results_path(dir, symbol, mode)`), `bot/risk_manager.py`, `main.py`, `bot/telegram_menu.py`, `bot/symbol_discovery.py`, `backtest.py`, `bot/data_feed.py::set_cache_suffix`, `config/settings.py::load_settings(require_keys=)`, `dashboard/app/api/_backtest-results.ts`, `dashboard/app/api/backtest-results/route.ts`, `run-backtest`, `refresh-scores`, `telegram/test`, `trades/_preset-names.ts`, `symbols` routes, `app/backtest/page.tsx`, `app/create/page.tsx`, `tests/test_config_and_modes.py::TestBacktestResultsPerMode`.
 
 **Behaviour**:
 - **Read**: the mode's file; for **test** only, fall back to the legacy unsuffixed file (always the testnet primary's). Live never reads testnet results. A non-market mode (`RiskManager(mode='backtest')`) reads the unsuffixed file.
@@ -2507,7 +2507,7 @@ Backtest results belong to a market: `dashboard/public/backtest_results_{SYM}_{m
 The symbol list is shared by both modes; what is decided about a symbol is per mode. Settings that define the strategy are shared; settings that decide real orders and money are per mode. Spec: `docs/specs/2026-09-26-shared-settings-and-per-mode-registry.md`.
 
 **Files** (repo root, gitignored, bind-mounted rw in `bot`/`dashboard`, `:ro` in `bot_mirror`):
-- `risk_config_shared.json` — `SHARED_KEYS` (`config/risk_config.py`, same list in `dashboard/app/api/_risk-config.ts`, parity checked by `tests/test_shared_settings.py`): process (`telegram`, `*_interval_s`, `analysis_log_*`), backtest method (`startup_backtest`, `backtest_klines`, `backtest_initial_balance_usdt`, `backtest_seed_leverage_factor`, `backtest_entry_slippage_pct`), virtual accounting (`virtual_max_age_candles`, `slippage_*`), signal filters (`global_*`, `entry_zone_max_pct`, `per_symbol_settings`), preset ranking (`preset_blocklist`, `ranking_window_size`, `min_trades_for_ranking*`, `preset_hysteresis_pct`, `preset_cooldown_trades`).
+- `risk_config_shared.json` — `SHARED_KEYS` (`config/risk_config.py`, same list in `dashboard/app/api/_risk-config.ts`, parity checked by `tests/test_config_and_modes.py::TestSharedSettings`): process (`telegram`, `*_interval_s`, `analysis_log_*`), backtest method (`startup_backtest`, `backtest_klines`, `backtest_initial_balance_usdt`, `backtest_seed_leverage_factor`, `backtest_entry_slippage_pct`), virtual accounting (`virtual_max_age_candles`, `slippage_*`), signal filters (`global_*`, `entry_zone_max_pct`, `per_symbol_settings`), preset ranking (`preset_blocklist`, `ranking_window_size`, `min_trades_for_ranking*`, `preset_hysteresis_pct`, `preset_cooldown_trades`).
 - `symbol_registry_shared.json` — `symbols` (roster), `status` (backtest runs, dashboard-owned).
 - `symbol_registry_test.json` / `symbol_registry_live.json` — `disabled`, `paused`, `disabled_ranks`, `weights`, `leverage_overrides`.
 - Legacy `symbol_registry.json` (tracked) and `risk_config.json` stay frozen as the rollback path.

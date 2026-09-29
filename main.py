@@ -777,6 +777,40 @@ async def run() -> None:
     _restored = order_executor.restore_open_positions(_restart_path)
     if _restored:
         logger.info(f"Startup: {_restored} position(s) restored from restart state")
+
+    def _record_virtual_closes(symbol: str, closed: list[dict]) -> None:
+        """Feed strategy exits of virtual positions into preset scoring."""
+        for vc in closed:
+            # Rank 1 is recorded but NOT scored yet. It is the new pool that fills in the
+            # signals the real slot could not take; letting it into preset_efficiency
+            # immediately would change preset selection at the same moment the data
+            # changes, leaving no baseline to compare against. Flipping this on is a
+            # separate decision — see docs/specs/2026-09-07-rank1-statistics-gap.md.
+            if vc.get('rank') == 1:
+                continue
+            # Bookkeeping exits, not strategy outcomes: 'promoted_to_real' frees a
+            # preset so the real-order slot can use it, 'max_age' closes a position that
+            # would otherwise hold its slot forever, and 'manual_close' is a human
+            # pressing the button on this page. None says anything about whether the
+            # preset works, so none belongs in the ranking.
+            if vc.get('result') in ('promoted_to_real', 'max_age', 'manual_close'):
+                continue
+            if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
+                virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
+
+    # Virtual positions survive a restart: re-open what was saved and replay the candles
+    # that closed meanwhile, so an exit during the downtime lands on its own candle.
+    _vstate_path = _PROJECT_ROOT / 'data' / f'virtual_open_state_{mode_manager.current_mode}.json'
+    try:
+        _v_open, _v_closed = await virtual_order_simulator.restore_open_state(
+            _vstate_path,
+            lambda s: analyzers[s].get_klines() if s in analyzers else [],
+            list(symbols),
+        )
+        for _sym, _info in _v_closed:
+            _record_virtual_closes(_sym, [_info])
+    except Exception as _vr_exc:
+        logger.warning(f"Virtual position restore failed: {_vr_exc}")
     # Private endpoint, and closing positions the bot has no record of is meaningless
     # for an instance that opens none.
     if not _virtual_only:
@@ -2030,6 +2064,27 @@ async def run() -> None:
                 used = await _try_place_order(sym, best, sym_s, remaining, candle_ts, trade_cap=sym_cap)
                 deployed += used
 
+        # Real max-age: the same rule virtual positions have (virtual_max_age_candles),
+        # but OFF unless real_max_age_candles > 0 — replayed on 30 days of real trades a
+        # 24h limit was +74 USDT over only 9 trades and 12h was −91, so it waits for data.
+        # Spec: docs/specs/2026-09-29-virtual-real-parity.md
+        _real_max_age = int(risk_cfg.get('real_max_age_candles', 0) or 0)
+        _oo = order_executor.get_open_orders().get(symbol)
+        if _real_max_age > 0 and _oo is not None and _oo.open_time:
+            try:
+                _age_min = (datetime.now(timezone.utc)
+                            - datetime.fromisoformat(_oo.open_time)).total_seconds() / 60.0
+            except (TypeError, ValueError):
+                _age_min = 0.0
+            if _age_min > _real_max_age * 15.0:
+                _res = await order_executor.close_order(symbol, reason='max_age')
+                if _res is not None:
+                    logger.info(
+                        f"[{symbol}] MAX AGE close (real): open {_age_min / 60:.1f}h > "
+                        f"{_real_max_age} candles — {_res.get('preset_name')} "
+                        f"pnl={_res.get('pnl_usdt', 0):.2f}")
+                    _write_open_positions()
+
         # D1: OHLC-level SL/TP check — catches gaps that per-tick checks miss.
         # Use REST-refreshed candle_to_add when available; it has more accurate OHLC than the WS close event.
         candle_high = float(candle_to_add[2])
@@ -2114,6 +2169,11 @@ async def run() -> None:
             real_preset=_real_preset,
         )
         _record_virtual_summary(symbol, candle_ts)
+        # Keep the restart state current, so even a crash loses at most one candle.
+        try:
+            virtual_order_simulator.save_open_state(_vstate_path)
+        except Exception as _vs_exc:
+            logger.debug(f"virtual open state save failed: {_vs_exc}")
 
         # save_risk_config() every candle. A virtual-only instance must never retune
         # the trading bot's real symbol allocation from its own virtual results.
@@ -2194,23 +2254,7 @@ async def run() -> None:
             )
 
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
-        for vc in virtual_closed:
-            # Rank 1 is recorded but NOT scored yet. It is the new pool that fills in the
-            # signals the real slot could not take; letting it into preset_efficiency
-            # immediately would change preset selection at the same moment the data
-            # changes, leaving no baseline to compare against. Flipping this on is a
-            # separate decision — see docs/specs/2026-09-07-rank1-statistics-gap.md.
-            if vc.get('rank') == 1:
-                continue
-            # Bookkeeping exits, not strategy outcomes: 'promoted_to_real' frees a
-            # preset so the real-order slot can use it, 'max_age' closes a position that
-            # would otherwise hold its slot forever, and 'manual_close' is a human
-            # pressing the button on this page. None says anything about whether the
-            # preset works, so none belongs in the ranking.
-            if vc.get('result') in ('promoted_to_real', 'max_age', 'manual_close'):
-                continue
-            if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
-                virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
+        _record_virtual_closes(symbol, virtual_closed)
 
     async def on_close_order(payload: dict) -> dict:
         """Close one open position on request from the dashboard.
@@ -2290,12 +2334,17 @@ async def run() -> None:
             saved = order_executor.save_open_positions(_restart_path)
             if saved:
                 logger.info(f"close_positions_on_stop=false — {saved} position(s) saved, skipping market close")
+        # Virtual positions are saved, not closed: closing them recorded a 'closed_early'
+        # result at whatever the price was on every restart (spec 2026-09-29).
+        try:
+            _n = virtual_order_simulator.save_open_state(_vstate_path)
+            logger.info(f"{_n} virtual position(s) saved for restart")
+        except Exception as _vs_exc:
+            logger.warning(f"Virtual position save failed, closing them instead: {_vs_exc}")
+            await virtual_order_simulator.close_all_open(current_symbols, feed)
         try:
             await asyncio.wait_for(
-                asyncio.gather(
-                    virtual_order_simulator.close_all_open(current_symbols, feed),
-                    order_executor.close_all_orders_at_market() if _close_on_stop else asyncio.sleep(0),
-                ),
+                order_executor.close_all_orders_at_market() if _close_on_stop else asyncio.sleep(0),
                 timeout=45.0,
             )
         except asyncio.TimeoutError:
@@ -2303,6 +2352,12 @@ async def run() -> None:
         _write_open_positions()
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
+
+    async def _close_virtual_for_switch() -> None:
+        """A mode switch closes everything, virtual too; empty the saved state so the
+        restart does not bring those positions back."""
+        await virtual_order_simulator.close_all_open(symbol_registry.get_symbols(), feed)
+        virtual_order_simulator.save_open_state(_vstate_path)
 
     async def _primary_mode_watch() -> None:
         """Switch modes by closing everything and restarting (primary only).
@@ -2345,8 +2400,7 @@ async def run() -> None:
             result = await close_out(
                 target,
                 keys_present=api_keys_present,
-                close_virtual=lambda: virtual_order_simulator.close_all_open(
-                    symbol_registry.get_symbols(), feed),
+                close_virtual=_close_virtual_for_switch,
                 close_real=order_executor.close_all_orders_at_market,
                 open_on_exchange=order_executor.exchange_open_symbols,
                 # primary-only task; guard kept explicit

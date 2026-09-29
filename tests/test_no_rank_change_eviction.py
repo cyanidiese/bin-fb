@@ -64,13 +64,16 @@ class TestOnePositionPerPreset:
             'the check must scan all ranks, not just one'
 
 
-class TestRank1StillEvicts:
+class TestRank1:
     def test_a_real_order_still_takes_over(self):
         assert 'real_order_took_over' in SIM
 
-    def test_rank_1_still_evicts_on_a_top_preset_change(self):
-        assert "'rank_change'" in _rank1_branch(), \
-            'rank 1 must represent whatever would trade NOW'
+    def test_rank_1_no_longer_evicts_on_a_top_preset_change(self):
+        """2026-09-29: the eviction closed the trade at a random price (~0 %) and hid its
+        real outcome. The position now runs to its own exit; the slot is reported held."""
+        body = _rank1_branch()
+        assert "'rank_change'" not in body
+        assert "r1:slot_held_by_other_preset" in body
 
 
 class TestPromotionFreesThePreset:

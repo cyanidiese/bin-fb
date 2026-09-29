@@ -39,7 +39,7 @@ def test_the_bot_emits_reasons_the_dashboard_can_name():
 
 def test_the_known_reasons_are_actually_covered():
     """Guards the regexes above from silently matching nothing and passing."""
-    assert {'rank_change', 'closed_early'} <= _emitted_reasons()
+    assert {'max_age', 'closed_early'} <= _emitted_reasons()
 
 
 def test_strategy_results_are_exactly_the_four_outcomes():

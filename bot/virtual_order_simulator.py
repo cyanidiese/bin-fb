@@ -269,12 +269,14 @@ class VirtualOrderSimulator:
                 )
                 if not _r1_name or _r1_name not in self._all_presets:
                     continue
-                # Rank 1 DOES still evict on a change of top preset: unlike ranks >= 2
-                # it must represent whatever would trade right now, and be free the
-                # instant a real order is placed.
+                # A change of top preset no longer evicts the open position: that closed
+                # it at whatever the price was, recorded ~0 %, and hid how the trade
+                # ended. It runs to its own exit like a real order; the new best preset
+                # takes the slot once it frees. (Spec 2026-09-29-virtual-real-parity.)
                 _r1_existing = self._rank_open[1].get(symbol)
                 if _r1_existing and _r1_existing['preset_name'] != _r1_name:
-                    await self._evict(symbol, 1, current_price, 'rank_change')
+                    _summary['r1:slot_held_by_other_preset'] += 1
+                    continue
                 # Promotion frees the preset. Without this the duplicate guard would
                 # leave the about-to-trade preset stuck holding a stale practice
                 # position in another slot, so the real-order slot could not represent
@@ -707,46 +709,155 @@ class VirtualOrderSimulator:
             result = fake.check_price(price)
             if result is None:
                 continue
-
-            self._rank_open[rank].pop(symbol)
-            self._rank_fake[rank].pop(symbol)
-
-            close_price = fake.close_price or price
-            pnl = self._calc_pnl(record, close_price, symbol)
-            self._rank_balance[rank] += pnl
-            self._save_rank_balance(rank)
-
-            record.update({
-                'status': 'closed',
-                'close_price': close_price,
-                'close_time': datetime.now(timezone.utc).isoformat(),
-                'pnl_usdt': pnl,
-                'result': result,
-                'rank_balance_after': self._rank_balance[rank],
-            })
-            if result == 'loss':
-                self._recent_sl_hit[f"{symbol}:{record['preset_name']}"] = {
-                    'ts_ms': int(datetime.now(timezone.utc).timestamp() * 1000),
-                    'side': record['side'],
-                    'entry': record['entry_price'],
-                    'sl': record.get('sl', 0.0),
-                    'tp': record.get('tp', 0.0),
-                }
-            await self._append_rank_closed(symbol, rank, record)
-            closed.append({
-                'preset_name': record['preset_name'],
-                'rank': rank,
-                'pnl_usdt': pnl,
-                'result': result,
-                'entry_price': record['entry_price'],
-                'close_price': close_price,
-                'side': record['side'],
-            })
-            logger.debug(
-                f"[{symbol}] Rank-{rank} closed: {record['preset_name']} "
-                f"{result} pnl={pnl:.2f} bal={self._rank_balance[rank]:.2f}"
-            )
+            closed.append(await self._close_position(
+                symbol, rank, result, fake.close_price or price, datetime.now(timezone.utc)))
         return closed
+
+    async def _close_position(
+        self, symbol: str, rank: int, result: str, close_price: float, when: datetime,
+    ) -> dict:
+        """Book a strategy exit (the FakeOrder decided it). Shared by the tick path and
+        the restart replay, so a position closed while the bot was down is recorded
+        exactly like one closed live — at the candle it happened on, not at restart."""
+        record = self._rank_open[rank].pop(symbol)
+        self._rank_fake[rank].pop(symbol, None)
+        pnl = self._calc_pnl(record, close_price, symbol)
+        self._rank_balance[rank] += pnl
+        self._save_rank_balance(rank)
+
+        record.update({
+            'status': 'closed',
+            'close_price': close_price,
+            'close_time': when.isoformat(),
+            'pnl_usdt': pnl,
+            'result': result,
+            'rank_balance_after': self._rank_balance[rank],
+        })
+        if result == 'loss':
+            self._recent_sl_hit[f"{symbol}:{record['preset_name']}"] = {
+                'ts_ms': int(when.timestamp() * 1000),
+                'side': record['side'],
+                'entry': record['entry_price'],
+                'sl': record.get('sl', 0.0),
+                'tp': record.get('tp', 0.0),
+            }
+        await self._append_rank_closed(symbol, rank, record)
+        logger.debug(
+            f"[{symbol}] Rank-{rank} closed: {record['preset_name']} "
+            f"{result} pnl={pnl:.2f} bal={self._rank_balance[rank]:.2f}"
+        )
+        return {
+            'preset_name': record['preset_name'],
+            'rank': rank,
+            'pnl_usdt': pnl,
+            'result': result,
+            'entry_price': record['entry_price'],
+            'close_price': close_price,
+            'side': record['side'],
+        }
+
+    # ------------------------------------------------------------------ #
+    # Restart persistence — open positions survive a stop/start           #
+    # ------------------------------------------------------------------ #
+
+    def save_open_state(self, path: Path) -> int:
+        """Write every open rank position (record + FakeOrder state) to `path`.
+
+        Called on graceful stop instead of closing them, and after every candle close so
+        a crash loses at most one candle. Closing on stop recorded 1,235 'closed_early'
+        results in 8 days at whatever the price was — about 0 % each, and mostly the
+        wide-stop trades real orders ride to a full loss — so virtual hid real losses.
+        Spec: docs/specs/2026-09-29-virtual-real-parity.md"""
+        positions = []
+        for rank, by_sym in self._rank_open.items():
+            for symbol, record in by_sym.items():
+                fake = self._rank_fake[rank].get(symbol)
+                if fake is None:
+                    continue
+                positions.append({'rank': rank, 'symbol': symbol,
+                                  'record': record, 'fake': fake.get_state()})
+        state = {'saved_at_ms': int(datetime.now(timezone.utc).timestamp() * 1000),
+                 'positions': positions}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(state))
+        tmp.replace(path)
+        return len(positions)
+
+    async def restore_open_state(
+        self, path: Path, get_klines: Callable[[str], list], symbols: list[str],
+    ) -> tuple[int, list[tuple[str, dict]]]:
+        """Re-open positions saved by save_open_state, then replay the candles that
+        closed while the bot was down, so an SL/TP/trail hit during the downtime closes
+        the position at that candle — as the exchange SL would have for a real one.
+
+        Returns (restored_still_open, [(symbol, close_info), ...] for replay closes).
+        Positions of symbols no longer subscribed are dropped: there is no price feed to
+        finish them and no result worth inventing."""
+        if not path.exists():
+            return 0, []
+        try:
+            state = json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning(f"Virtual open state unreadable ({path}): {exc}")
+            return 0, []
+        saved_at_ms = int(state.get('saved_at_ms') or 0)
+        wanted = set(symbols)
+        closed: list[tuple[str, dict]] = []
+        restored = dropped = 0
+        for p in state.get('positions') or []:
+            try:
+                rank, symbol, record = int(p['rank']), p['symbol'], p['record']
+                if symbol not in wanted or rank not in self._rank_open:
+                    dropped += 1
+                    continue
+                if symbol in self._rank_open[rank]:
+                    continue  # already open (a restore ran twice) — keep the live one
+                self._rank_open[rank][symbol] = record
+                self._rank_fake[rank][symbol] = FakeOrder.from_state(p['fake'])
+                restored += 1
+            except Exception as exc:
+                logger.warning(f"Virtual position not restored ({p.get('symbol')}): {exc}")
+                continue
+            info = await self._replay_downtime(symbol, rank, get_klines(symbol) or [], saved_at_ms)
+            if info is not None:
+                closed.append((symbol, info))
+        if dropped:
+            logger.warning(f"Virtual restore: {dropped} position(s) dropped — symbol no longer subscribed")
+        still_open = restored - len(closed)
+        logger.info(f"Virtual restore: {restored} position(s) restored, "
+                    f"{len(closed)} closed by downtime replay, {still_open} still open")
+        return still_open, closed
+
+    async def _replay_downtime(
+        self, symbol: str, rank: int, klines: list, saved_at_ms: int,
+    ) -> dict | None:
+        """Run the candles that closed after the save (and after the position opened)
+        through the FakeOrder's candle check. Klines: [open_ms, o, h, l, c, v, close_ms]."""
+        record = self._rank_open[rank][symbol]
+        fake = self._rank_fake[rank][symbol]
+        try:
+            opened_ms = int(datetime.fromisoformat(record['open_time']).timestamp() * 1000)
+        except (KeyError, TypeError, ValueError):
+            opened_ms = saved_at_ms
+        idx = fake.open_candle
+        for k in klines:
+            try:
+                close_ms = int(k[6])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if close_ms <= saved_at_ms or close_ms <= opened_ms:
+                continue
+            if close_ms > int(datetime.now(timezone.utc).timestamp() * 1000):
+                break  # the forming candle; ticks take over from here
+            idx += 1
+            result = fake.check(float(k[2]), float(k[3]), idx,
+                                candle_open=float(k[1]), candle_close=float(k[4]))
+            if result is not None:
+                when = datetime.fromtimestamp(close_ms / 1000, tz=timezone.utc)
+                return await self._close_position(
+                    symbol, rank, result, fake.close_price or float(k[4]), when)
+        return None
 
     # ------------------------------------------------------------------ #
     # Shutdown — close all open positions at market                       #

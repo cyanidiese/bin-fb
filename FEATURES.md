@@ -2371,6 +2371,22 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 
 ---
 
+## Virtual/Real Parity (2026-09-29)
+
+Spec: `docs/specs/2026-09-29-virtual-real-parity.md`. Why: over 30 days, real averaged −1.76 %/trade against +0.30 % for the same presets' virtual trades, and a third of the virtual sample was cut short by housekeeping and recorded at about 0 %.
+
+- **Virtual positions survive restarts** (`bot/virtual_order_simulator.py`: `save_open_state`, `restore_open_state`, `_replay_downtime`, shared `_close_position`; wired in `main.py`).
+  - **Save**: every open rank position (record + `FakeOrder.get_state()`) is written to `data/virtual_open_state_{mode}.json` after each candle close and on graceful stop. The stop no longer closes virtual positions as `closed_early`; `close_all_open()` is only the fallback if the save fails.
+  - **Restore**: at startup (after the analyzers hold their klines) positions are re-opened. Each closed candle after the save (and after the position opened) is replayed through `FakeOrder.check(high, low, idx, open, close)`. An SL/TP/trail hit during the downtime closes the position at that candle's price and time with its natural result.
+  - **Dropped**: positions of symbols no longer subscribed are skipped with a warning.
+  - **Mode switch**: still closes all virtual positions (`_close_virtual_for_switch`), then saves an empty state so they are not brought back.
+- **Rank 1 no longer evicts on a best-preset change.** The open rank-1 position runs to its own exit. Meanwhile the summary records `r1:slot_held_by_other_preset`, and the new best preset takes the slot when it frees. Old `rank_change` records keep their dashboard label.
+- **Real max-age knob** `real_max_age_candles` (per mode, `config/risk_config.py` default **0 = off**).
+  - When > 0, the candle-close handler closes a real position older than N × 15 min at market via `order_executor.close_order(symbol, reason='max_age')`.
+  - The virtual counterpart `virtual_max_age_candles` (shared, 96) is unchanged.
+  - Evidence so far: a 24h limit replayed on real trades was +74 USDT over 9 trades, and 12h was −91 over 22.
+- **Tests**: `tests/test_virtual_persistence.py`.
+
 ## State Snapshots (2026-09-28)
 
 - **What**: `scripts/snapshot_state.py` (host, stdlib only, read-only) writes one JSON per run to `snapshots/<UTC>.json`. Run it before and after any change whose impact should be measured. `--label "..."` adds a note. `--compare A.json B.json` prints, A→B: changed settings (flattened key paths), balance, real and rank-1 virtual results over 7d/30d (n, win%, PnL), and decision-log counts.

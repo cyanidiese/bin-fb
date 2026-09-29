@@ -26,6 +26,10 @@ DEFAULT_CONFIG: dict = {
     # Positions no longer die on a rank reshuffle, so without a ceiling one stuck trade
     # blocks its slot indefinitely — the longest observed ran 11 days. 96 x 15m = 24h.
     "virtual_max_age_candles": 96,
+    # The same limit for REAL positions, closed at market with result 'max_age'.
+    # 0 = off (default): a 24h limit replayed on 30 days of real trades was +74 USDT over
+    # only 9 trades, 12h was -91. Per mode. Spec 2026-09-29-virtual-real-parity.
+    "real_max_age_candles": 0,
     "backtest_klines": 1500,
     # Run a full backtest on bot start. OFF by default: it is a blocking subprocess
     # that measured 256-567s (worst 9m11s) across 15 symbols, during which there is no

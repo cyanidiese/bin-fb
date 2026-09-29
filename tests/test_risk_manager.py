@@ -1065,3 +1065,18 @@ class TestBacktestScoreCachedByFileVersion:
         os.utime(f, ns=(1, f.stat().st_mtime_ns + 1_000_000))
         rm._get_perf_score('X', {})
         assert calls == ['X', 'X']
+
+
+class TestSnapshotOncePerBalance:
+    """Every candle handler called update_balance() with the same balance and each call
+    rebuilt the all-symbol snapshot (~3.8 s per batch, 2026-09-29)."""
+
+    def test_same_balance_writes_once_and_a_change_writes_again(self, tmp_path):
+        rm = make_rm(tmp_path)
+        writes = []
+        rm._write_snapshot = lambda: writes.append(1)
+        for _ in range(22):
+            rm.update_balance(1000.0)
+        assert len(writes) == 1
+        rm.update_balance(1001.0)
+        assert len(writes) == 2

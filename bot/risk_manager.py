@@ -228,7 +228,15 @@ class RiskManager:
                     "risk_manager",
                 )
 
-            self._write_snapshot()
+            # Every candle handler (22 per batch) calls this with the same balance; the
+            # snapshot rebuilds leverage/perf data for every symbol, so writing it each
+            # time cost ~3.8 s per batch (profiled 2026-09-29). Write it when the balance
+            # changes, else at most every 5 s. Drawdown checks above still run every call.
+            _now = time.monotonic()
+            if (balance != getattr(self, '_snap_balance', None)
+                    or _now - getattr(self, '_snap_ts', 0.0) >= 5.0):
+                self._write_snapshot()
+                self._snap_balance, self._snap_ts = balance, _now
         if pending:
             self.notify(*pending)
         if min_balance_notify and self._notifier:

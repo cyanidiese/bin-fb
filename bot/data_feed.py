@@ -121,6 +121,33 @@ def _trading_client(api_key: str, api_secret: str, is_testnet: bool) -> Client:
     return client
 
 
+# path -> ((mtime_ns, size), last close ms) as of the last write/read we did ourselves.
+_LAST_CLOSE: dict = {}
+
+
+def _file_version(path: Path):
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _remember_last_close(path: Path, klines: list) -> None:
+    try:
+        _LAST_CLOSE[path] = (_file_version(path), int(klines[-1][6]))
+    except (IndexError, TypeError, ValueError):
+        _LAST_CLOSE.pop(path, None)
+
+
+def _known_last_close(path: Path):
+    hit = _LAST_CLOSE.get(path)
+    if hit is None:
+        return None
+    version, last_close = hit
+    return last_close if version is not None and version == _file_version(path) else None
+
+
 class DataFeed:
     def __init__(self, settings: Settings, live_klines: bool = False):
         self._settings = settings
@@ -334,12 +361,19 @@ class DataFeed:
         """Return True if incoming_open_ms is more than one candle-interval after the
         last cached candle's close time. Returns False if cache is missing or unreadable."""
         cache_path = self._cache_path(symbol, timeframe)
+        # The last close is remembered from our own write while the file is unchanged —
+        # parsing the whole ~700 KB cache per symbol per candle for one number cost
+        # ~1.8 s of every candle batch (profiled 2026-09-29).
+        last_close_ms = _known_last_close(cache_path)
+        if last_close_ms is not None:
+            return incoming_open_ms > last_close_ms + self._timeframe_to_ms(timeframe)
         try:
             cached = self._read_cache(cache_path)
         except CacheUnreadable:
             return False
         if not cached:
             return False
+        _remember_last_close(cache_path, cached)
         last_close_ms = int(cached[-1][6])
         candle_ms = self._timeframe_to_ms(timeframe)
         return incoming_open_ms > last_close_ms + candle_ms
@@ -695,6 +729,7 @@ class DataFeed:
             with open(tmp, 'w') as f:
                 json.dump(klines, f)
             os.replace(tmp, path)
+            _remember_last_close(path, klines)
         finally:
             try:
                 tmp.unlink(missing_ok=True)

@@ -2389,6 +2389,11 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
   - `RiskManager._get_perf_score`: backtest scores are cached by the backtest file's version, not a 60 s timer.
   - Chart export (`bot/exporter.py`) and risk snapshot: compact JSON.
 - **Tests:** `TestRiskConfigView`, `TestEfficiencyWritesAreCoalesced`, `TestBacktestScoreCachedByFileVersion`, `TestSocketKeepsBeingRead`.
+- **Result after deploy (16:02 UTC):** zero keepalive timeouts (was ~4/hour), and the event loop is busy ~22 s per batch instead of ~39 s. Wall time was still ~30 s, so a second round followed:
+  - `RiskManager.update_balance` writes its snapshot only when the balance changes or after 5 s. The 22 handlers per batch each rebuilt it, ~3.8 s.
+  - `DataFeed.has_gap` uses the last close remembered from the bot's own cache write while the file is unchanged, instead of parsing ~700 KB per symbol (~1.8 s). It re-reads if another writer changed the file.
+  - From the candle path, the virtual open-state save and the dashboard open-positions file are written at most every 5 s (~1.8 s and ~1.5 s). Graceful stop, order opens/closes and manual actions still write immediately.
+  - Tests: `TestHasGapWithoutReparsing`, `TestSnapshotOncePerBalance`.
 
 ## Testnet REST via demo-fapi.binance.com (2026-09-29) — the -1003 ban fix
 

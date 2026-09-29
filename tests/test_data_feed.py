@@ -1189,3 +1189,36 @@ class TestSocketKeepsBeingRead:
         import re
         calls = re.findall(r'websockets\.connect\([^)]*\)', src('bot/data_feed.py'))
         assert calls and all('max_queue=None' in c for c in calls), calls
+
+
+class TestHasGapWithoutReparsing:
+    """has_gap() parsed the whole ~700 KB kline cache per symbol per candle for one
+    timestamp (~1.8 s per batch, 2026-09-29). It now uses the close remembered from our
+    own write while the file is unchanged, and re-reads when someone else changed it."""
+
+    def _rows(self, n, start=0):
+        return [[start + i * 900_000, '1', '1', '1', '1', '0', start + i * 900_000 + 899_999]
+                for i in range(n)]
+
+    def test_after_our_write_the_cache_is_not_parsed(self, tmp_path, monkeypatch):
+        from bot.data_feed import DataFeed
+        p = tmp_path / 'X_15m_test.json'
+        DataFeed._write_cache(p, self._rows(5))
+        feed = DataFeed.__new__(DataFeed)
+        feed._cache_path = lambda s, tf: p
+        monkeypatch.setattr(DataFeed, '_read_cache', staticmethod(lambda path: (_ for _ in ()).throw(AssertionError('parsed'))))
+        last_close = 4 * 900_000 + 899_999
+        assert feed.has_gap('X', '15m', last_close + 1) is False
+        assert feed.has_gap('X', '15m', last_close + 900_000 + 2) is True
+
+    def test_an_outside_change_is_read_again(self, tmp_path):
+        import json, os
+        from bot.data_feed import DataFeed
+        p = tmp_path / 'X_15m_test.json'
+        DataFeed._write_cache(p, self._rows(5))
+        p.write_text(json.dumps(self._rows(3)))                      # someone else rewrote it
+        os.utime(p, ns=(1, p.stat().st_mtime_ns + 1_000_000))
+        feed = DataFeed.__new__(DataFeed)
+        feed._cache_path = lambda s, tf: p
+        last_close_3 = 2 * 900_000 + 899_999
+        assert feed.has_gap('X', '15m', last_close_3 + 900_000 + 2) is True

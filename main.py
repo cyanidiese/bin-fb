@@ -802,6 +802,9 @@ async def run() -> None:
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 
+    # monotonic time of the last per-candle write of each throttled file
+    _last_candle_write = {'open_positions': 0.0, 'virtual_state': 0.0}
+
     async def _virtual_candle_check(symbol: str, kline: list) -> None:
         """Candle-level exit check for virtual positions, as real ones get (V1)."""
         try:
@@ -2219,11 +2222,14 @@ async def run() -> None:
             substituted_preset=_substituted_preset.get(symbol),
         )
         _record_virtual_summary(symbol, candle_ts)
-        # Keep the restart state current, so even a crash loses at most one candle.
-        try:
-            virtual_order_simulator.save_open_state(_vstate_path)
-        except Exception as _vs_exc:
-            logger.debug(f"virtual open state save failed: {_vs_exc}")
+        # Keep the restart state current for a crash (a graceful stop always saves). At most
+        # every 5 s from the candle path — 22 writes of ~85 KB per batch cost ~1.8 s.
+        if time.monotonic() - _last_candle_write['virtual_state'] >= 5.0:
+            try:
+                virtual_order_simulator.save_open_state(_vstate_path)
+                _last_candle_write['virtual_state'] = time.monotonic()
+            except Exception as _vs_exc:
+                logger.debug(f"virtual open state save failed: {_vs_exc}")
         # Preset efficiency writes are coalesced; write this candle's once, here.
         try:
             virtual_tracker.flush()
@@ -2242,10 +2248,15 @@ async def run() -> None:
             mirror=_virtual_only,
         )
 
-        try:
-            _write_open_positions()
-        except Exception as _wop_exc:
-            logger.debug(f"open_positions write failed: {_wop_exc}")
+        # Dashboard snapshot of open positions: from the candle path at most every 5 s —
+        # all 22 handlers of a batch used to rewrite it (~1.5 s per batch). Opens, closes
+        # and manual actions still write it immediately.
+        if time.monotonic() - _last_candle_write['open_positions'] >= 5.0:
+            try:
+                _write_open_positions()
+                _last_candle_write['open_positions'] = time.monotonic()
+            except Exception as _wop_exc:
+                logger.debug(f"open_positions write failed: {_wop_exc}")
 
         if best_for_this:
             trades_logger.info(f"BEST | symbol={symbol} | {best_for_this}")

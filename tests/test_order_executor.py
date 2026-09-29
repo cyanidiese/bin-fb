@@ -1747,3 +1747,28 @@ class TestSlippage:
                 entry, qty = 1.0, 1000.0
                 eff = effective_entry(entry, side, 0.1)
                 assert self._pnl(eff, close, qty, side) < self._pnl(entry, close, qty, side)
+
+
+class TestRealStateSurvivesACrash:
+    """restart_positions_{mode}.json was written only on a graceful stop; after a crash the
+    restart closed its own exchange positions as orphans. main.py now saves it after every
+    change (2026-09-29)."""
+
+    def test_main_saves_after_every_change(self):
+        main = src('main.py')
+        body = main.split('def _save_real_state', 1)[1].split('\n    def ', 1)[0]
+        assert 'save_open_positions(_restart_path, quiet=True)' in body
+        assert main.count('_save_real_state()') >= 6   # startup, tick close, candle, manual, switch, stop
+        tick = main.split('async def on_price_update', 1)[1].split('\n    async def ', 1)[0]
+        assert 'if closed:\n            _save_real_state()' in tick
+
+    def test_quiet_save_does_not_log(self, tmp_path, caplog):
+        import logging
+        ex = make_executor()
+        ex._open_orders['BTCUSDT'] = OpenOrder(symbol='BTCUSDT', preset_name='p', side='BUY',
+                                               entry_price=1.0, tp_price=2.0, sl_price=0.5,
+                                               quantity=1.0, leverage=5)
+        with caplog.at_level(logging.INFO):
+            assert ex.save_open_positions(tmp_path / 'r.json', quiet=True) == 1
+        assert 'Saved' not in caplog.text
+        assert (tmp_path / 'r.json').exists()

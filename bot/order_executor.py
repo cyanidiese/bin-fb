@@ -734,8 +734,9 @@ class OrderExecutor:
                 self._states[symbol] = OrderState.IDLE
         return results
 
-    def save_open_positions(self, path: Path) -> int:
-        """Persist open positions to disk for recovery on next restart."""
+    def save_open_positions(self, path: Path, quiet: bool = False) -> int:
+        """Persist open positions to disk for recovery on next restart (and after a
+        crash — main.py saves after every change, not only on a graceful stop)."""
         if not self._open_orders:
             try:
                 path.unlink(missing_ok=True)
@@ -757,7 +758,8 @@ class OrderExecutor:
         tmp = path.with_suffix('.json.tmp')
         tmp.write_text(json.dumps(state))
         tmp.replace(path)
-        logger.info(f"Saved {len(state)} open position(s) for restart recovery")
+        if not quiet:
+            logger.info(f"Saved {len(state)} open position(s) for restart recovery")
         return len(state)
 
     def restore_open_positions(self, path: Path) -> int:

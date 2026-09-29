@@ -2383,6 +2383,19 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 - **Shadow instance:** the switch is shown disabled, since that instance never places real orders.
 - **Tests:** `tests/test_dashboard.py::TestRealOrdersSwitch`.
 
+### Real positions survive a crash (2026-09-29)
+
+- **Before:** `data/restart_positions_{mode}.json` was written only on a graceful stop. After a crash, the restart found its exchange positions with no record and closed them at market as orphans.
+- **Now:** `main._save_real_state()` rewrites the file quietly whenever the positions may have changed:
+  - after startup (the restore consumes the file);
+  - at the end of every candle handler (new orders, candle-check and max-age closes);
+  - after any tick close;
+  - after a manual close;
+  - after a mode-switch close-out;
+  - after a stop with `close_positions_on_stop=true`.
+  The file is removed when nothing is open. `OrderExecutor.save_open_positions(path, quiet=True)` skips the log line.
+- **Tests:** `tests/test_order_executor.py::TestRealStateSurvivesACrash`.
+
 ## Candle-batch performance and WebSocket keepalive (2026-09-29)
 
 - **Symptom.** `Combined stream error: sent 1011 (internal error) keepalive ping timeout` about 4 times an hour, i.e. on almost every candle, since 2026-09-28.

@@ -782,6 +782,19 @@ async def run() -> None:
     if _restored:
         logger.info(f"Startup: {_restored} position(s) restored from restart state")
 
+    def _save_real_state() -> None:
+        """Keep restart_positions_{mode}.json equal to the open real positions at all times.
+        It used to be written only on a graceful stop, so after a CRASH the restart found
+        its exchange positions with no record and closed them at market as orphans — as
+        the 2026-09-29 deploy did to APTUSDT/ENAUSDT. Virtual positions were already saved
+        continuously; this gives real ones the same safety."""
+        if _virtual_only:
+            return
+        try:
+            order_executor.save_open_positions(_restart_path, quiet=True)
+        except Exception as _rs_exc:
+            logger.warning(f"Real restart state save failed: {_rs_exc}")
+
     def _record_virtual_closes(symbol: str, closed: list[dict]) -> None:
         """Feed strategy exits of virtual positions into preset scoring."""
         for vc in closed:
@@ -849,6 +862,7 @@ async def run() -> None:
         await order_executor.reconcile_with_exchange()
     _write_open_positions()  # overwrite any stale file from a crashed previous session
     virtual_tracker.flush()  # startup seeding / downtime replay may have left writes pending
+    _save_real_state()       # the restore consumed the file; a crash from here on keeps state
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
 
     # ── Callbacks ──────────────────────────────────────────────────────── #
@@ -2249,6 +2263,8 @@ async def run() -> None:
                 _last_candle_write['virtual_state'] = time.monotonic()
             except Exception as _vs_exc:
                 logger.debug(f"virtual open state save failed: {_vs_exc}")
+        # Real positions opened or closed in this handler: keep the restart file current.
+        _save_real_state()
         # Preset efficiency writes are coalesced; write this candle's once, here.
         try:
             virtual_tracker.flush()
@@ -2339,6 +2355,8 @@ async def run() -> None:
                 balance_estimated=_est,
             )
 
+        if closed:
+            _save_real_state()
         virtual_closed = await virtual_order_simulator.check_prices(symbol, price)
         _record_virtual_closes(symbol, virtual_closed)
 
@@ -2366,6 +2384,7 @@ async def run() -> None:
 
         if kind == 'real':
             res = await order_executor.close_order(sym, reason='manual_close')
+            _save_real_state()
             if res is None:
                 return {'ok': False, 'error': f'{sym} has no open real position'}
             logger.info(
@@ -2439,6 +2458,8 @@ async def run() -> None:
             )
         except asyncio.TimeoutError:
             logger.warning("Graceful shutdown timed out after 45s — forcing exit")
+        if _close_on_stop:
+            _save_real_state()   # whatever is still open (normally nothing) — never stale entries
         _write_open_positions()
         notifier.notify("info", "Bot stopped", "Clean shutdown via dashboard", "main")
         sys.exit(0)
@@ -2520,6 +2541,7 @@ async def run() -> None:
                     "stopped; retrying every 30s.", "mode_switch")
                 confirmations = 1   # retry on the next cycle without re-confirming
                 continue
+            _save_real_state()   # flat now: clears the old mode's restart file
             logger.warning(f"Mode switch to {target}: account flat — restarting into {target}")
             notifier.notify("info", f"Restarting in {target} mode",
                             "All positions closed at market.", "mode_switch")

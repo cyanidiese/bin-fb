@@ -2423,6 +2423,17 @@ Rule: change real where it can adopt virtual's behaviour; otherwise virtual inhe
   - New stop first, then the old one is cancelled; a failed cancel is queued and retried.
   - Skipped while rate-limit banned, or when the stop would trigger at once.
   - Config (per mode): `exchange_sl_follow_trail` (default true), `exchange_sl_buffer_pct`, `exchange_sl_min_move_pct`. `OpenOrder.exchange_sl_price` tracks the resting stop.
+  - No move while an earlier stop still awaits cancellation.
+
+### Part 3 — second pass (2026-09-29)
+
+- **R5 — a real signal comes from the symbol's own new candle.** The placement loop runs in every closing symbol's handler. It now considers a symbol only once `Analyzer.last_candle_open() >= candle_ts`. Before, 16 of 22 timed placements were decided on the previous candle's trend, from another symbol's handler.
+- **Rank 1 follows substitution.** Rank 1 uses the lock, else the preset real substituted this candle (`on_candle_close(substituted_preset=)`), else the best.
+- **R6 — real downtime replay.** At startup, before reconciliation, `OrderExecutor.replay_downtime()` runs the candles missed during the restart through each restored position. Restart state now carries `saved_at_ms`.
+  - An SL/trail hit books the recovered exchange-stop fill.
+  - A TP hit closes at market now.
+- **V6 — virtual inherits the TP rule.** A virtual TP found by the replay is booked at the restart price, now; SL/trail keep their trigger price.
+- **Review fix.** `real_max_age_candles` uses the configured timeframe.
 
 ## State Snapshots (2026-09-28)
 

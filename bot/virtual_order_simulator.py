@@ -215,6 +215,7 @@ class VirtualOrderSimulator:
         virtual_only: bool = False,
         real_slot_busy: bool = False,
         real_preset: Optional[str] = None,
+        substituted_preset: Optional[str] = None,
     ) -> None:
         # When a preset is manually locked for real orders, exclude it from the
         # virtual pool and shift the rank index so the formerly-best preset fills
@@ -274,8 +275,9 @@ class VirtualOrderSimulator:
                     # to its own exit instead of being cut as 'real_order_took_over'
                     # (spec 2026-09-29 part 2, V5); nothing new opens while real is busy.
                     continue
-                # the preset that would have traded: the manual lock, else the best
-                _r1_name = locked_preset or (
+                # the preset that would have traded: the manual lock, else the preset real
+                # substituted in this candle (parity part 3), else the best
+                _r1_name = locked_preset or substituted_preset or (
                     self._all_presets and sorted(
                         self._all_presets.items(),
                         key=lambda kv: self._virtual_tracker.get_preset_rank_key(symbol, kv[0]),
@@ -835,7 +837,13 @@ class VirtualOrderSimulator:
         return closed
 
     def _gate_block(self, symbol: str, preset: str, side: str, ps) -> str | None:
-        """Mirror of the real cooldown checks in _try_place_order."""
+        """Mirror of the real cooldown checks in _try_place_order.
+
+        Keyed symbol:preset:side, where real uses symbol:side. On purpose: real holds ONE
+        position per symbol, so its streak is the run of whichever preset occupies the
+        slot. Ranks >= 2 run dozens of presets on the same symbol at once; a shared
+        symbol:side counter would trip after one adverse move across all of them and block
+        every preset. Per preset is the equivalent of 'this preset in the real slot'."""
         now = int(datetime.now(timezone.utc).timestamp() * 1000)
         sk = f"{symbol}:{preset}:{side}"
         if self._gate['streak_until'].get(sk, 0) >= now:
@@ -852,6 +860,8 @@ class VirtualOrderSimulator:
         """Mirror of main._update_loss_streak, keyed per preset."""
         g = record.get('gates') or {}
         if not g:
+            logger.debug(f"[{symbol}] {record.get('preset_name')}: no gate settings on record "
+                         f"(opened before 2026-09-29) — cooldowns not updated")
             return
         preset, side = record['preset_name'], record['side']
         sk = f"{symbol}:{preset}:{side}"
@@ -987,8 +997,15 @@ class VirtualOrderSimulator:
                                 candle_open=float(k[1]), candle_close=float(k[4]))
             if result is not None:
                 when = datetime.fromtimestamp(close_ms / 1000, tz=timezone.utc)
-                return await self._close_position(
-                    symbol, rank, result, fake.close_price or float(k[4]), when)
+                price = fake.close_price or float(k[4])
+                if result == 'win':
+                    # The TP does not rest on the exchange, so a real position whose TP
+                    # was hit while the bot was down closes at market on restart
+                    # (OrderExecutor.replay_downtime). Same here: the restart price, now.
+                    # SL/trail exits keep their trigger — the exchange stop took them.
+                    price = float(klines[-1][4]) if klines else price
+                    when = datetime.now(timezone.utc)
+                return await self._close_position(symbol, rank, result, price, when)
         return None
 
     # ------------------------------------------------------------------ #

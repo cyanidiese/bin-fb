@@ -267,3 +267,93 @@ def test_main_syncs_the_exchange_stop_each_candle_unless_virtual_only():
     assert 'order_executor.sync_exchange_stop(' in MAIN
     i = MAIN.index('order_executor.sync_exchange_stop(')
     assert "not _virtual_only and risk_cfg.get('exchange_sl_follow_trail', True)" in MAIN[i - 400:i]
+
+
+# ── Part 3 ───────────────────────────────────────────────────────────────────
+
+def test_a_symbol_is_only_placed_once_its_own_candle_is_in():
+    loop = MAIN.split('for sym in _placement_symbols:', 1)[1].split('best_sym = _sym_az.get_best_recommendation()', 1)[0]
+    assert '_sym_az.last_candle_open() < candle_ts' in loop
+
+
+def test_analyzer_reports_its_newest_candle():
+    from bot.analyzer import Analyzer
+    a = Analyzer.__new__(Analyzer)
+    a._klines = []
+    assert a.last_candle_open() == 0
+    a._klines = [[1000, '1', '2', '0.5', '1.5'], [2000, '1', '2', '0.5', '1.5']]
+    assert a.last_candle_open() == 2000
+
+
+@pytest.mark.asyncio
+async def test_rank_1_uses_the_substituted_preset(tmp_path):
+    sim = make_simulator(tmp_path)
+    await _candle(sim, substituted_preset='preset_c')
+    assert sim._rank_open[1][SYM]['preset_name'] == 'preset_c'
+    assert 'substituted_preset=_substituted_preset.get(symbol)' in MAIN
+
+
+def _restored_executor(tmp_path, fake, saved_at, opened):
+    ex = make_executor(tmp_path)
+    ex._open_orders[SYM] = OpenOrder(symbol=SYM, preset_name='p', side='BUY', entry_price=100.0,
+                                     tp_price=110.0, sl_price=95.0, quantity=1.0, leverage=5,
+                                     open_time=opened.isoformat())
+    ex._fake_orders[SYM] = fake
+    ex._restored_saved_at[SYM] = saved_at
+    ex._finalize_close = AsyncMock(return_value={'symbol': SYM, 'preset_name': 'p', 'result': 'win',
+                                                 'pnl_usdt': 5.0, 'close_price': 111.0, 'entry_price': 100.0})
+    return ex
+
+
+@pytest.mark.asyncio
+async def test_a_tp_hit_during_the_restart_closes_the_real_position_now(tmp_path):
+    fake = FakeOrder(side='BUY', entry_price=100.0, tp=110.0, sl=95.0, level=2, signal_type='x', candle_index=0)
+    saved = _now_ms() - 3 * 900_000
+    ex = _restored_executor(tmp_path, fake, saved, datetime.now(timezone.utc) - timedelta(hours=3))
+    k = lambda close_ms, h, l: [close_ms - 900_000 + 1, '100', str(h), str(l), '100', '0', close_ms]
+    out = await ex.replay_downtime(SYM, [k(saved - 1000, 120, 99),          # before the save
+                                         k(saved + 900_000, 111, 99)])      # TP during downtime
+    assert out and out[0]['result'] == 'win'
+    assert ex._finalize_close.call_args.args[2] == 'win' and ex._finalize_close.call_args.args[3] == 110.0
+
+
+@pytest.mark.asyncio
+async def test_no_real_replay_without_a_saved_time(tmp_path):
+    fake = FakeOrder(side='BUY', entry_price=100.0, tp=110.0, sl=95.0, level=2, signal_type='x', candle_index=0)
+    ex = _restored_executor(tmp_path, fake, 0, datetime.now(timezone.utc) - timedelta(hours=3))
+    assert await ex.replay_downtime(SYM, [[1, '100', '200', '1', '100', '0', 2]]) == []
+    ex._finalize_close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_virtual_tp_during_the_restart_closes_at_the_restart_price(tmp_path):
+    a = make_simulator(tmp_path)
+    _open(a, tp=110.0)
+    path = tmp_path / 's.json'
+    a.save_open_state(path)
+    saved = json.loads(path.read_text())['saved_at_ms']
+    klines = [[saved + 1, '100', '111', '99', '108', '0', saved + 900_000],
+              [saved + 900_001, '108', '109', '107', '107.5', '0', _now_ms() + 900_000]]  # forming
+    b = make_simulator(tmp_path)
+    with patch('bot.virtual_order_simulator.datetime', wraps=datetime) as dt:
+        dt.now.return_value = datetime.fromtimestamp((saved + 1_000_000) / 1000, tz=timezone.utc)
+        dt.fromtimestamp = datetime.fromtimestamp
+        dt.fromisoformat = datetime.fromisoformat
+        _, closed = await b.restore_open_state(path, lambda s: klines, [SYM])
+    assert closed[0][1]['result'] == 'win' and closed[0][1]['close_price'] == 107.5
+
+
+def test_main_replays_restored_real_positions_before_reconciling():
+    assert MAIN.index('order_executor.replay_downtime(') < MAIN.index('await order_executor.reconcile_with_exchange()')
+
+
+@pytest.mark.asyncio
+async def test_no_stop_move_while_an_old_stop_awaits_cancel(tmp_path):
+    ex = _executor_with_position(tmp_path, _trailing_fake())
+    ex._pending_sl_cancels[SYM] = ['stale']
+    assert await ex.sync_exchange_stop(SYM) is False
+    ex._place_sl_on_exchange.assert_not_called()
+
+
+def test_real_max_age_uses_the_configured_timeframe():
+    assert '_real_max_age * _tf_to_ms(timeframe) / 60_000.0' in MAIN

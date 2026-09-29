@@ -169,5 +169,13 @@ class Analyzer:
     def get_klines(self) -> list:
         return list(self._klines)
 
+    def last_candle_open(self) -> int:
+        """Open time (ms) of the newest candle this analyzer holds, 0 when empty.
+        Cheap — get_klines() copies up to 5000 rows."""
+        try:
+            return int(self._klines[-1][0]) if self._klines else 0
+        except (IndexError, TypeError, ValueError):
+            return 0
+
     def get_trend(self) -> Optional[Trend]:
         return self._trend

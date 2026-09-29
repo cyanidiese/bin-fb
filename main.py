@@ -813,6 +813,17 @@ async def run() -> None:
         except Exception as _vc_exc:
             logger.warning(f"[{symbol}] Virtual candle check failed: {_vc_exc}")
 
+    # Real positions restored from the restart state replay the candles missed while the
+    # bot was down, as virtual ones do (parity part 3, R6).
+    for _sym in list(order_executor.get_open_orders().keys()):
+        try:
+            _az = analyzers.get(_sym)
+            for _c in await order_executor.replay_downtime(_sym, _az.get_klines() if _az else []):
+                if not (_c['pnl_usdt'] == 0.0 and _c.get('close_price') == _c.get('entry_price')):
+                    virtual_tracker.record_closed_trade(_c['symbol'], _c['preset_name'], _c['pnl_usdt'])
+        except Exception as _rr_exc:
+            logger.warning(f"[{_sym}] Real downtime replay failed: {_rr_exc}")
+
     # Virtual positions survive a restart: re-open what was saved and replay the candles
     # that closed meanwhile, so an exit during the downtime lands on its own candle.
     _vstate_path = _PROJECT_ROOT / 'data' / f'virtual_open_state_{mode_manager.current_mode}.json'
@@ -1824,6 +1835,14 @@ async def run() -> None:
             _sym_az = analyzer if sym == symbol else analyzers.get(sym)
             if _sym_az is None:
                 continue
+            # Only once this symbol's OWN candle for this close is in its analyzer. The
+            # loop re-runs in every closing symbol's handler, so without this a symbol was
+            # traded from another symbol's handler on the PREVIOUS candle's trend, while
+            # its virtual orders (run in its own handler) saw the new candle — 16 of 22
+            # timed placements, 2026-09-27/28. It is picked up in its own handler instead.
+            # Spec 2026-09-29-virtual-real-parity part 3, R5.
+            if candle_ts > 0 and _sym_az.last_candle_open() < candle_ts:
+                continue
             best_sym = _sym_az.get_best_recommendation()
             _bp = None
             if best_sym is None:
@@ -2092,7 +2111,7 @@ async def run() -> None:
                             - datetime.fromisoformat(_oo.open_time)).total_seconds() / 60.0
             except (TypeError, ValueError):
                 _age_min = 0.0
-            if _age_min > _real_max_age * 15.0:
+            if _age_min > _real_max_age * _tf_to_ms(timeframe) / 60_000.0:
                 _res = await order_executor.close_order(symbol, reason='max_age')
                 if _res is not None:
                     logger.info(
@@ -2196,6 +2215,7 @@ async def run() -> None:
             locked_preset=_locked_preset,
             real_slot_busy=_real_slot_busy,
             real_preset=_real_preset,
+            substituted_preset=_substituted_preset.get(symbol),
         )
         _record_virtual_summary(symbol, candle_ts)
         # Keep the restart state current, so even a crash loses at most one candle.

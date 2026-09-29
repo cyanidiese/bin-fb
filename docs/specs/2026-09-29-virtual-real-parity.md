@@ -146,3 +146,25 @@ The gates did not cost profit, so real keeps them and virtual inherits them.
 - **Profit-factor / hard stop.** Account-level; see V4.
 - **Exit fill slippage in virtual.** Waits for R3 data rather than guessing a number.
 - **Rank balances synced to the real balance at each start.** This already mirrors the real account.
+
+---
+
+# Part 3 — second pass (2026-09-29)
+
+| # | Detail | Before | After | Side |
+|---|---|---|---|---|
+| R5 | Which candle a real signal comes from | The placement loop runs in every closing symbol's handler, so symbol B could be traded from A's handler on B's PREVIOUS candle's trend. 16 of 22 timed placements (Sep 27–28) happened before B's own handler; B's virtual orders always see the new candle | A symbol is a candidate only once `Analyzer.last_candle_open() >= candle_ts`, i.e. in its own handler or later | real adopts virtual |
+| S | Rank-1 preset | lock, else best (ignored substitution) | lock, else the preset real substituted this candle, else best | virtual inherits |
+| R6 | Restart: exits missed while down | Virtual replays the downtime candles; real resumed on ticks only (a TP hit during the downtime was never taken) | `OrderExecutor.replay_downtime()` at startup, before reconciliation. An SL/trail hit books the recovered exchange-stop fill; a TP hit closes at market now (exit_trigger_price = TP) | real adopts virtual |
+| V6 | Virtual TP found by the replay | booked at the TP price at that candle | booked at the restart price, now — as the real TP is closed on restart (the TP does not rest on the exchange); SL/trail keep their trigger | virtual inherits |
+
+## Not changed
+
+- **Profit-factor gate.** Per symbol, but computed from static backtest data (startup backtests are off), so it acts like a permanent disable. Virtual keeps simulating, as for disabled symbols.
+- **Gate keys.** Kept per preset (see the `_gate_block` docstring).
+
+## Review fixes (lightweight review, Sonnet)
+
+- `real_max_age_candles` uses the configured timeframe, not 15 min.
+- `sync_exchange_stop` does not move while an old stop awaits cancellation.
+- Gate updates on old records log at debug level.

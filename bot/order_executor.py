@@ -142,6 +142,7 @@ class OrderExecutor:
         self._candle_index: int = 0  # used by check_all_orders (legacy, single-symbol tests)
         self._symbol_candle_index: dict[str, int] = {}  # per-symbol candle counter for check_symbol_candle
         self._last_tick: dict[str, float] = {}  # latest tick price per symbol (sync_exchange_stop)
+        self._restored_saved_at: dict[str, int] = {}  # symbol -> ms the restart state was saved
         self._closing: set[str] = set()
 
         cfg = load_risk_config()
@@ -633,6 +634,50 @@ class OrderExecutor:
         finally:
             self._closing.discard(symbol)
 
+    async def replay_downtime(self, symbol: str, klines: list) -> list[dict]:
+        """Run the candles that closed while the bot was down through a restored
+        position's FakeOrder, as virtual positions are replayed (parity part 3, R6).
+
+        An SL/trail hit during the downtime was executed by the exchange stop; closing
+        now finds the position gone and books the recovered fill. A TP hit — the one exit
+        that does not rest on the exchange — is closed at market now, with the TP as its
+        exit_trigger_price. Klines: [open_ms, o, h, l, c, v, close_ms, ...]."""
+        saved_at = self._restored_saved_at.pop(symbol, 0)
+        order = self._open_orders.get(symbol)
+        fake = self._fake_orders.get(symbol)
+        if not saved_at or order is None or fake is None:
+            return []
+        try:
+            opened_ms = int(datetime.fromisoformat(order.open_time).timestamp() * 1000)
+        except (TypeError, ValueError):
+            opened_ms = saved_at
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        for k in klines:
+            try:
+                close_ms = int(k[6])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if close_ms <= saved_at or close_ms <= opened_ms:
+                continue
+            if close_ms > now_ms:
+                break
+            self._symbol_candle_index[symbol] = self._symbol_candle_index.get(symbol, 0) + 1
+            result = fake.check(float(k[2]), float(k[3]), self._symbol_candle_index[symbol],
+                                candle_open=float(k[1]), candle_close=float(k[4]))
+            if result is None:
+                continue
+            logger.info(f"[{symbol}] Downtime replay: {result} during the restart — closing now")
+            if symbol in self._closing:
+                return []
+            self._closing.add(symbol)
+            try:
+                info = await self._finalize_close(
+                    symbol, order, result, fake.close_price or float(k[4]))
+            finally:
+                self._closing.discard(symbol)
+            return [info] if info is not None else []
+        return []
+
     def _opened_after(self, symbol: str, candle_close_ms: int) -> bool:
         """True when the open position began at or after the candle's close — i.e. the
         candle is entirely before the position. Unknown open time → False (check it)."""
@@ -706,6 +751,7 @@ class OrderExecutor:
                 'fake_order': fake.get_state() if fake else None,
                 # max_losing_candles counts on this; a restart used to reset it to 0 (R2)
                 'candle_index': self._symbol_candle_index.get(symbol, 0),
+                'saved_at_ms': int(datetime.now(timezone.utc).timestamp() * 1000),
             }
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix('.json.tmp')
@@ -734,6 +780,8 @@ class OrderExecutor:
                     self._fake_orders[symbol] = FakeOrder.from_state(fake_state)
                 if data.get('candle_index'):
                     self._symbol_candle_index[symbol] = int(data['candle_index'])
+                if data.get('saved_at_ms'):
+                    self._restored_saved_at[symbol] = int(data['saved_at_ms'])
                 logger.info(
                     f"[{symbol}] Restored open position: {order.side} entry={order.entry_price} "
                     f"SL={order.sl_price} TP={order.tp_price} preset={order.preset_name}"
@@ -871,7 +919,9 @@ class OrderExecutor:
         order = self._open_orders.get(symbol)
         fake = self._fake_orders.get(symbol)
         if (order is None or fake is None or self._feed is None or not order.sl_order_id
-                or symbol in self._closing or symbol in self._pending_close):
+                or symbol in self._closing or symbol in self._pending_close
+                # an earlier stop is still waiting to be cancelled — don't stack another
+                or self._pending_sl_cancels.get(symbol)):
             return False
         _key = 'testnet' if getattr(self._feed, '_is_testnet', False) else 'production'
         if rl_guard.blocked_for(_key) > 0:

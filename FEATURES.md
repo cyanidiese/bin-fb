@@ -2371,6 +2371,18 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 
 ---
 
+## Real-orders switch on the Risk page (2026-09-29)
+
+- **What:** a prominent ON/OFF switch at the top of the Risk page (`dashboard/components/risk/RealOrdersSwitch.tsx`) for the viewed mode. It saves `real_orders_enabled` (per mode, default true, `config/risk_config.py`) immediately via `POST /api/risk?mode=…`; it is not part of Save All.
+- **Bot** (`main.py` candle handler): when false, the real placement pass is emptied, the same mechanism the virtual-only mirror uses. So:
+  - no new real orders from the next candle;
+  - open real positions are still managed to their exit (TP/SL/trail, exchange stop sync);
+  - virtual orders are unaffected, and rank 1 records every signal real would have taken, because the real slot is never busy;
+  - weights are untouched.
+- **Announced:** a change is logged and sent through the notifier (system log and Telegram) once. A start with the switch off logs a warning.
+- **Shadow instance:** the switch is shown disabled, since that instance never places real orders.
+- **Tests:** `tests/test_dashboard.py::TestRealOrdersSwitch`.
+
 ## Candle-batch performance and WebSocket keepalive (2026-09-29)
 
 - **Symptom.** `Combined stream error: sent 1011 (internal error) keepalive ping timeout` about 4 times an hour, i.e. on almost every candle, since 2026-09-28.

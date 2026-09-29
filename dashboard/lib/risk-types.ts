@@ -5,6 +5,9 @@ export interface BalanceTier {
 }
 
 export interface RiskConfig {
+  /** Global real-order switch for this mode (Risk page). false = no NEW real orders;
+   *  open real positions are still managed and virtual orders are unaffected. Default true. */
+  real_orders_enabled?: boolean
   /** When the best preset yields no recommendation, fall back ONE rank to the next
    *  live-proven, currently-profitable preset. Off by default. */
   substitution_enabled?: boolean

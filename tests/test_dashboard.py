@@ -599,3 +599,31 @@ class TestReplayApi:
 
         with pytest.raises(ValueError):
             replay_api.replay('../etc', 10)
+
+
+class TestRealOrdersSwitch:
+    """Risk page switch that stops NEW real orders without touching weights (2026-09-29):
+    risk_config real_orders_enabled, per mode, saved immediately, applied at the next candle."""
+
+    def test_default_is_on_and_per_mode(self):
+        from config.risk_config import DEFAULT_CONFIG, SHARED_KEYS
+        assert DEFAULT_CONFIG['real_orders_enabled'] is True
+        assert 'real_orders_enabled' not in SHARED_KEYS
+
+    def test_the_bot_empties_the_placement_pass_when_off(self):
+        main = src('main.py')
+        i = main.index("_real_on = bool(risk_cfg.get('real_orders_enabled', True))")
+        block = main[i:i + 1400]
+        assert 'if not _real_on:\n            _placement_symbols = []' in block
+        assert 'notifier.notify(' in block, 'a change must be announced'
+        assert main.index('_real_on = bool(') < main.index('for sym in _placement_symbols:')
+
+    def test_the_switch_saves_the_mode_key_immediately(self):
+        comp = src('dashboard/components/risk/RealOrdersSwitch.tsx')
+        assert "JSON.stringify({ real_orders_enabled: next })" in comp
+        assert '/api/risk?mode=${mode}' in comp and 'role="switch"' in comp and 'aria-checked' in comp
+
+    def test_the_risk_page_shows_it_and_keeps_save_all_consistent(self):
+        page = src('dashboard/app/risk/page.tsx')
+        assert '<RealOrdersSwitch' in page
+        assert 'setLoaded(l => l ? { ...l, real_orders_enabled: v } : l)' in page

@@ -802,6 +802,9 @@ async def run() -> None:
             if not (vc['pnl_usdt'] == 0.0 and vc.get('close_price') == vc.get('entry_price')):
                 virtual_tracker.record_closed_trade(symbol, vc['preset_name'], vc['pnl_usdt'])
 
+    # last seen value of risk_config real_orders_enabled, to announce changes once
+    _real_orders_state: list = [None]
+
     # monotonic time of the last per-candle write of each throttled file
     _last_candle_write = {'open_positions': 0.0, 'virtual_state': 0.0}
 
@@ -1824,6 +1827,22 @@ async def run() -> None:
         _placement_symbols = [] if _virtual_only else symbol_registry.get_symbols()
         if _switch_pending[0] is not None:
             # A mode switch is closing everything: no new real orders (skip only).
+            _placement_symbols = []
+        # The Risk page's "Real orders" switch (risk_config real_orders_enabled, per mode).
+        # OFF = no new real orders; open real positions are still managed to their exit,
+        # and virtual orders are untouched — rank 1 then records every signal real would
+        # have taken, since the real slot is never busy. Weights stay as they are.
+        _real_on = bool(risk_cfg.get('real_orders_enabled', True))
+        if _real_on != _real_orders_state[0] and not _virtual_only:
+            if _real_orders_state[0] is not None:
+                _msg = ('Real orders ENABLED — new real orders resume' if _real_on else
+                        'Real orders DISABLED — no new real orders; open positions are still managed')
+                logger.warning(f"{_msg} (risk_config real_orders_enabled={_real_on})")
+                notifier.notify('warning', _msg, 'Changed on the Risk page.', 'risk')
+            elif not _real_on:
+                logger.warning("Real orders are DISABLED (risk_config real_orders_enabled=false)")
+            _real_orders_state[0] = _real_on
+        if not _real_on:
             _placement_symbols = []
         for sym in _placement_symbols:
             if symbol_registry.is_disabled(sym):

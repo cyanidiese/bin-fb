@@ -31,6 +31,9 @@ DEFAULT_CONFIG: dict = {
     # 0 = off (default): a 24h limit replayed on 30 days of real trades was +74 USDT over
     # only 9 trades, 12h was -91. Per mode. Spec 2026-09-29-virtual-real-parity.
     "real_max_age_candles": 0,
+    # Global real-order switch (Risk page), per mode. false = no NEW real orders; open real
+    # positions are still managed to their exit and virtual orders are unaffected.
+    "real_orders_enabled": True,
     # The exchange stop of a real position follows the software stop (trail / partial /
     # early exit), placed buffer_pct beyond it so the software normally exits first, and
     # moved only when tighter by min_move_pct of price. Per mode. Spec 2026-09-29 part 2.

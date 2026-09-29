@@ -15,6 +15,7 @@ import InstanceToggle, { oppositeMode, type Instance } from '@/components/Instan
 import PresetRankingSection from '@/components/risk/PresetRankingSection'
 import MaxLossSection from '@/components/risk/MaxLossSection'
 import WeightSuggestions from '@/components/risk/WeightSuggestions'
+import RealOrdersSwitch from '@/components/risk/RealOrdersSwitch'
 
 const POLL_MS = 5000
 
@@ -191,6 +192,18 @@ export default function RiskPage() {
         {' '}Shared by both modes (<span className="font-mono text-gray-400">risk_config_shared.json</span>):
         preset ranking, signal filters, Telegram and backtest settings. Locked presets are set on the Trades page.
       </p>
+
+      <RealOrdersSwitch
+        mode={configMode ?? dataMode}
+        enabled={config.real_orders_enabled !== false}
+        shadow={instance === 'shadow'}
+        onSaved={v => {
+          // saved server-side: reflect it in both the edit copy and the loaded copy, so
+          // Save All neither re-sends it nor drops unsaved edits elsewhere on the page
+          setConfig(c => c ? { ...c, real_orders_enabled: v } : c)
+          setLoaded(l => l ? { ...l, real_orders_enabled: v } : l)
+        }}
+      />
 
       <ScenarioSection config={config} patchConfig={patchConfig} />
 

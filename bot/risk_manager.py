@@ -93,6 +93,7 @@ class RiskManager:
 
         # {symbol: (score: float, timestamp: float, true_pf: float)}
         self._perf_cache: dict[str, tuple[float, float, float]] = {}
+        self._perf_version: dict[str, tuple | None] = {}  # backtest file (mtime_ns, size)
 
         self._scenario_name: str = "default"
         self._scenario_global_level: int = 1
@@ -526,13 +527,24 @@ class RiskManager:
     def _get_perf_score(self, symbol: str, cfg: dict) -> tuple[float, float]:
         """Returns (intra_score, true_pf). Updates cache if stale."""
         now = time.monotonic()
+        # Keyed on the backtest file's version, not a 60 s timer: those files (~1 MB each,
+        # 19 MB in test mode) only change when a backtest runs, yet the timer re-parsed
+        # one per symbol every candle — ~3.5 s of the batch (profiled 2026-09-29).
+        try:
+            st = self._backtest_path(symbol).stat()
+            version = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            version = None
         cached = self._perf_cache.get(symbol)
         if cached is not None:
             score, ts, pf = cached[:3]
-            if now - ts < _PERF_CACHE_TTL:
+            if version is not None and self._perf_version.get(symbol) == version:
+                return score, pf
+            if version is None and now - ts < _PERF_CACHE_TTL:
                 return score, pf
         score, pf, raw_pct = self._compute_perf_score(symbol)
         self._perf_cache[symbol] = (score, now, pf, raw_pct)
+        self._perf_version[symbol] = version
         return score, pf
 
     def _backtest_path(self, symbol: str) -> Path:
@@ -657,7 +669,7 @@ class RiskManager:
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(snap, indent=2))
+            tmp.write_text(json.dumps(snap, separators=(',', ':')))
             tmp.replace(self._state_path)
         except Exception as e:
             logger.error(f"RiskManager: snapshot write failed: {e}")

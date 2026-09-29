@@ -36,7 +36,7 @@ def _make_tracker(tmp_path, mode='test', min_trades=3):
 def _patch_config(min_trades=3, window_size=10, floor=-20.0):
     """Patch load_risk_config so tests don't depend on a risk_config.json on disk."""
     return patch(
-        'bot.virtual_tracker.load_risk_config',
+        'bot.virtual_tracker.risk_config_view',
         return_value={
             'min_trades_for_ranking': min_trades,
             'ranking_window_size': window_size,
@@ -389,7 +389,7 @@ class TestPresetSubstitution:
             efficiency_path=tmp_path / "eff.json",
             get_min_trades=lambda _s: 8,
         )
-        monkeypatch.setattr("bot.virtual_tracker.load_risk_config",
+        monkeypatch.setattr("bot.virtual_tracker.risk_config_view",
                             lambda: {"ranking_window_size": 10, "preset_blocklist": []})
         t._efficiency = {"INJUSDT": {
             # live-proven but currently negative
@@ -464,7 +464,7 @@ class TestPresetSubstitution:
             "trade_count": 40, "recent_trades": [0.5] * 10,
             "total_winning_usdt": 30.0, "seeded_winning_usdt": 0.0,
         }
-        monkeypatch.setattr("bot.virtual_tracker.load_risk_config",
+        monkeypatch.setattr("bot.virtual_tracker.risk_config_view",
                             lambda: {"ranking_window_size": 10,
                                      "preset_blocklist": ["second_good"]})
         assert tracker.substitute_preset("INJUSDT", exclude="proven_positive") is None
@@ -522,3 +522,34 @@ class TestPresetSubstitution:
     def test_removing_the_lock_restores_substitution(self):
         cfg = {"substitution_enabled": True, "locked_presets": {}}
         assert _should_substitute(cfg, "INJUSDT") is True
+
+
+class TestEfficiencyWritesAreCoalesced:
+    """The ~800 KB efficiency file was rewritten on every closed trade (10.7 s of a 39 s
+    candle batch, 2026-09-29). Now at most once per _SAVE_INTERVAL_S; flush() writes the rest."""
+
+    def _tracker(self, tmp_path):
+        from bot.virtual_tracker import VirtualTracker
+        return VirtualTracker(mode='test', orders_path=tmp_path / 'vo.json',
+                              efficiency_path=tmp_path / 'eff.json')
+
+    def test_a_burst_writes_once_and_flush_writes_the_rest(self, tmp_path, monkeypatch):
+        vt = self._tracker(tmp_path)
+        writes = []
+        real_flush = vt.flush
+        monkeypatch.setattr(vt, 'flush', lambda: (writes.append(1), real_flush())[1])
+        for i in range(20):
+            vt.record_closed_trade('BTCUSDT', 'p', 1.0 + i)
+        assert len(writes) <= 1, 'every close still rewrote the file'
+        vt.flush()
+        data = json.loads((tmp_path / 'eff.json').read_text())
+        assert data['BTCUSDT']['p']['trade_count'] == 20
+
+    def test_flush_without_changes_does_not_write(self, tmp_path):
+        vt = self._tracker(tmp_path)
+        vt.flush()
+        assert not (tmp_path / 'eff.json').exists()
+
+    def test_main_flushes_each_candle_and_on_stop(self):
+        from tests.factories import src
+        assert src('main.py').count('virtual_tracker.flush()') >= 3

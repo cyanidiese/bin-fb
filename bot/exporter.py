@@ -110,7 +110,8 @@ def export(
     output_path = _results_path(symbol, mode, mirror)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(result, indent=2))
+        # compact: pretty-printing every symbol's chart each candle cost ~5 s per batch
+        output_path.write_text(json.dumps(result, separators=(',', ':')))
     except Exception as e:
         logger.error(f"Failed to write {output_path.name}: {e}")
 

@@ -940,3 +940,46 @@ class TestRecalcScriptRanges:
 
     def test_page_still_offers_two_weeks(self):
         assert '14d' in PAGE_KEYS
+
+
+class TestRiskConfigView:
+    """risk_config_view(): a cached, read-only view for hot paths (2026-09-29 profiling:
+    load_risk_config() was called tens of thousands of times per candle batch)."""
+
+    @pytest.fixture
+    def cfgdir(self, tmp_path, monkeypatch):
+        import config.risk_config as rc
+        monkeypatch.setattr(rc, '_ROOT', tmp_path)
+        monkeypatch.setattr(rc, '_active_mode', 'test')
+        rc._VIEW_CACHE.clear()
+        (tmp_path / 'risk_config_test.json').write_text(json.dumps({'max_trade_pct': 7}))
+        yield tmp_path
+        rc._VIEW_CACHE.clear()
+
+    def test_it_matches_load_risk_config(self, cfgdir):
+        import config.risk_config as rc
+        assert dict(rc.risk_config_view()) == rc.load_risk_config()
+
+    def test_it_is_read_only(self, cfgdir):
+        import config.risk_config as rc
+        with pytest.raises(TypeError):
+            rc.risk_config_view()['max_trade_pct'] = 1
+
+    def test_it_is_not_rebuilt_while_the_files_are_unchanged(self, cfgdir, monkeypatch):
+        import config.risk_config as rc
+        rc.risk_config_view()
+        calls = []
+        real = rc.load_risk_config
+        monkeypatch.setattr(rc, 'load_risk_config', lambda *a, **k: calls.append(1) or real(*a, **k))
+        for _ in range(50):
+            rc.risk_config_view()
+        assert calls == []
+
+    def test_an_edit_is_picked_up(self, cfgdir):
+        import os
+        import config.risk_config as rc
+        assert rc.risk_config_view()['max_trade_pct'] == 7
+        f = cfgdir / 'risk_config_test.json'
+        f.write_text(json.dumps({'max_trade_pct': 12}))
+        os.utime(f, ns=(1, f.stat().st_mtime_ns + 1_000_000))   # a distinct mtime, as any real edit has
+        assert rc.risk_config_view()['max_trade_pct'] == 12

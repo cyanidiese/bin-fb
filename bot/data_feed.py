@@ -435,7 +435,7 @@ class DataFeed:
         while True:
             url = f"{self._ws_base}/{symbol.lower()}@kline_{timeframe}"
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                async with websockets.connect(url, ping_interval=20, ping_timeout=10, max_queue=None) as ws:
                     logger.info(f"WebSocket connected: {url}")
                     backoff = 1
                     async for raw in ws:
@@ -473,7 +473,13 @@ class DataFeed:
             symbols = get_symbols()
             url = self.combined_stream_url(symbols, timeframe, self._is_testnet)
             try:
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                # max_queue=None: candles are processed inline below, and websockets'
+                # default 32-message queue filled with ticks within a second of a batch,
+                # after which the library stopped reading the socket — the server's pong
+                # went unread and every long batch ended in '1011 keepalive ping timeout'
+                # (≈4/hour since 2026-09-28). An unbounded queue keeps frames, pongs
+                # included, flowing; a 30 s batch buffers ~3k small messages.
+                async with websockets.connect(url, ping_interval=20, ping_timeout=10, max_queue=None) as ws:
                     logger.info(f"Combined stream connected ({len(symbols)} symbols): {', '.join(symbols)}")
                     backoff = 1
                     async for raw in ws:

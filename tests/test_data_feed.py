@@ -1177,3 +1177,15 @@ class TestSymbolDiscovery:
                     )
         # Zero trades → total_order_count=0 → returns None (no trades produced)
         assert result is None
+
+
+class TestSocketKeepsBeingRead:
+    """websockets' default 32-message queue filled with ticks while a candle batch ran
+    inline; the library then stopped reading, the pong went unread and the stream died with
+    '1011 keepalive ping timeout' (~4/hour since 2026-09-28)."""
+
+    def test_every_stream_connects_with_an_unbounded_queue(self):
+        from tests.factories import src
+        import re
+        calls = re.findall(r'websockets\.connect\([^)]*\)', src('bot/data_feed.py'))
+        assert calls and all('max_queue=None' in c for c in calls), calls

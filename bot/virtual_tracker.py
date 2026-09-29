@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from config.risk_config import load_risk_config
+from config.risk_config import risk_config_view
 from bot import analysis_log
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ class VirtualTracker:
             return
         try:
             data = json.loads(backtest_path.read_text())
-            _leverage_factor = float(load_risk_config().get("backtest_seed_leverage_factor", 1.0))
+            _leverage_factor = float(risk_config_view().get("backtest_seed_leverage_factor", 1.0))
             for name, preset_data in data.get("presets", {}).items():
                 balance_start = preset_data.get("balance_start", 1000.0)
                 # Use net total_profit_pct (matches Backtest page Profit% column).
@@ -104,7 +105,7 @@ class VirtualTracker:
         if not symbol_data:
             return None
 
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         min_t = self._get_min_trades(symbol)
         window_size = int(cfg.get("ranking_window_size", 10))
         hysteresis_pct = float(cfg.get("preset_hysteresis_pct", 10.0)) / 100.0
@@ -204,7 +205,7 @@ class VirtualTracker:
         symbol_data = self._efficiency.get(symbol, {})
         if not symbol_data:
             return 0.0
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         min_t = self._get_min_trades(symbol)
         window_size = int(cfg.get("ranking_window_size", 10))
         best_tuple = max(_score(stats, min_t, window_size) for stats in symbol_data.values())
@@ -212,7 +213,7 @@ class VirtualTracker:
 
     def get_preset_efficiency(self, symbol: str, preset_name: str) -> float:
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         window_size = int(cfg.get("ranking_window_size", 10))
         return _score(stats, self._get_min_trades(symbol), window_size)[1]
 
@@ -226,13 +227,13 @@ class VirtualTracker:
         results must always outrank a backtest guess, however small.
         """
         stats = self._efficiency.get(symbol, {}).get(preset_name, {})
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         window_size = int(cfg.get("ranking_window_size", 10))
         return _score(stats, self._get_min_trades(symbol), window_size)
 
     def ranked_presets(self, symbol: str, limit: int | None = None) -> list[str]:
         """Eligible presets for this symbol, best first, blocklisted ones removed."""
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         blocklist = set(cfg.get("preset_blocklist", []))
         names = [n for n in self._efficiency.get(symbol, {}) if n not in blocklist]
         names.sort(key=lambda n: self.get_preset_rank_key(symbol, n), reverse=True)
@@ -259,7 +260,7 @@ class VirtualTracker:
 
     def record_closed_trade(self, symbol: str, preset: str, profit_usdt: float) -> None:
         eff = self.get_efficiency(symbol, preset)
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         window_size = int(cfg.get("ranking_window_size", 10))
         recent_trades = list(eff.get("recent_trades", []))
         recent_trades.append(profit_usdt)
@@ -282,7 +283,7 @@ class VirtualTracker:
         For locked symbols, evaluates the locked preset's stats rather than the best-overall,
         because only the locked preset actually trades.
         """
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         min_trades = self._get_min_trades(symbol)
         window_size = int(cfg.get("ranking_window_size", 10))
         min_profit = float(cfg.get("tats_min_profit_usdt", 0.0))
@@ -324,7 +325,7 @@ class VirtualTracker:
         """Return True if the symbol's best preset score is below virtual_only_floor.
         Only activates once the best preset has enough live trades (>= min_trades_for_ranking).
         """
-        cfg = load_risk_config()
+        cfg = risk_config_view()
         floor = float(cfg.get("virtual_only_floor", -20.0))
         min_trades = int(cfg.get("min_trades_for_ranking", 3))
 
@@ -372,8 +373,26 @@ class VirtualTracker:
                 pass
         return {}
 
+    # The efficiency file (~800 KB) used to be rewritten on EVERY closed trade; a candle
+    # that closes dozens of virtual positions spent 10.7 s of a 39 s batch doing that
+    # (profiled 2026-09-29), blocking the event loop. Writes are now coalesced: at most
+    # one per _SAVE_INTERVAL_S, and flush() writes whatever is pending — main.py calls it
+    # at the end of every candle and on shutdown. The in-memory state is always current;
+    # only the file (read by the dashboard) can lag by up to one candle.
+    _SAVE_INTERVAL_S = 5.0
+
     def _save_efficiency(self) -> None:
+        self._efficiency_dirty = True
+        if time.monotonic() - getattr(self, '_last_save', 0.0) >= self._SAVE_INTERVAL_S:
+            self.flush()
+
+    def flush(self) -> None:
+        """Write the efficiency file if anything changed since the last write."""
+        if not getattr(self, '_efficiency_dirty', False):
+            return
         self._efficiency_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._efficiency_path.with_name(f"{self._efficiency_path.stem}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(self._efficiency, indent=2))
+        tmp.write_text(json.dumps(self._efficiency, separators=(',', ':')))
         tmp.replace(self._efficiency_path)
+        self._efficiency_dirty = False
+        self._last_save = time.monotonic()

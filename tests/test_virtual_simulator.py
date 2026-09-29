@@ -430,7 +430,7 @@ def _unslipped(entry, close, qty, side):
 def sim(tmp_path, monkeypatch):
     s = make_simulator(tmp_path)
     monkeypatch.setattr(
-        'bot.virtual_order_simulator.load_risk_config',
+        'bot.virtual_order_simulator.risk_config_view',
         lambda: {'slippage_model_enabled': True, 'slippage_default_pct': 0.10,
                  'slippage_min_samples': 5, 'slippage_per_symbol': {}},
     )
@@ -465,7 +465,7 @@ class TestItCanBeSwitchedOff:
     def test_disabled_reproduces_the_old_number_exactly(self, tmp_path, monkeypatch):
         s = make_simulator(tmp_path)
         monkeypatch.setattr(
-            'bot.virtual_order_simulator.load_risk_config',
+            'bot.virtual_order_simulator.risk_config_view',
             lambda: {'slippage_model_enabled': False},
         )
         assert s._calc_pnl(_rec('BUY'), 105.0, 'BTCUSDT') == pytest.approx(
@@ -490,7 +490,7 @@ class TestPerSymbolEstimates:
     def test_an_override_is_used(self, tmp_path, monkeypatch):
         s = make_simulator(tmp_path)
         monkeypatch.setattr(
-            'bot.virtual_order_simulator.load_risk_config',
+            'bot.virtual_order_simulator.risk_config_view',
             lambda: {'slippage_model_enabled': True, 'slippage_default_pct': 0.10,
                      'slippage_per_symbol': {'BTCUSDT': 1.0}},
         )
@@ -503,7 +503,7 @@ class TestPerSymbolEstimates:
         the filesystem thousands of times a candle."""
         calls = []
         monkeypatch.setattr(
-            'bot.virtual_order_simulator.load_risk_config',
+            'bot.virtual_order_simulator.risk_config_view',
             lambda: (calls.append(1) or {'slippage_model_enabled': True,
                                          'slippage_default_pct': 0.10}),
         )
@@ -1119,7 +1119,7 @@ class TestVirtualRealParityPart2:
     async def test_blackout_hours_block_ranks_2_and_up_but_not_rank_1(self, tmp_path):
         sim = make_simulator(tmp_path)
         hour = datetime.now(timezone.utc).hour
-        with patch('bot.virtual_order_simulator.load_risk_config',
+        with patch('bot.virtual_order_simulator.risk_config_view',
                    return_value={'trading_blackout_hours': [hour]}):
             await _parity_candle(sim)
         assert SYM in sim._rank_open[1], 'rank 1 records refused signals; it must not inherit gates'

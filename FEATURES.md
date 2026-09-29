@@ -2371,6 +2371,25 @@ Atomic file edits using `os.replace()` on bind-mounted config files created a hi
 
 ---
 
+## Candle-batch performance and WebSocket keepalive (2026-09-29)
+
+- **Symptom.** `Combined stream error: sent 1011 (internal error) keepalive ping timeout` about 4 times an hour, i.e. on almost every candle, since 2026-09-28.
+  - The candle batch (22 symbols, processed inline in the stream loop) grew from a median 3–4 s to about 30 s after the 2026-09-27/28 deploys.
+  - websockets 12 (legacy client) buffers only 32 messages. Once ticks filled it, the library stopped reading the socket, the pong went unread, and the connection was dropped.
+- **Profile** (py-spy on the live process, one batch): the event loop was busy 39 of 39 s, almost all of it rereading or rewriting files.
+  - efficiency file rewritten per virtual close: 10.7 s
+  - `load_risk_config()` tens of thousands of times: 9.1 s
+  - pretty-printed chart exports: 5.5 s
+  - backtest files re-parsed every 60 s: ~3.5 s
+  - signal logic itself: ~1.7 s
+- **Fixes:**
+  - `bot/data_feed.py`: every `websockets.connect` uses `max_queue=None`, so frames (pongs included) keep flowing during a long batch.
+  - `config/risk_config.risk_config_view()`: a cached, read-only (`MappingProxyType`) merged config, rebuilt only when a config file's mtime or size changes, so hot-reload is unchanged. Used in `bot/virtual_tracker.py` and `bot/virtual_order_simulator.py`. `load_risk_config()` still returns a private copy for callers that modify or save.
+  - `VirtualTracker`: efficiency writes are coalesced (at most once per 5 s, compact JSON). `flush()` is called by `main.py` at the end of every candle, after startup and on stop. In-memory state is always current; the file (read by the dashboard) lags by at most one candle.
+  - `RiskManager._get_perf_score`: backtest scores are cached by the backtest file's version, not a 60 s timer.
+  - Chart export (`bot/exporter.py`) and risk snapshot: compact JSON.
+- **Tests:** `TestRiskConfigView`, `TestEfficiencyWritesAreCoalesced`, `TestBacktestScoreCachedByFileVersion`, `TestSocketKeepsBeingRead`.
+
 ## Testnet REST via demo-fapi.binance.com (2026-09-29) — the -1003 ban fix
 
 - **What**: test-mode REST now goes to `https://demo-fapi.binance.com/fapi` (Binance's current official futures testnet host) instead of `testnet.binancefuture.com` (`bot/data_feed.py`: `_FUTURES_REST_TESTNET`, `_trading_client`). Live mode and the WebSocket streams are unchanged.

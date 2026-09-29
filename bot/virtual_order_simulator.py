@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from bot.fake_order import FakeOrder
 from bot.order_sizing import real_quantity
 from bot.recommendation_engine import RecommendationEngine
-from config.risk_config import load_risk_config
+from config.risk_config import load_risk_config, risk_config_view  # noqa: F401
 from bot import analysis_log
 from bot import slippage
 from config.settings import max_profit_cap_applies, clamp_sl_to_max
@@ -349,8 +349,7 @@ class VirtualOrderSimulator:
     def _max_age_minutes(self) -> float:
         """Maximum practice-position age, from risk_config, in minutes."""
         try:
-            from config.risk_config import load_risk_config
-            candles = int(load_risk_config().get('virtual_max_age_candles', 96))
+            candles = int(risk_config_view().get('virtual_max_age_candles', 96))
         except Exception:
             candles = 96
         return max(0, candles) * 15.0   # 15m timeframe
@@ -452,7 +451,7 @@ class VirtualOrderSimulator:
             return 'preset_has_real_order'
         # Load config before any filter — global_min_sl_pct and per-trade caps must be
         # available during signal evaluation, not only during sizing (original position was line ~361).
-        _risk_cfg = load_risk_config()
+        _risk_cfg = risk_config_view()
 
         # Real-order gates, inherited by ranks >= 2 so they measure the strategy real
         # orders actually run (spec 2026-09-29 part 2, V4). Rank 1 is exempt: it exists to
@@ -1087,7 +1086,7 @@ class VirtualOrderSimulator:
             return cached[1]
         try:
             path = self._project_root / 'data' / f'slippage_{self._mode}.json'
-            pct = slippage.estimate(path, symbol, load_risk_config())
+            pct = slippage.estimate(path, symbol, risk_config_view())
         except Exception:
             pct = 0.0
         self._slippage_cache[symbol] = (now, pct)

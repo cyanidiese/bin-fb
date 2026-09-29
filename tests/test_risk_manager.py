@@ -1042,3 +1042,26 @@ class TestBothBranchesAreFixed:
 
     def test_the_reason_is_recorded_for_the_next_reader(self):
         assert 'hold its slice' in MAIN or 'hostage' in MAIN
+
+
+class TestBacktestScoreCachedByFileVersion:
+    """Backtest files (~1 MB each) were re-parsed per symbol every 60 s — ~3.5 s per candle
+    batch. Now only when the file changes (2026-09-29)."""
+
+    def test_unchanged_file_is_not_reparsed_and_a_change_is(self, tmp_path, monkeypatch):
+        import os
+        from bot.risk_manager import RiskManager
+        rm = RiskManager.__new__(RiskManager)
+        rm._perf_cache, rm._perf_version = {}, {}
+        f = tmp_path / 'bt.json'
+        f.write_text('{}')
+        rm._backtest_path = lambda s: f
+        calls = []
+        rm._compute_perf_score = lambda s: calls.append(s) or (0.5, 1.2, 3.0)
+        for _ in range(5):
+            assert rm._get_perf_score('X', {}) == (0.5, 1.2)
+        assert calls == ['X']
+        f.write_text('{"x": 1}')
+        os.utime(f, ns=(1, f.stat().st_mtime_ns + 1_000_000))
+        rm._get_perf_score('X', {})
+        assert calls == ['X', 'X']

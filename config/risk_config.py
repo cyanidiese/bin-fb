@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from types import MappingProxyType
 import os
 import threading
 from pathlib import Path
@@ -245,6 +246,38 @@ def load_risk_config(path: Path | None = None, mode: str | None = None) -> dict:
         own = _read(config_path(m))
         shared = _shared_overlay()
     return {**DEFAULT_CONFIG, **base, **own, **shared}
+
+
+# (mode, file versions) -> merged config, for risk_config_view().
+_VIEW_CACHE: dict[str, tuple[tuple, dict]] = {}
+
+
+def _file_version(path: Path) -> tuple:
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (0, 0)
+
+
+def risk_config_view(mode: str | None = None) -> MappingProxyType:
+    """READ-ONLY view of load_risk_config(mode), rebuilt only when a config file changes.
+
+    For hot paths that only .get() values. Preset ranking called load_risk_config()
+    once per preset per symbol per candle handler — tens of thousands of file reads per
+    candle batch, 9.1 s of a 39 s batch that starved the WebSocket keepalive (profiled
+    2026-09-29). Every writer (bot and dashboard) changes a file's mtime, so hot-reload
+    behaves exactly as before. Never mutate what this returns — use load_risk_config()
+    for a private copy you intend to change or save.
+    """
+    m = mode or active_mode()
+    key = (_file_version(config_path("test")), _file_version(config_path(m)),
+           _file_version(shared_config_path()))
+    hit = _VIEW_CACHE.get(m)
+    if hit is None or hit[0] != key:
+        hit = (key, load_risk_config(mode=m))
+        _VIEW_CACHE[m] = hit
+    return MappingProxyType(hit[1])
 
 
 def save_risk_config(config: dict, path: Path | None = None, mode: str | None = None) -> None:

@@ -842,6 +842,7 @@ async def run() -> None:
     if not _virtual_only:
         await order_executor.reconcile_with_exchange()
     _write_open_positions()  # overwrite any stale file from a crashed previous session
+    virtual_tracker.flush()  # startup seeding / downtime replay may have left writes pending
     notifier.notify("info", "Startup complete", f"{len(symbols)} symbol(s) active", "main")
 
     # ── Callbacks ──────────────────────────────────────────────────────── #
@@ -2223,6 +2224,11 @@ async def run() -> None:
             virtual_order_simulator.save_open_state(_vstate_path)
         except Exception as _vs_exc:
             logger.debug(f"virtual open state save failed: {_vs_exc}")
+        # Preset efficiency writes are coalesced; write this candle's once, here.
+        try:
+            virtual_tracker.flush()
+        except Exception as _fl_exc:
+            logger.warning(f"preset efficiency flush failed: {_fl_exc}")
 
         # save_risk_config() every candle. A virtual-only instance must never retune
         # the trading bot's real symbol allocation from its own virtual results.
@@ -2384,6 +2390,10 @@ async def run() -> None:
             saved = order_executor.save_open_positions(_restart_path)
             if saved:
                 logger.info(f"close_positions_on_stop=false — {saved} position(s) saved, skipping market close")
+        try:
+            virtual_tracker.flush()
+        except Exception as _fl_exc:
+            logger.warning(f"preset efficiency flush failed: {_fl_exc}")
         # Virtual positions are saved, not closed: closing them recorded a 'closed_early'
         # result at whatever the price was on every restart (spec 2026-09-29).
         try:
